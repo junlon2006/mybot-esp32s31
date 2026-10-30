@@ -4,9 +4,9 @@
 
 唯一支持 profile 为 `esp32-s31-korvo-1`，由根 CMake 的 `MYBOT_BOARD` 选择。本仓库是独立 S31 工程，旧 S3 板型和 generic 驱动已移除。
 
-`main/` 负责启动、设备身份和 MyBot/网络生命周期；`components/mybot_stack/` 保留 MyBot SDK wrapper/快照及 AOSL 快照。`components/mybot_platform/boards/esp32-s31-korvo-1/` 定义硬件、默认值、分区和 ADC 参考源；`ports/aosl`、`ports/agora_rtc` 提供独立同名组件，后者随工程提供固定 S31 RTSA。平台 `services/` 管理 Wi-Fi、HTTPS、NVS、提示音、PCM FIFO 和诊断，`drivers/` 管理 ES8389、ADC 键、触摸和 RGB/LVGL，`internal/` 为私有接口。
+目录与 ESP32 工程保持一致：`components/mybot_stack/mybot_sdk/` 是 SDK wrapper/快照，`components/mybot_stack/aosl/` 是 AOSL 上游源码及 S31 组件包装，`components/mybot_stack/agora_rtc/` 是固定 S31 RTSA；三者都是独立 ESP-IDF 组件。`main/` 负责启动、设备身份和 MyBot/网络生命周期，`components/mybot_platform/boards/esp32-s31-korvo-1/` 定义硬件、默认值、分区和 ADC 参考源。平台 `services/` 管理 Wi-Fi、HTTPS、NVS、提示音、PCM FIFO 和诊断，`drivers/` 管理 ES8389、ADC 键、触摸和 RGB/LVGL，`internal/` 为私有接口。
 
-平台仅使用 SDK 的公开 `include/mybot/` API，硬件细节不进入不可变源码快照。根 CMake 分别注册 wrapper，`mybot_stack` 父目录只是 bundle。
+平台仅使用 SDK 的公开 `include/mybot/` API，硬件细节不进入不可变源码快照。根 CMake 通过 `EXTRA_COMPONENT_DIRS` 分别注册三个运行时组件，`mybot_stack` 父目录只是 bundle。
 
 板级 `prepare()` 在注册平台前准备硬件；`ensure_network()` 返回前必须获得可用网络。配网先停止 MyBot，连接恢复后返回。输入由板级长期持有，因此 SDK 回调脱离期间 SET 仍可请求配网。
 

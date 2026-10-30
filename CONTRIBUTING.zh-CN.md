@@ -8,7 +8,7 @@
 
 应用启动和 MyBot 生命周期放在 `main/`，板级硬件、驱动和服务放在 `components/mybot_platform/`。平台仅通过 `components/mybot_stack/mybot_sdk/mybot/include/mybot/` 下的公开头文件使用 SDK。
 
-MyBot、AOSL、esp_codec_dev、LVGL、esp_lvgl_port 源码快照保持不变。S31 AOSL/RTSA wrapper 位于 `components/mybot_platform/ports/`；本地组件 CMake wrapper 可按需注册源码，不修改快照。AOSL 名为 `esp32-s3` 的可移植 HAL 仍由 S31 wrapper 使用，是不可删除的输入。
+MyBot、AOSL、esp_codec_dev、LVGL、esp_lvgl_port 源码快照保持不变。`mybot_sdk`、`aosl`、`agora_rtc` 三个运行时组件直接位于 `components/mybot_stack/`。AOSL 上游源码保持不变，通过组件 `CMakeLists.txt` 和 `s31_port/` 适配 S31。AOSL 名为 `esp32-s3` 的可移植 HAL 仍由 S31 wrapper 使用，是不可删除的输入。
 
 不提交凭据、设备标识、Wi-Fi 密码、原始 RTSA 归档、生成配置或固件。自维护 C/C++ 文件带 SPDX 头，改动文件按 `.clang-format` 格式化。行为、依赖或来源变化时同步文档、`CHANGELOG.md`、来源记录和许可证。
 

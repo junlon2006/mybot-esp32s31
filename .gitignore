@@ -24,7 +24,7 @@ __pycache__/
 *.pyc
 
 # The user-approved pinned RTSA library is versioned source input.
-!components/mybot_platform/ports/agora_rtc/vendor/lib/riscv32/libagora-rtc-sdk.a
+!components/mybot_stack/agora_rtc/lib/riscv32/libagora-rtc-sdk.a
 
 # Editors, OS files and local tooling
 .vscode/

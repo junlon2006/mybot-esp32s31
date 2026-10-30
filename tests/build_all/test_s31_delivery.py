@@ -129,7 +129,7 @@ class S31DeliveryTests(unittest.TestCase):
     def test_vendor_host_members_and_wrong_aosl_ownership_are_rejected(self) -> None:
         variants = (
             self.map_text + 'libagora-rtc-sdk.a(mm.c.o)\n',
-            self.map_text.replace("esp-idf/aosl/libaosl.a", "vendor/libagora-rtc-sdk.a"),
+            self.map_text.replace("esp-idf/aosl/libaosl.a", "lib/libagora-rtc-sdk.a"),
             self.map_text.replace('libagora-rtc-sdk.a(rtm.c.obj)\n', ''),
         )
         for text in variants:
@@ -169,7 +169,7 @@ class S31DeliveryTests(unittest.TestCase):
 
     def test_bundled_vendor_files_are_pinned_and_changed_payload_fails(self) -> None:
         checker.verify_bundled_rtsa(ROOT)
-        vendor = self.root / "components/mybot_platform/ports/agora_rtc/vendor"
+        vendor = self.root / "components/mybot_stack/agora_rtc"
         for name in checker.RTSA_FILES:
             destination = vendor / name
             destination.parent.mkdir(parents=True, exist_ok=True)

@@ -38,4 +38,4 @@ python3 scripts/build_all.py --board esp32-s31-korvo-1 --language both
 
 普通 builder 会清理 `build/`、`releases/`；增量构建使用 `--no-clean`。安全清理要求 Python 3.11+；IDF Python 3.10 可直接运行 `idf.py` 或增量 builder。
 
-工程已裁为 S31，MyBot/AOSL/codec/LVGL 等源码快照完整保留，适配放在独立 wrapper 和平台层。固定 RTSA payload 随工程跟踪；原 tgz、配置、构建输出和固件不提交 Git。push/PR CI 自动检查源码并构建中英文，不自动发布 Release。
+工程已裁为 S31，`mybot_sdk`、`aosl`、`agora_rtc` 三个运行时组件统一位于 `components/mybot_stack`，目录关系与 ESP32 工程一致。MyBot/AOSL/codec/LVGL 等源码快照完整保留，S31 组件包装与平台适配单独维护。固定 RTSA payload 随工程跟踪；原 tgz、配置、构建输出和固件不提交 Git。push/PR CI 自动检查源码并构建中英文，不自动发布 Release。

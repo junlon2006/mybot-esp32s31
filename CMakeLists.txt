@@ -46,8 +46,8 @@ set(PROJECT_VER "0.1.0")
 set(MYBOT_STACK_ROOT "${CMAKE_CURRENT_LIST_DIR}/components/mybot_stack")
 list(APPEND EXTRA_COMPONENT_DIRS
     "${MYBOT_STACK_ROOT}/mybot_sdk"
-    "${CMAKE_CURRENT_LIST_DIR}/components/mybot_platform/ports/aosl"
-    "${CMAKE_CURRENT_LIST_DIR}/components/mybot_platform/ports/agora_rtc"
+    "${MYBOT_STACK_ROOT}/aosl"
+    "${MYBOT_STACK_ROOT}/agora_rtc"
 )
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)

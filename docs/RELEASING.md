@@ -2,7 +2,7 @@
 
 [English](RELEASING.md) · [简体中文](RELEASING.zh-CN.md)
 
-Only `esp32-s31-korvo-1` is supported. RTSA v1.10.1 build 1366494 is bundled under `components/mybot_platform/ports/agora_rtc/vendor`; direct builds need ESP-IDF v6.1 and ffmpeg, with no download/import step. RTSA input checks verify the pinned payload hashes. Audio remains 60 ms and video disabled.
+Only `esp32-s31-korvo-1` is supported. RTSA v1.10.1 build 1366494 is bundled under `components/mybot_stack/agora_rtc`; direct builds need ESP-IDF v6.1 and ffmpeg, with no download/import step. RTSA input checks verify the pinned payload hashes. Audio remains 60 ms and video disabled.
 
 ## Local build
 

@@ -2,7 +2,7 @@
 
 [English](RELEASING.md) · [简体中文](RELEASING.zh-CN.md)
 
-工程仅支持 `esp32-s31-korvo-1`。RTSA v1.10.1 build 1366494 的固定头文件/库随工程提供，位于 `components/mybot_platform/ports/agora_rtc/vendor`；编译只需 ESP-IDF v6.1 和 ffmpeg，无需下载或导入。输入检查验证固定 payload hash。音频固定 60 ms，视频关闭。
+工程仅支持 `esp32-s31-korvo-1`。RTSA v1.10.1 build 1366494 的固定头文件/库随工程提供，位于 `components/mybot_stack/agora_rtc`；编译只需 ESP-IDF v6.1 和 ffmpeg，无需下载或导入。输入检查验证固定 payload hash。音频固定 60 ms，视频关闭。
 
 ## 本地构建
 

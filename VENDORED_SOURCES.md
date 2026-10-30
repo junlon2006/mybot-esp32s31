@@ -16,11 +16,11 @@ License terms are recorded in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). 
 | `components/esp_lvgl_port` | [espressif/esp-bsp](https://github.com/espressif/esp-bsp), `components/esp_lvgl_port` | 2.8.0~1 runtime/display subset, `d14ff131266bf1392efff88db72cb4638897507c`; inherited integration corrections in `PATCHES.md`, local CMake source selection |
 | `components/mybot_platform/boards/esp32-s31-korvo-1/reference/esp32_s31_adc_calibration.c` | [official S31 BSP](https://github.com/espressif/esp-dev-kits/tree/bd4d4ac18657e73583af3d7c0b0a23c3cddf3735/examples/esp32-s31-korvo/examples/common_components/esp32_s31_korvo) | `bd4d4ac18657e73583af3d7c0b0a23c3cddf3735`; unchanged source, integration header maintained locally |
 
-MyBot, AOSL, codec and LVGL source snapshots remain unchanged. The inherited LVGL-port runtime/display subset and its existing lifecycle corrections are retained unchanged from the imported baseline; its `PATCHES.md` records those corrections. Local wrappers select active sources and configuration. `components/mybot_platform/ports/aosl` builds the portable ESP-IDF HAL from the retained AOSL `esp32-s3` source directory and supplies S31 configuration/OS-name overrides externally. Its component name remains `aosl`.
+MyBot, AOSL, codec and LVGL source snapshots remain unchanged. The inherited LVGL-port runtime/display subset and its existing lifecycle corrections are retained unchanged from the imported baseline; its `PATCHES.md` records those corrections. `components/mybot_stack/aosl` builds the portable ESP-IDF HAL from its retained `esp32-s3` source directory; the component CMake wrapper and `s31_port/` supply S31 configuration and OS-name overrides.
 
 ## Bundled RTSA
 
-`components/mybot_platform/ports/agora_rtc/vendor` contains the approved S31 public header, build configuration and RISC-V static library. They are tracked project dependencies, so a checkout builds directly without a download/import step. The original tgz and generated firmware remain ignored. `scripts/import_rtsa_s31.py` is an optional maintenance tool for restoring the exact payload from the original package; it does not run package programs.
+`components/mybot_stack/agora_rtc` contains the approved S31 public header, build configuration, package metadata and RISC-V static library. They are tracked project dependencies, so a checkout builds directly without a download/import step. The original tgz and generated firmware remain ignored. `scripts/import_rtsa_s31.py` is an optional maintenance tool for restoring the exact payload from the original package; it does not run package programs.
 
 - Package: `Agora-RTSALite-SRmRcAcAj-riscv32-rtos-elf-16-esp32s31-v1.10.1-20261030_150429-1366494.tgz`
 - SDK: v1.10.1, build **1366494**.

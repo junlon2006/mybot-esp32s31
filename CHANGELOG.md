@@ -5,6 +5,7 @@
 - Tap the GT1151 screen to start a conversation and tap again to stop through the same public key path as PLAY. Keep the physical PLAY/SET/VOL controls.
 - Limit the project to the active ESP32-S31 no-video integration; remove unused S3 profiles, drivers, dependencies and tests while preserving immutable source snapshots.
 - Add checked S31 delivery metadata and language-specific artifacts, with push/PR firmware CI using the bundled pinned RTSA dependency.
+- Align the runtime layout with the ESP32 project by placing `mybot_sdk`, `aosl` and `agora_rtc` directly under `components/mybot_stack`, removing the platform-local ports directory.
 - Update Chinese/English build, board, contribution, support, architecture and delivery documentation.
 - Record the user's successful physical-board display test separately from touch interaction, which awaits hardware acceptance.
 
