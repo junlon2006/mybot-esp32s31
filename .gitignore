@@ -1,55 +1,38 @@
-# Prerequisites
-*.d
-
-# Object files
-*.o
-*.ko
-*.obj
+# ESP-IDF generated output and local configuration
+/build/
+/build-*/
+/releases/
+/sdkconfig
+/sdkconfig.old
+/managed_components/
+/.cache/
+compile_commands.json
+*.bin
 *.elf
-
-# Linker output
-*.ilk
 *.map
-*.exp
-
-# Precompiled Headers
-*.gch
-*.pch
-
-# Libraries
-*.lib
+*.o
+*.obj
+*.d
 *.a
-*.la
-*.lo
-
-# Shared objects (inc. Windows DLLs)
-*.dll
 *.so
-*.so.*
 *.dylib
-
-# Executables
 *.exe
 *.out
-*.app
-*.i*86
-*.x86_64
-*.hex
+*.log
+*.tgz
+__pycache__/
+*.pyc
 
-# Debug files
-*.dSYM/
-*.su
-*.idb
-*.pdb
+# The user-approved pinned RTSA library is versioned source input.
+!components/mybot_platform/ports/agora_rtc/vendor/lib/riscv32/libagora-rtc-sdk.a
 
-# Kernel Module Compile Results
-*.mod*
-*.cmd
-.tmp_versions/
-modules.order
-Module.symvers
-Mkfile.old
-dkms.conf
-
-# debug information files
-*.dwo
+# Editors, OS files and local tooling
+.vscode/
+.idea/
+.DS_Store
+._*
+*.swp
+*.swx
+*.orig
+*.rej
+/skills/
