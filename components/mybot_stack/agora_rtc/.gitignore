@@ -1,2 +1,2 @@
 # Optional package build configuration is retained locally for audit.
-/vendor/.config
+/.config

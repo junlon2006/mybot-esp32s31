@@ -4,17 +4,18 @@ This repository targets ESP32-S31-Korvo-1 V1.1 on ESP-IDF v6.1. The only registe
 board is `esp32-s31-korvo-1`; `MYBOT_BOARD` is the board selector. Use `idf.py --preview`.
 User instructions take precedence. Preserve unrelated changes; do not commit or push unless asked.
 
-Keep these inputs immutable:
+Keep these source inputs immutable:
 
 - `components/mybot_stack/mybot_sdk/mybot/`
-- `components/mybot_stack/aosl/`
+- `components/mybot_stack/aosl/` except the component wrapper `CMakeLists.txt` and the
+  project-maintained `s31_port/` adapter
 - `components/esp_codec_dev/` (official 1.5.9 snapshot)
 - the official ADC reference source under the S31 board's `reference/`
 - supplied RTSA header/library and external reference repositories
 
 Adapt SDK CMake wrappers, `components/mybot_platform`, board metadata, main, CI,
-scripts and documentation. The external `ports/aosl` and `ports/agora_rtc` wrappers
-retain component names `aosl` and `agora_rtc`; register only one implementation each.
+scripts and documentation. The runtime components `mybot_sdk`, `aosl` and `agora_rtc`
+live directly under `components/mybot_stack`; register only one implementation each.
 Only local source-built AOSL uses WHOLE_ARCHIVE. Keep RTSA a normal archive and
 inspect the final map to reject host AOSL objects. Include MyBot only via public headers.
 

@@ -62,7 +62,7 @@ The driver takes ownership at void destroy(). If teardown times out, it retains 
 
 - The user reports that the physical screen displays normally. This is user-performed display validation; it does not establish GT1151 touch or conversation toggling.
 - The current update adds press/release conversation start/stop through the public SDK key callback, retains physical PLAY/SET/VOL, and removes unused S3 project material while preserving dependency snapshots. It includes bundled pinned RTSA payloads, push/PR language builds and per-language checked delivery metadata.
-- New touch real-device acceptance and remote CI execution are pending. Current local source/test/build results must be recorded after verification; the initial-build results and SHA-256 table above must not be attributed to this revision.
+- New touch real-device acceptance and a recorded remote CI result remain pending. The initial-build results and SHA-256 table above must not be attributed to this revision.
 - Other audio tuning, input/network regression, endurance/resource measurement and extension work are deferred at the user's request. Video remains disabled.
 
 ## Touch control, CI delivery and S31-only baseline — 2026-10-30
@@ -72,7 +72,7 @@ The driver takes ownership at void destroy(). If teardown times out, it retains 
 - After removing unrelated S3 components/profiles/tests, local input/board (17 cases), display (23 cases), shared PCM buffer, audio lifecycle and HTTPS trace (20 synthetic scenarios) passed. Input/display also passed UBSan. Audio source and the MyBot/AOSL/codec/LVGL/port snapshots remained byte-identical.
 - Builder and delivery tests: 52 cases under local Python 3.10, 47 passed and 5 Python 3.11+ filesystem-cleanup cases skipped. The CI quality job selects Python 3.12 to exercise those cases. Project formatting, SPDX, whitespace and workflow YAML/Bash checks passed.
 - Direct IDF v6.1 preview builds and size checks passed for both languages in the cleaned target project. The actual absolute-path merge-bin and shared checker flow passed for both; each of four flash segments, target/config, bundled RTSA fingerprint, RISC-V ELF and local AOSL map ownership was verified.
-- The approved original RTSA library/header/config/package identity are now versioned inputs. No CI URL, secret or import is required. Push/PR/manual workflows automatically build both languages and upload the four delivery files; remote Actions execution has not been performed locally.
+- The approved original RTSA library/header/config/package identity are now versioned inputs. No CI URL, secret or import is required. Push/PR/manual workflows build both languages and upload the four delivery files. Remote Actions results are not recorded in this checkout.
 - Delivery files are `.bin`, `.manifest.json`, `.sha256` and `.flash.txt` per language. Flash instructions derive reset, no-stub and flash settings from that build. The merged image starts at 0x0.
 
 The following hashes describe the local verification images. Final delivery checksums are in each release `.sha256` / `.manifest.json`.
@@ -88,4 +88,30 @@ Other requested-deferred features, audio tuning, endurance testing and video wer
 
 The exact staged Git blobs were exported to a new source directory with no local build outputs, managed-component directory or ignored SDK archive. All tracked MyBot/AOSL/codec/LVGL/port source bytes (including original line endings) matched the working inputs. The optional, unused Xtensa-only ZL38063 archive was absent. A fresh Chinese IDF v6.1 preview build, size report, absolute-path merge and shared delivery checker all passed from this export. The final target-project Chinese and English builds also passed after adding the S31 guard against that unsupported codec. No remote GitHub Actions run or new touch hardware test is claimed.
 
-This source baseline is maintained on the local `dev` branch. Delivery manifests record its exact revision and dirty status. Remote GitHub Actions has not been triggered.
+The pre-layout source baseline was developed on `dev` and merged into `main` at
+`9a796a84d82ff6ab4cd4206571d6f46c95393b6f`. Delivery manifests record the exact revision
+and dirty state used for each image. No successful remote GitHub Actions result is recorded here.
+
+## ESP32-aligned runtime layout — 2026-10-30
+
+- Moved the runtime components to `components/mybot_stack/{mybot_sdk,aosl,agora_rtc}`,
+  matching the ESP32 project. `components/mybot_platform/ports` no longer exists.
+- Kept MyBot and AOSL source snapshots unchanged. AOSL is built by its component-root CMake
+  wrapper with S31 configuration and an OS-version adapter under `aosl/s31_port/`.
+- Moved the approved RTSA header, library and package metadata into `agora_rtc/include`,
+  `agora_rtc/lib/riscv32` and `agora_rtc/PACKAGE_INFO`. All three pinned RTSA file hashes
+  remain unchanged.
+- Audio lifecycle, PCM buffer, display, input/board, HTTPS trace and build/delivery host tests
+  passed. The build/delivery suite ran all 52 cases under Python 3.12.
+- Clean ESP-IDF v6.1 preview builds passed for `zh-CN` and `en-US`. Size checks show 38% and
+  36% application-partition headroom respectively. Both merge/check flows verified four flash
+  segments, RISC-V ELF output, bundled RTSA fingerprints and local AOSL symbol ownership.
+
+| Language | App bytes | Merged bytes | Merged SHA-256 |
+| --- | --- | --- | --- |
+| zh-CN | 2568144 | 2699216 | `0bb7d8970d624af5604dcfced281510e027438533977d77ea3d956927b16336b` |
+| en-US | 2648800 | 2779872 | `f1844cac0ab9f446bf412d5085227101f42adea2a80164fa91162e1dfeeff1bd` |
+
+These hashes describe local images built from the dirty `main` worktree at
+`9a796a84d82ff6ab4cd4206571d6f46c95393b6f`. They are not release artifacts and do not
+establish remote CI or new hardware results.

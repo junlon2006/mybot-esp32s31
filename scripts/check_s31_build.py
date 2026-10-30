@@ -44,9 +44,9 @@ def build_file(build_dir: Path, name: str) -> Path:
 
 
 def verify_bundled_rtsa(project_root: Path) -> None:
-    vendor = project_root / "components/mybot_platform/ports/agora_rtc/vendor"
+    component = project_root / "components/mybot_stack/agora_rtc"
     for name, expected in RTSA_FILES.items():
-        path = vendor / name
+        path = component / name
         if not path.is_file() or sha256(path) != expected:
             raise RuntimeError(f"bundled S31 RTSA fingerprint mismatch: {name}")
 

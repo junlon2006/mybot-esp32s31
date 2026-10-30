@@ -8,7 +8,7 @@ This repository supports ESP32-S31-Korvo-1 V1.1 only, using ESP-IDF v6.1 and 60 
 
 Application startup and MyBot lifecycle belong in `main/`; board hardware, drivers and services belong in `components/mybot_platform/`. Use only the MyBot public headers under `components/mybot_stack/mybot_sdk/mybot/include/mybot/`.
 
-Keep the MyBot, AOSL, esp_codec_dev, LVGL and esp_lvgl_port source snapshots unchanged. S31 AOSL and RTSA wrappers live under `components/mybot_platform/ports/`; local component CMake wrappers may register the required sources without patching the snapshots. The legacy-named AOSL `esp32-s3` HAL is portable code used by the current S31 wrapper and remains part of the immutable source input.
+Keep the MyBot, AOSL, esp_codec_dev, LVGL and esp_lvgl_port source snapshots unchanged. The `mybot_sdk`, `aosl` and `agora_rtc` runtime components live directly under `components/mybot_stack/`. AOSL keeps its upstream sources while its component CMake wrapper and `s31_port/` adapter apply S31 configuration. The legacy-named AOSL `esp32-s3` HAL is portable code and remains part of the immutable source input.
 
 Never commit credentials, device identifiers, Wi-Fi passwords, original RTSA archives, generated configurations or firmware. Add SPDX headers to maintained C/C++ files and format changed files with `.clang-format`. Update user documentation, `CHANGELOG.md`, source provenance and license notices when applicable.
 

@@ -6,7 +6,7 @@ The root Apache-2.0 license applies to project-maintained code unless a file sta
 | --- | --- | --- |
 | MyBot SDK v1.3.0 plus updates | Apache-2.0; bundled JSON portions MIT | `components/mybot_stack/mybot_sdk/mybot` |
 | AOSL | bundled Apache-2.0 text with additional deployment restrictions | `components/mybot_stack/aosl/LICENSE` |
-| Agora RTSA Lite ESP32-S31 v1.10.1 build 1366494 | separate Agora distribution terms | `components/mybot_platform/ports/agora_rtc/vendor` |
+| Agora RTSA Lite ESP32-S31 v1.10.1 build 1366494 | separate Agora distribution terms | `components/mybot_stack/agora_rtc` |
 | esp-wifi-connect 3.2.2 | MIT | `components/esp-wifi-connect/LICENSE` |
 | esp_codec_dev 1.5.9, including ES8389 | Apache-2.0 | `components/esp_codec_dev/LICENSE` and file notices |
 | LVGL 9.5.0 | MIT plus bundled font/library-specific terms | `components/lvgl/LICENCE.txt` and retained package licenses |

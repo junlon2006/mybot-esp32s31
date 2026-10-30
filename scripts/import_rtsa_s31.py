@@ -26,7 +26,7 @@ def main():
     if digest != ARCHIVE_SHA256:
         parser.error(f"unexpected RTSA archive SHA-256: {digest}")
     root = Path(__file__).resolve().parent.parent
-    vendor = root / "components/mybot_platform/ports/agora_rtc/vendor"
+    component = root / "components/mybot_stack/agora_rtc"
     payloads = {}
     with tarfile.open(args.archive, "r:gz") as archive:
         members = {}
@@ -44,14 +44,14 @@ def main():
                 payloads[relative] = stream.read()
     # Validate all destinations before creating any directory or writing a file.
     for relative in payloads:
-        destination = vendor / relative
+        destination = component / relative
         if destination.is_symlink() or any(parent.is_symlink() for parent in destination.parents):
             parser.error(f"refusing symlink destination: {destination}")
     for relative, data in payloads.items():
-        destination = vendor / relative
+        destination = component / relative
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_bytes(data)
-    print(f"Imported pinned ESP32-S31 RTSA v1.10.1 build 1366494 to {vendor}")
+    print(f"Imported pinned ESP32-S31 RTSA v1.10.1 build 1366494 to {component}")
 
 
 if __name__ == "__main__":

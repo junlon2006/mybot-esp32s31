@@ -1,7 +1,7 @@
 # Bundled ESP32-S31 RTSA
 
 The `agora_rtc` component links the user-approved ESP32-S31 RTSA v1.10.1,
-build 1366494, directly from `vendor/`. The header, library, package identity and
+build 1366494, directly from `include/` and `lib/riscv32/`. The header, library, package identity and
 configuration are versioned; no download, import step or CI secret is required.
 The original `.tgz` and generated firmware remain ignored.
 

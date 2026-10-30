@@ -3,7 +3,7 @@
 Run `sh tests/korvo_s31_audio/run.sh` to compile the actual platform driver with UBSan,
 ESP Codec Device public headers, and the existing pthread/PSRAM host runtime.
 The test replaces hardware and the playback FIFO with fault-injection boundaries;
-the playback FIFO itself is covered by `tests/audio_video_psram/test_pcm.c`.
+the playback FIFO itself is covered by `tests/pcm_playback_buffer/test_pcm.c`.
 
 Coverage includes initialization and allocation failures, failure during start, partial
 cleanup and retries, rejection of a new stream during incomplete cleanup, independent

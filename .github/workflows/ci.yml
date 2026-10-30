@@ -25,7 +25,7 @@ jobs:
           find main components/mybot_platform tests/korvo_s31_display \
             tests/korvo_s31_audio tests/korvo_s31_input tests/pcm_playback_buffer \
             tests/conversation_http_trace \
-            -path '*/ports/agora_rtc/vendor' -prune -o \
+            -path '*/mybot_stack/agora_rtc' -prune -o \
             -type f ! -path '*/boards/esp32-s31-korvo-1/reference/*' \
             \( -name '*.c' -o -name '*.h' -o -name '*.cc' -o -name '*.cpp' \) \
             -exec clang-format --dry-run --Werror {} +
@@ -44,7 +44,7 @@ jobs:
           find main components/mybot_platform tests/korvo_s31_display \
             tests/korvo_s31_audio tests/korvo_s31_input tests/pcm_playback_buffer \
             tests/conversation_http_trace \
-            -path '*/ports/agora_rtc/vendor' -prune -o -type f \
+            -path '*/mybot_stack/agora_rtc' -prune -o -type f \
             \( -name '*.c' -o -name '*.h' -o -name '*.cc' -o -name '*.cpp' \) \
             -print0 | while IFS= read -r -d '' file; do
               head -n 5 "$file" | grep -q 'SPDX-License-Identifier:' || {
