@@ -1,0 +1,130 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install host tools
+        run: sudo apt-get update && sudo apt-get install -y clang-format
+      - name: Format check
+        run: |
+          find main components/mybot_platform tests/korvo_s31_display \
+            tests/korvo_s31_audio tests/korvo_s31_input tests/pcm_playback_buffer \
+            tests/conversation_http_trace \
+            -path '*/ports/agora_rtc/vendor' -prune -o \
+            -type f ! -path '*/boards/esp32-s31-korvo-1/reference/*' \
+            \( -name '*.c' -o -name '*.h' -o -name '*.cc' -o -name '*.cpp' \) \
+            -exec clang-format --dry-run --Werror {} +
+      - name: Whitespace check
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          if [ -n "$BASE_SHA" ] && [ "$BASE_SHA" != "0000000000000000000000000000000000000000" ]; then
+            git diff --check "$BASE_SHA" "$HEAD_SHA"
+          else
+            git show --format= --check "$HEAD_SHA"
+          fi
+      - name: SPDX check
+        run: |
+          find main components/mybot_platform tests/korvo_s31_display \
+            tests/korvo_s31_audio tests/korvo_s31_input tests/pcm_playback_buffer \
+            tests/conversation_http_trace \
+            -path '*/ports/agora_rtc/vendor' -prune -o -type f \
+            \( -name '*.c' -o -name '*.h' -o -name '*.cc' -o -name '*.cpp' \) \
+            -print0 | while IFS= read -r -d '' file; do
+              head -n 5 "$file" | grep -q 'SPDX-License-Identifier:' || {
+                echo "missing SPDX header: $file" >&2
+                exit 1
+              }
+            done
+      - name: S31 display and touch host lifecycle tests
+        run: |
+          sh tests/korvo_s31_display/run.sh
+          sh tests/korvo_s31_input/run.sh
+      - name: S31 TDM audio and ADC input host lifecycle tests
+        run: sh tests/korvo_s31_audio/run.sh
+      - name: Conversation HTTPS body logging tests
+        run: sh tests/conversation_http_trace/run.sh
+      - name: Shared PCM playback buffer lifecycle regression tests
+        run: sh tests/pcm_playback_buffer/run.sh
+      - name: Board capabilities, safe cleanup and firmware delivery regression tests
+        run: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests/build_all -p 'test_*.py' -v
+      - name: Record CI scope
+        run: |
+          cat >> "$GITHUB_STEP_SUMMARY" <<'SUMMARY'
+          Source formatting, SPDX and host lifecycle tests run on every push and pull request.
+          Both firmware languages build on push, pull request and manual dispatch using the pinned bundled RTSA library.
+          Artifacts contain the merged image, checksums, manifest and flash instructions. These checks do not run on hardware.
+          SUMMARY
+
+  idf-build:
+    name: idf-6.1-esp32-s31-korvo-1-${{ matrix.language }}-ptime60-no-video
+    needs: quality
+    runs-on: ubuntu-24.04
+    container:
+      image: espressif/idf:v6.1
+    defaults:
+      run:
+        shell: bash
+    env:
+      BUILD_DIR: build/ci-s31-${{ matrix.language }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: zh-CN
+            defaults: ci/ptime60.defaults
+          - language: en-US
+            defaults: ci/ptime60.defaults;ci/en-us.defaults
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install prompt conversion prerequisite
+        run: apt-get update && apt-get install -y ffmpeg
+      - name: Verify bundled S31 RTSA fingerprints
+        run: python3 scripts/check_s31_build.py --vendor-only
+      - name: Verify toolchain
+        run: |
+          source /opt/esp/idf/export.sh >/dev/null
+          test "$(idf.py --preview --version)" = "ESP-IDF v6.1"
+      - name: Build S31 TDM firmware without video
+        run: |
+          source /opt/esp/idf/export.sh >/dev/null
+          idf.py --preview -B "$BUILD_DIR" \
+            -DMYBOT_BOARD=esp32-s31-korvo-1 \
+            -DSDKCONFIG="$BUILD_DIR/sdkconfig" \
+            -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;${{ matrix.defaults }}" \
+            build
+      - name: Report size, verify S31 link and package firmware
+        run: |
+          source /opt/esp/idf/export.sh >/dev/null
+          idf.py --preview -B "$BUILD_DIR" size
+          mkdir -p "$GITHUB_WORKSPACE/releases"
+          merged="$GITHUB_WORKSPACE/releases/esp32-s31-korvo-1-${{ matrix.language }}.bin"
+          idf.py --preview -B "$BUILD_DIR" merge-bin -o "$merged"
+          python3 scripts/check_s31_build.py --build-dir "$BUILD_DIR" \
+            --language "${{ matrix.language }}" --merged "$merged"
+      - name: Upload firmware
+        uses: actions/upload-artifact@v4
+        with:
+          name: mybot-s31-korvo-1-${{ matrix.language }}-ptime60-no-video-${{ github.sha }}
+          if-no-files-found: error
+          path: |
+            releases/esp32-s31-korvo-1-${{ matrix.language }}.bin
+            releases/esp32-s31-korvo-1-${{ matrix.language }}.manifest.json
+            releases/esp32-s31-korvo-1-${{ matrix.language }}.sha256
+            releases/esp32-s31-korvo-1-${{ matrix.language }}.flash.txt

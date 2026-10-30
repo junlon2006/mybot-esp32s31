@@ -1,0 +1,102 @@
+menu "mybot"
+
+    config MYBOT_PSRAM_ALLOCATIONS
+        bool
+        default y
+        depends on SPIRAM && (SPIRAM_USE_CAPS_ALLOC || SPIRAM_USE_MALLOC)
+        select FREERTOS_TASK_CREATE_ALLOW_EXT_MEM
+        select NVS_ALLOCATE_CACHE_IN_SPIRAM
+        help
+            Platform data and worker stacks use PSRAM. Keep kernel objects,
+            hardware DMA buffers and flash-writing task stacks in internal RAM.
+
+    choice MYBOT_LANGUAGE
+        prompt "Product language"
+        default MYBOT_LANGUAGE_ZH_CN
+
+        config MYBOT_LANGUAGE_ZH_CN
+            bool "Chinese (zh-CN)"
+
+        config MYBOT_LANGUAGE_EN_US
+            bool "English (en-US)"
+    endchoice
+
+    config MYBOT_LANGUAGE_TAG
+        string
+        default "en-US" if MYBOT_LANGUAGE_EN_US
+        default "zh-CN"
+
+    config MYBOT_SERVER_BASE
+        string
+        default "https://botstation.agora.io/api" if MYBOT_LANGUAGE_EN_US
+        default "https://botstation.shengwang.cn/api"
+
+    choice MYBOT_AUDIO_PTIME
+        prompt "Audio packet duration"
+        default MYBOT_AUDIO_PTIME_60
+
+        help
+            The bundled ESP32-S31 Agora RTSA package uses 60 ms audio frames.
+            Other packet durations require a deliberately supplied matching package.
+
+        config MYBOT_AUDIO_PTIME_60
+            bool "60 ms"
+    endchoice
+
+    config MYBOT_AUDIO_PTIME_MS
+        int
+        default 60 if MYBOT_AUDIO_PTIME_60
+
+    config MYBOT_CLOUD_AEC
+        bool "Enable cloud AEC"
+        default y
+
+    config MYBOT_AI_QOS
+        bool "Enable Agora AI QoS"
+        default y
+
+    config MYBOT_FAST_SEND_MULTIPLIER
+        int "Agora fast-send multiplier"
+        range 1 5
+        default 3
+
+    config MYBOT_DEBUG_RESOURCE_MONITOR
+        bool "Enable debug CPU and memory monitor"
+        default n
+        depends on !FREERTOS_SMP
+        select FREERTOS_GENERATE_RUN_TIME_STATS
+        help
+            Log per-core busy time estimated from idle runtime deltas and heap
+            statistics using a low-priority task. Adds scheduler accounting and
+            serial logging overhead; intended for diagnostics only.
+
+    config MYBOT_ENABLE_VIDEO
+        bool
+        default n
+        help
+            Video is intentionally unavailable in the S31 first release.
+
+    config MYBOT_LVGL_UI_LIGHT_THEME
+        bool "Use the LVGL light theme"
+        depends on MYBOT_LVGL_UI
+        default n
+        help
+            Select the light palette at build time. The default is the dark palette.
+
+    config MYBOT_LVGL_UI_ANIMATIONS
+        bool "Animate LVGL conversation status"
+        depends on MYBOT_LVGL_UI
+        default y
+        help
+            Animate small state indicators at up to 5 frames per second while
+            listening, thinking or speaking. These are state animations, not an
+            audio waveform. Overflowing provisioning text can still scroll
+            when this option is disabled.
+
+    config MYBOT_DEBUG_RESOURCE_MONITOR_INTERVAL_MS
+        int "Resource monitor interval (ms)"
+        depends on MYBOT_DEBUG_RESOURCE_MONITOR
+        range 1000 60000
+        default 5000
+
+endmenu

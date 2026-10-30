@@ -1,0 +1,10 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+#ifndef TEST_ESP_HEAP_CAPS_H
+#define TEST_ESP_HEAP_CAPS_H
+#include <stddef.h>
+#define MALLOC_CAP_SPIRAM 1U
+#define MALLOC_CAP_8BIT 2U
+void *heap_caps_calloc(size_t count, size_t size, unsigned int caps);
+void *heap_caps_malloc(size_t size, unsigned int caps);
+void heap_caps_free(void *pointer);
+#endif
