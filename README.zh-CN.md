@@ -24,7 +24,7 @@ ESP32-S31-Korvo-1 V1.1。媒体翻译将板载麦克风音频送往云端，并�
 - 通过 `esp-tls`、系统 CA bundle、SNI 与 hostname 校验实现 HTTPS。
 - 16 kHz 单声道 signed-16 PCM 采集与播放；随附 RTSA 固定使用 60 ms 音频包，其他包长需要
   匹配的 RTSA 构建。
-- Agora RTSA 麦克风/参考音频上行、Cloud AEC、AI QoS、RTM 频道订阅，并订阅响应指定的译音发布者。
+- Agora RTSA 麦克风/参考音频上行、Cloud AEC、可选 AI QoS（默认关闭）、RTM 频道订阅，并订阅响应指定的译音发布者。
 - 单一支持的板型使用共享有界 PCM 播放缓冲和独立 TDM writer。
 - ES8389 使用四个 16-bit Philips TDM 时隙；采集/播放独立挂载，并共享引用计数的 codec/I2S
   资源。

@@ -50,7 +50,7 @@
 #endif
 
 #ifndef MYBOT_AI_QOS
-#define MYBOT_AI_QOS 1 /* AI-driven QoS optimization */
+#define MYBOT_AI_QOS 0 /* AI-driven QoS optimization; opt in explicitly */
 #endif
 
 #if MYBOT_AI_QOS != 0 && MYBOT_AI_QOS != 1

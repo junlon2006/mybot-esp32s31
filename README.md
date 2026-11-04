@@ -28,8 +28,8 @@ and current limitations.
 - HTTPS with `esp-tls`, the system CA bundle, SNI, and hostname verification.
 - 16 kHz mono signed-16 PCM capture and playback with 60 ms packets for the bundled RTSA
   package; other packet durations require a matching RTSA build.
-- Agora RTSA microphone/reference uplink with Cloud AEC and AI QoS, RTM channel subscription,
-  and subscription to the returned translated-audio publisher.
+- Agora RTSA microphone/reference uplink with Cloud AEC and optional AI QoS (disabled by default),
+  RTM channel subscription, and subscription to the returned translated-audio publisher.
 - A shared bounded PCM playback buffer and independent TDM writer on the supported board.
 - ES8389 audio with four 16-bit Philips TDM slots, independent capture/playback attachment,
   and reference-counted codec/I2S ownership.

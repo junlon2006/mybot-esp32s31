@@ -2,6 +2,7 @@
 
 ## Unreleased — standalone S31 listen translation
 
+- Disable AI QoS by default in firmware and the SDK fallback; retain explicit opt-in support.
 - Customize MyBot SDK for one V2VT listen route with persistent source/target selection and a dedicated touch UI.
 - Preserve cloud-AEC MIC/reference audio, G.722 and the bundled 60 ms RTSA cadence.
 - Subscribe only to the returned translated-audio publisher; retain pending cloud cleanup across cancellation, reconnect and restart.

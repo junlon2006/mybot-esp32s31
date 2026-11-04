@@ -60,7 +60,7 @@ menu "mybot"
 
     config MYBOT_AI_QOS
         bool "Enable Agora AI QoS"
-        default y
+        default n
 
     config MYBOT_FAST_SEND_MULTIPLIER
         int "Agora fast-send multiplier"

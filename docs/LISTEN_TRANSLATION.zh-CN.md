@@ -26,7 +26,7 @@ idf.py --preview -B build/listen-zh \
 idf.py --preview -B build/listen-zh -p PORT flash monitor
 ```
 
-保留现有 G.722、16 kHz mono S16、60 ms RTSA 配置，以及 cloud AEC、AI QoS 和快发倍率。云 AEC 上行是 MIC/播放参考交错，RTSA 的 PCM channel 数仍为 1，不能改成普通立体声。先检查最终 `build/listen-zh/sdkconfig` 的服务器和语种，再烧录。
+保留现有 G.722、16 kHz mono S16、60 ms RTSA 配置和 cloud AEC。AI QoS 默认关闭（`CONFIG_MYBOT_AI_QOS=n`），可在 menuconfig 中显式开启；关闭时启动请求发送 `ai_qos=false` 且不附带快发倍率。已有 sdkconfig 中的显式配置优先于默认值。云 AEC 上行是 MIC/播放参考交错，RTSA 的 PCM channel 数仍为 1，不能改成普通立体声。先检查最终 sdkconfig 的服务器、语种和 AI QoS 设置，再烧录。
 
 ## 验收
 

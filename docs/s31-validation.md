@@ -1,6 +1,6 @@
 # S31 validation record
 
-The latest local checks are under [RTC session ownership, language selection and documentation](#2026-11-03-rtc-session-ownership-language-selection-and-documentation). Earlier sections describe the revision tested at that time. Use the manifests and checksums beside delivered images for their current binary identity.
+The latest local checks are under [AI QoS default disabled](#2026-11-04-ai-qos-default-disabled). Earlier sections describe the revision tested at that time. Use the manifests and checksums beside delivered images for their current binary identity.
 
 This records local build/host validation and separately attributed hardware feedback. Basic bidirectional audio passed the user's real-board interoperability test. The user subsequently confirmed normal screen display. Detailed TDM channel/reference mapping, quantitative audio quality, the new touch behavior, power sequencing and long-duration stability are not established by those reports.
 
@@ -219,3 +219,9 @@ Merged image: `esp32-s31-listen-zh-CN.bin`, 2572064 bytes, SHA-256 `8c287ca15037
 - Darwin's GNU compiler does not supply libubsan. GNU runs with the runners' original CI flags passed using the LLVM 17 UBSan runtime, in addition to all 15 ordinary GNU compiler runs. Extra C++ vptr instrumentation with this mixed runtime fails an independent `std::thread` program, so that combination is not claimed as validated. No test sanitizer setting was weakened in the repository.
 - Direct ESP-IDF v6.1 preview Chinese and English builds, size reports, image merging and delivery checks passed in independent build/sdkconfig directories. The pinned RTSA fingerprints, RISC-V/local-AOSL link, disabled video, Chinese-to-English defaults, 60 ms frames and AEC/QoS settings passed their checks.
 - These are local macOS results. Ubuntu 24.04/Python 3.12 GitHub-hosted execution and artifact upload were not performed locally; no board was flashed. Host checks, firmware checks and hardware results remain separate.
+
+## 2026-11-04 AI QoS default disabled
+
+- Firmware Kconfig/defaults and the SDK fallback now disable AI QoS. Explicit opt-in remains available. The client sends `ai_qos=false` and omits the fast-send multiplier when disabled; the RTC audio option is also false.
+- Existing protocol tests passed both explicit feature states (202 + 198 cases). RTC tests passed 17 scenarios with the new default and another 17 with AI QoS explicitly enabled. Full format/SPDX scopes and whitespace checks passed.
+- Direct Chinese and English ESP-IDF v6.1 preview builds passed in fresh `build/listen-zh-qos-off` and `build/listen-en-qos-off` directories. Both merged images passed link and delivery checks. Both generated configurations disable AI QoS, and both client and RTC compile commands contain `MYBOT_AI_QOS=0`. Cloud AEC remains enabled. Existing sdkconfig values are not silently overwritten; use these fresh builds to flash the new defaults. No device was flashed.
