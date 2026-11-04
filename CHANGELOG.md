@@ -3,6 +3,8 @@
 ## Unreleased — standalone S31 listen translation
 
 - Disable AI QoS by default in firmware and the SDK fallback; retain explicit opt-in support.
+- Receive trusted RTM original/translated captions, merge streaming revisions and share a bounded session history across the live/full-text/history pages.
+- Add a common Chinese/Latin-1 caption font with real 2 bpp glyphs and bounded PSRAM text storage.
 - Customize MyBot SDK for one V2VT listen route with persistent source/target selection and a dedicated touch UI.
 - Preserve cloud-AEC MIC/reference audio, G.722 and the bundled 60 ms RTSA cadence.
 - Subscribe only to the returned translated-audio publisher; retain pending cloud cleanup across cancellation, reconnect and restart.
@@ -12,7 +14,7 @@
 - Reject translation starts before UTC is usable, distinguish clock/route/expiry failures, and give translation start a shared 30-second HTTP budget while other requests retain 5 seconds.
 - Bootstrap an unset clock from a validated HTTPS response Date header and configure three SNTP alternatives, so initial translation can proceed when NTP has not answered.
 - Display the active hardware output volume, including restored and adjusted values, through the same volume source used by the controls.
-- Add the native simulator-inspired scene UI, direct language/volume commands, real local media pause/resume, fixed demo captions and preview-only face-to-face/meeting scenes.
+- Add the native simulator-inspired scene UI, direct language/volume commands, real local media pause/resume and preview-only face-to-face/meeting scenes.
 - Clear temporary cleanup status after confirmed session stop and show completion instead of a stale startup-error page, while retaining genuine failures.
 - Finalize RTC after each translation session so another Bot project's App ID can be used; block cloud starts when local RTC cleanup is incomplete.
 - Keep language selection locked until its submitted pair is read back, and correct volume-persistence failure log arguments.

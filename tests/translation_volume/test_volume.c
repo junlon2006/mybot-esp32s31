@@ -14,6 +14,20 @@ static int hardware_volume;
 static bool fail_init, fail_get, fail_set;
 static unsigned reads, sets, renders, tests;
 
+void aosl_msleep(unsigned milliseconds) {
+    (void)milliseconds;
+    abort();
+}
+
+void *aosl_hal_malloc(size_t size) {
+    (void)size;
+    abort();
+}
+void aosl_hal_free(void *memory) {
+    if (memory)
+        abort();
+}
+
 void test_log(const char *format, ...) {
     (void)format;
 }

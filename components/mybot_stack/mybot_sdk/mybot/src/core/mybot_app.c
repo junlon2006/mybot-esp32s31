@@ -5,6 +5,7 @@
 #include <mybot/platform/mybot_platform.h>
 
 #include "mybot_agora_rtc.h"
+#include "mybot_captions.h"
 #include "mybot_device_lifecycle.h"
 #include "mybot_key_internal.h"
 #include "mybot_kv_store_internal.h"
@@ -33,6 +34,12 @@
 #define VOLUME_KEY_STEP 10
 #define VOLUME_READ_RETRY_TICKS (1000 / STATE_TICK_MS)
 #define UI_COMMAND_CAPACITY 8
+#define CAPTION_INBOX_CAPACITY 8
+typedef struct {
+    uint32_t generation;
+    size_t length;
+    char body[];
+} caption_message_t;
 typedef struct {
     aosl_atomic_t running;
     mybot_state_model_t state_model;
@@ -55,6 +62,15 @@ typedef struct {
     /* Snapshots used to reject stale RTM events from a previous conversation. */
     char rtc_channel[128];
     char rtc_agent_uid[MYBOT_RTM_UID_MAX_LEN];
+    mybot_captions_t *captions;
+    aosl_atomic_t caption_model_gate;
+    aosl_atomic_t caption_inbox_gate;
+    caption_message_t *caption_inbox[CAPTION_INBOX_CAPACITY];
+    unsigned caption_head;
+    unsigned caption_count;
+    unsigned caption_dropped;
+    unsigned caption_rejected;
+    bool caption_accepting;
 
     /* Sole owner of application state transitions and control resources. */
     aosl_mpq_t control_mpq;
@@ -104,6 +120,154 @@ static bool runtime_is_running(const mybot_runtime_t *runtime) {
 static void runtime_publish_exit(mybot_runtime_t *runtime) {
     aosl_atomic_inc(&s_exit_generation);
     aosl_atomic_set(&runtime->running, false);
+}
+
+static void caption_lock(aosl_atomic_t *gate) {
+    while (aosl_atomic_cmpxchg(gate, 0, 1) != 0)
+        aosl_msleep(1);
+}
+
+/* Control owns the model. UI copies are nonblocking and never retain its memory. */
+int mybot_ui_copy_caption(uint32_t generation, uint32_t sequence, mybot_caption_t *out) {
+    if (!generation || !sequence || !out || aosl_atomic_cmpxchg(&s_lifecycle_gate, 0, 1) != 0)
+        return -1;
+    mybot_runtime_t *runtime = &s_default_runtime;
+    int result = -1;
+    if (aosl_atomic_cmpxchg(&runtime->caption_model_gate, 0, 1) == 0) {
+        mybot_caption_state_t state = {0};
+        if (runtime_is_running(runtime) && runtime->captions) {
+            mybot_captions_get_state(runtime->captions, &state);
+            if (state.generation == generation)
+                result = mybot_captions_copy(runtime->captions, sequence, out);
+        }
+        aosl_atomic_set(&runtime->caption_model_gate, 0);
+    }
+    lifecycle_unlock();
+    return result;
+}
+
+/* Inbox ownership is independent of queued AOSL notifications and survives a
+ * blocked control worker. It is drained/freed explicitly before shutdown. */
+static bool drain_caption_inbox(mybot_runtime_t *runtime) {
+    bool changed = false;
+    unsigned invalid = 0;
+    for (unsigned n = 0; n < CAPTION_INBOX_CAPACITY; ++n) {
+        caption_lock(&runtime->caption_inbox_gate);
+        caption_message_t *message = NULL;
+        if (runtime->caption_count) {
+            message = runtime->caption_inbox[runtime->caption_head];
+            runtime->caption_inbox[runtime->caption_head] = NULL;
+            runtime->caption_head = (runtime->caption_head + 1) % CAPTION_INBOX_CAPACITY;
+            runtime->caption_count--;
+        }
+        aosl_atomic_set(&runtime->caption_inbox_gate, 0);
+        if (!message)
+            break;
+        if (message->generation == (uint32_t)aosl_atomic_read(&runtime->conversation_generation)) {
+            caption_lock(&runtime->caption_model_gate);
+            if (runtime->captions) {
+                int result =
+                    mybot_captions_apply_json(runtime->captions, message->body, message->length);
+                changed |= result > 0;
+                invalid += result < 0;
+            }
+            aosl_atomic_set(&runtime->caption_model_gate, 0);
+        }
+        aosl_hal_free(message);
+    }
+    caption_lock(&runtime->caption_inbox_gate);
+    unsigned dropped = runtime->caption_dropped;
+    unsigned rejected = runtime->caption_rejected;
+    runtime->caption_dropped = 0;
+    runtime->caption_rejected = 0;
+    aosl_atomic_set(&runtime->caption_inbox_gate, 0);
+    if (invalid || dropped)
+        AOSL_LOG_WRN("event=caption invalid=%u dropped=%u", invalid, dropped);
+    if (rejected)
+        AOSL_LOG_WRN("event=caption rejected_source_or_channel=%u", rejected);
+    return changed;
+}
+
+static void close_caption_inbox(mybot_runtime_t *runtime, bool keep_received) {
+    caption_lock(&runtime->caption_inbox_gate);
+    runtime->caption_accepting = false;
+    aosl_atomic_set(&runtime->caption_inbox_gate, 0);
+    if (keep_received)
+        (void)drain_caption_inbox(runtime);
+    caption_lock(&runtime->caption_inbox_gate);
+    while (runtime->caption_count) {
+        aosl_hal_free(runtime->caption_inbox[runtime->caption_head]);
+        runtime->caption_inbox[runtime->caption_head] = NULL;
+        runtime->caption_head = (runtime->caption_head + 1) % CAPTION_INBOX_CAPACITY;
+        runtime->caption_count--;
+    }
+    runtime->caption_head = runtime->caption_dropped = 0;
+    runtime->caption_rejected = 0;
+    aosl_atomic_set(&runtime->caption_inbox_gate, 0);
+}
+
+static void refresh_caption_metadata(mybot_runtime_t *runtime) {
+    caption_lock(&runtime->caption_model_gate);
+    mybot_captions_get_state(runtime->captions, &runtime->presenter.captions);
+    aosl_atomic_set(&runtime->caption_model_gate, 0);
+}
+
+static void receive_caption(mybot_runtime_t *runtime, const char *channel, const char *sender,
+                            const void *data, size_t length) {
+    if (!sender || !data || !length || length > MYBOT_CAPTION_MESSAGE_CAPACITY ||
+        aosl_atomic_cmpxchg(&runtime->caption_inbox_gate, 0, 1) != 0)
+        return;
+    bool allowed = runtime_is_running(runtime) && runtime->caption_accepting &&
+                   runtime->rtc_agent_uid[0] && strcmp(sender, runtime->rtc_agent_uid) == 0 &&
+                   (!channel || strcmp(channel, runtime->rtc_channel) == 0);
+    uint32_t generation = (uint32_t)aosl_atomic_read(&runtime->conversation_generation);
+    if (!allowed && runtime->caption_accepting && runtime_is_running(runtime))
+        runtime->caption_rejected++;
+    aosl_atomic_set(&runtime->caption_inbox_gate, 0);
+    if (!allowed)
+        return;
+    caption_message_t *message = aosl_hal_malloc(sizeof(*message) + length + 1);
+    if (!message)
+        return;
+    message->generation = generation;
+    message->length = length;
+    memcpy(message->body, data, length);
+    message->body[length] = '\0';
+    if (aosl_atomic_cmpxchg(&runtime->caption_inbox_gate, 0, 1) != 0) {
+        aosl_hal_free(message);
+        return;
+    }
+    if (!runtime_is_running(runtime) || !runtime->caption_accepting ||
+        generation != (uint32_t)aosl_atomic_read(&runtime->conversation_generation)) {
+        aosl_atomic_set(&runtime->caption_inbox_gate, 0);
+        aosl_hal_free(message);
+        return;
+    }
+    caption_message_t *retired = NULL;
+    if (runtime->caption_count == CAPTION_INBOX_CAPACITY) {
+        retired = runtime->caption_inbox[runtime->caption_head];
+        runtime->caption_head = (runtime->caption_head + 1) % CAPTION_INBOX_CAPACITY;
+        runtime->caption_count--;
+        runtime->caption_dropped++;
+    }
+    unsigned tail = (runtime->caption_head + runtime->caption_count) % CAPTION_INBOX_CAPACITY;
+    runtime->caption_inbox[tail] = message;
+    runtime->caption_count++;
+    aosl_atomic_set(&runtime->caption_inbox_gate, 0);
+    aosl_hal_free(retired);
+}
+
+static void rtc_on_caption_direct(const char *sender, const void *data, size_t len,
+                                  const char *custom_type, void *user_data) {
+    (void)custom_type;
+    receive_caption(user_data, NULL, sender, data, len);
+}
+
+static void rtc_on_caption_channel(const char *channel, const char *sender, const void *data,
+                                   size_t len, const char *custom_type, void *user_data) {
+    (void)custom_type;
+    if (channel)
+        receive_caption(user_data, channel, sender, data, len);
 }
 
 static void control_start_conversation(mybot_runtime_t *runtime) {
@@ -462,6 +626,13 @@ static void dev_on_conversation_start(const mybot_device_conversation_t *params,
         mybot_device_lifecycle_notify_conversation_ended(&runtime->lifecycle);
         return;
     }
+    close_caption_inbox(runtime, false);
+    aosl_atomic_inc(&runtime->conversation_generation);
+    caption_lock(&runtime->caption_model_gate);
+    mybot_captions_reset(runtime->captions,
+                         (uint32_t)aosl_atomic_read(&runtime->conversation_generation));
+    aosl_atomic_set(&runtime->caption_model_gate, 0);
+    refresh_caption_metadata(runtime);
     if (mybot_media_pipeline_flush_session(&runtime->media) < 0) {
         AOSL_LOG_ERR("failed to flush media session before RTC join");
         mybot_device_lifecycle_notify_conversation_ended(&runtime->lifecycle);
@@ -475,14 +646,18 @@ static void dev_on_conversation_start(const mybot_device_conversation_t *params,
         mybot_device_lifecycle_notify_conversation_ended(&runtime->lifecycle);
         return;
     }
+    caption_lock(&runtime->caption_inbox_gate);
     snprintf(runtime->rtc_channel, sizeof(runtime->rtc_channel), "%s", params->rtc_channel);
     snprintf(runtime->rtc_agent_uid, sizeof(runtime->rtc_agent_uid), "%s", params->rtc_agent_uid);
-    aosl_atomic_inc(&runtime->conversation_generation);
+    runtime->caption_accepting = runtime->captions != NULL;
+    aosl_atomic_set(&runtime->caption_inbox_gate, 0);
     callbacks.on_remote_audio = rtc_on_remote_audio;
     callbacks.on_state_changed = rtc_on_state_changed;
     callbacks.on_token_will_expire = rtc_on_token_will_expire;
     callbacks.on_rtm_event = rtc_on_rtm_event;
     callbacks.on_rtm_subscribe_result = rtc_on_rtm_subscribe_result;
+    callbacks.on_rtm_data = rtc_on_caption_direct;
+    callbacks.on_rtm_subscribe_data = rtc_on_caption_channel;
 #if MYBOT_ENABLE_VIDEO
     callbacks.on_video_key_frame_requested = rtc_on_video_key_frame_requested;
     callbacks.on_video_target_bitrate_changed = rtc_on_video_target_bitrate_changed;
@@ -508,9 +683,13 @@ static void dev_on_conversation_start(const mybot_device_conversation_t *params,
 static void dev_on_conversation_stop(void *user_data) {
     mybot_runtime_t *runtime = user_data;
     aosl_atomic_set(&runtime->media_cancel_requested, true);
+    close_caption_inbox(runtime, true);
+    refresh_caption_metadata(runtime);
     aosl_atomic_inc(&runtime->conversation_generation);
+    caption_lock(&runtime->caption_inbox_gate);
     runtime->rtc_channel[0] = '\0';
     runtime->rtc_agent_uid[0] = '\0';
+    aosl_atomic_set(&runtime->caption_inbox_gate, 0);
 #if MYBOT_ENABLE_VIDEO
     if (mybot_video_stop(&runtime->video) < 0) {
         AOSL_LOG_ERR("failed to stop video source");
@@ -534,6 +713,7 @@ static void dev_on_conversation_stop(void *user_data) {
 }
 
 static void refresh_translation_view(mybot_runtime_t *runtime) {
+    refresh_caption_metadata(runtime);
     int volume = -1;
     (void)mybot_media_pipeline_get_volume(&runtime->media, &volume);
     runtime->volume_retry_ticks = 0;
@@ -753,6 +933,7 @@ static void control_tick_timer(aosl_timer_t id, const aosl_ts_t *now, uintptr_t 
     mybot_runtime_t *runtime = (mybot_runtime_t *)argv[0];
     if (runtime_is_running(runtime)) {
         mybot_device_lifecycle_tick(&runtime->lifecycle);
+        bool captions_changed = drain_caption_inbox(runtime);
         bool ready = aosl_atomic_read(&runtime->media.rtc_connected) != 0;
         bool media_changed = ready != runtime->presenter.media_ready;
         /* Recover an unavailable read without polling healthy hardware volume controls. */
@@ -760,14 +941,16 @@ static void control_tick_timer(aosl_timer_t id, const aosl_ts_t *now, uintptr_t 
                             ++runtime->volume_retry_ticks >= VOLUME_READ_RETRY_TICKS;
         if (media_changed || retry_volume) {
             refresh_translation_view(runtime);
-            if (media_changed || runtime->presenter.volume >= 0) {
-                mybot_presenter_render_state(&runtime->presenter, &runtime->state_model);
-            }
+        } else if (captions_changed) {
+            refresh_caption_metadata(runtime);
         }
+        if (media_changed || captions_changed || (retry_volume && runtime->presenter.volume >= 0))
+            mybot_presenter_render_state(&runtime->presenter, &runtime->state_model);
     }
 }
 
 static void cleanup_services(mybot_runtime_t *runtime) {
+    close_caption_inbox(runtime, false);
     close_ui_commands(runtime);
     aosl_atomic_set(&runtime->service_results_enabled, false);
     mybot_key_deinit(&runtime->key);
@@ -821,6 +1004,11 @@ static int start_services(mybot_runtime_t *runtime) {
         goto fail;
     }
     runtime->media_recovery_required = false;
+    caption_lock(&runtime->caption_model_gate);
+    runtime->captions = mybot_captions_create();
+    aosl_atomic_set(&runtime->caption_model_gate, 0);
+    if (!runtime->captions)
+        AOSL_LOG_WRN("event=caption result=unavailable reason=no_memory");
 
 #if MYBOT_ENABLE_VIDEO
     mybot_video_init(&runtime->video);
@@ -874,6 +1062,10 @@ fail:
     if (mybot_media_pipeline_destroy(&runtime->media) < 0) {
         AOSL_LOG_ERR("media pipeline destroy skipped because stop was incomplete");
     }
+    caption_lock(&runtime->caption_model_gate);
+    mybot_captions_destroy(runtime->captions);
+    runtime->captions = NULL;
+    aosl_atomic_set(&runtime->caption_model_gate, 0);
     return -1;
 }
 
@@ -1055,6 +1247,11 @@ static void control_stop_runtime(mybot_runtime_t *runtime) {
     if (mybot_media_pipeline_destroy(&runtime->media) < 0) {
         AOSL_LOG_ERR("media pipeline destroy skipped because stop was incomplete");
     }
+
+    caption_lock(&runtime->caption_model_gate);
+    mybot_captions_destroy(runtime->captions);
+    runtime->captions = NULL;
+    aosl_atomic_set(&runtime->caption_model_gate, 0);
 
     mybot_state_model_reset(&runtime->state_model);
     AOSL_LOG_NTC("application control stopped");

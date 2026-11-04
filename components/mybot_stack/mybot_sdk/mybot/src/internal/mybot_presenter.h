@@ -4,6 +4,7 @@
 
 #include "mybot_lcd_internal.h"
 #include "mybot_state_model.h"
+#include <mybot/mybot_captions.h>
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -21,6 +22,7 @@ typedef struct {
     int volume;
     bool media_ready;
     bool paused;
+    mybot_caption_state_t captions;
 } mybot_presenter_t;
 
 int mybot_presenter_init(mybot_presenter_t *presenter);

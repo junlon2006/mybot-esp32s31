@@ -92,8 +92,9 @@ reconnection.
 Open Media translation, select input/output languages and use its start/stop controls. Pause
 retains the cloud session; empty screen taps have no action. A short PLAY press starts/stops
 translation, cancels a pending start or retries cleanup. SET requests pairing, a 3-second SET hold
-requests provisioning, and VOL+/VOL- change and persist volume in NVS. Captions, full text,
-history and brightness are labelled demonstrations. See the [translation UI](docs/PLATFORM_UI.md).
+requests provisioning, and VOL+/VOL- change and persist volume in NVS. Live captions, scrollable
+full text and session history share RTM original/translated text; brightness remains a demo.
+See the [translation UI](docs/PLATFORM_UI.md).
 
 Use `idf.py --preview -B build/korvo-s31 menuconfig` under `mybot` to select the product language,
 initial translation languages, Cloud AEC and AI QoS. The product language selects UI text and

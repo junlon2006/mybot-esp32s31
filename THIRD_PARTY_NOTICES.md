@@ -37,7 +37,7 @@ ADC software calibration is copied unchanged from [Espressif's S31 BSP](https://
 
 Pairing prompts and digit recordings derive from MyBot's 16 kHz mono signed-16 PCM assets at `7854c1d5798004485aa1947ff55116bdb7ab0237`, under Apache-2.0. Source/output hashes, encoding commands and provisioning-prompt details are retained in `components/mybot_platform/assets/locales/SOURCES.json`. Build-generated PCM keeps the source asset's terms.
 
-The translation view's Chinese glyph subset uses Noto Sans SC Regular (Adobe copyright 2014, 2015) and retains SIL OFL 1.1 in `LVGL_VIEW_FONT_LICENSE.txt`. The pinned source-font hash and embedded license provenance are recorded in `VENDORED_SOURCES.md`; the original TTF is not redistributed. Built-in LVGL Montserrat and Font Awesome terms remain at `components/lvgl/scripts/built_in_font/font_license/Montserrat/OFL.txt` and `FontAwesome5/LICENSE.txt`.
+The translation view's UI fonts and live-caption subsets use Noto Sans SC Regular (Adobe copyright 2014, 2015) and retain SIL OFL 1.1 in `LVGL_VIEW_FONT_LICENSE.txt`. The caption fonts add the 6,763 GB2312 Han characters, Latin-1 and common punctuation using the same source font. The pinned source-font hash and embedded license provenance are recorded in `VENDORED_SOURCES.md`; the original TTF is not redistributed. Built-in LVGL Montserrat and Font Awesome terms remain at `components/lvgl/scripts/built_in_font/font_license/Montserrat/OFL.txt` and `FontAwesome5/LICENSE.txt`.
 
 The four local state emoji are rasterized Noto Color Emoji glyphs supplied by the pinned `78/noto-fonts` package. Their original PNGs, Google copyright, SIL OFL 1.1 and per-file provenance remain under `components/mybot_platform/assets/ui/noto_emoji/`.
 

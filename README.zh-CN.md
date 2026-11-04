@@ -79,7 +79,8 @@ NVS 中没有 Wi-Fi 凭据时，设备创建名为 `mybot-xxxx` 的配置 AP，�
 
 进入媒体翻译，选择输入/目标语言后使用开始/停止控件；暂停保留云会话，空白区域轻点不执行
 操作。PLAY 短按开始/停止翻译、取消待启动会话或重试清理。SET 短按请求配对，SET 长按
-3 秒请求配网，VOL+/VOL- 调整并持久化音量到 NVS。字幕、全文、历史和亮度均标为演示，
+3 秒请求配网，VOL+/VOL- 调整并持久化音量到 NVS。字幕、可滚动全文和本次历史接收实时
+RTM 原文/译文；亮度仍为演示，
 详见[翻译界面](docs/PLATFORM_UI.zh-CN.md)。
 
 使用 `idf.py --preview -B build/korvo-s31 menuconfig` 的 `mybot` 菜单选择产品语言、

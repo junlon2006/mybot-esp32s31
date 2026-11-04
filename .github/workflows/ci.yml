@@ -27,7 +27,7 @@ jobs:
           find main components/mybot_platform tests/korvo_s31_display \
             tests/korvo_s31_audio tests/korvo_s31_input tests/pcm_playback_buffer tests/media_pause \
             tests/conversation_http_trace tests/http_time_sync tests/translation_http tests/translation_ui tests/translation_client \
-            tests/translation_lifecycle tests/translation_rtc tests/translation_control tests/translation_state tests/translation_volume \
+            tests/translation_lifecycle tests/translation_rtc tests/translation_control tests/translation_state tests/translation_volume tests/translation_captions \
             -path '*/mybot_stack/agora_rtc' -prune -o \
             -type f ! -path '*/boards/esp32-s31-korvo-1/reference/*' \
             \( -name '*.c' -o -name '*.h' -o -name '*.cc' -o -name '*.cpp' \) \
@@ -45,7 +45,8 @@ jobs:
             "$sdk/src/internal/mybot_agora_rtc.h" "$sdk/src/support/mybot_http_client.c" \
             "$sdk/src/internal/mybot_http_client.h" "$sdk/src/media/mybot_media_pipeline.c" \
             "$sdk/src/internal/mybot_media_pipeline.h" "$sdk/include/mybot/mybot_ui.h" \
-            "$sdk/src/core/mybot_ui.c"; do
+            "$sdk/src/core/mybot_ui.c" "$sdk/include/mybot/mybot_captions.h" \
+            "$sdk/src/internal/mybot_captions.h" "$sdk/src/core/mybot_captions.c"; do
             clang-format --dry-run --Werror "$file"
             head -n 5 "$file" | grep -q 'SPDX-License-Identifier:'
           done
@@ -64,7 +65,7 @@ jobs:
           find main components/mybot_platform tests/korvo_s31_display \
             tests/korvo_s31_audio tests/korvo_s31_input tests/pcm_playback_buffer tests/media_pause \
             tests/conversation_http_trace tests/http_time_sync tests/translation_http tests/translation_ui tests/translation_client \
-            tests/translation_lifecycle tests/translation_rtc tests/translation_control tests/translation_state tests/translation_volume \
+            tests/translation_lifecycle tests/translation_rtc tests/translation_control tests/translation_state tests/translation_volume tests/translation_captions \
             -path '*/mybot_stack/agora_rtc' -prune -o -type f \
             \( -name '*.c' -o -name '*.h' -o -name '*.cc' -o -name '*.cpp' \) \
             -print0 | while IFS= read -r -d '' file; do
@@ -86,6 +87,7 @@ jobs:
           sh tests/translation_client/run.sh
           sh tests/translation_lifecycle/run.sh
           sh tests/translation_rtc/run.sh
+          sh tests/translation_captions/run.sh
           sh tests/translation_control/run.sh
           sh tests/translation_state/run.sh
           sh tests/translation_volume/run.sh

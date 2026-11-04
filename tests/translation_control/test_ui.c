@@ -2,6 +2,7 @@
 #include <assert.h>
 #include <stdarg.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "../../components/mybot_stack/mybot_sdk/mybot/src/core/mybot_app.c"
@@ -18,6 +19,13 @@ static unsigned conversation_starts, session_ends, rtc_finalizations;
 static bool fail_queue, fail_volume, fail_pause, fail_end_session, paused;
 static int hardware_volume, rtc_fini_result;
 static mybot_lcd_content_t displayed;
+
+void *aosl_hal_malloc(size_t size) {
+    return malloc(size);
+}
+void aosl_hal_free(void *memory) {
+    free(memory);
+}
 
 void test_log(const char *format, ...) {
     (void)format;

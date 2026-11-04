@@ -2,6 +2,7 @@
 #pragma once
 #include <stdbool.h>
 #include <stdint.h>
+#include <stddef.h>
 struct lv_obj_t;
 struct lv_event_t;
 struct lv_display_t;
@@ -30,6 +31,10 @@ enum lv_obj_flag_t {
 #define LV_OPA_30 76
 enum lv_text_align_t { LV_TEXT_ALIGN_CENTER, LV_TEXT_ALIGN_LEFT, LV_TEXT_ALIGN_RIGHT };
 #define LV_LABEL_LONG_WRAP 0
+#define LV_LABEL_LONG_DOT 1
+#define LV_SIZE_CONTENT (-1)
+#define LV_FLEX_FLOW_COLUMN 1
+#define LV_DIR_VER 1
 enum lv_event_code_t {
     LV_EVENT_ALL,
     LV_EVENT_CLICKED,
@@ -43,6 +48,8 @@ enum lv_event_code_t {
 #define LV_PART_INDICATOR 1
 #define LV_PART_KNOB 2
 #define LV_ANIM_OFF 0
+void *lv_malloc(size_t);
+void lv_free(void *);
 lv_obj_t *lv_obj_create(lv_obj_t *);
 lv_obj_t *lv_label_create(lv_obj_t *);
 void lv_obj_delete(lv_obj_t *);
@@ -52,6 +59,10 @@ void lv_obj_remove_flag(lv_obj_t *, lv_obj_flag_t);
 void lv_obj_add_flag(lv_obj_t *, lv_obj_flag_t);
 void lv_obj_set_pos(lv_obj_t *, int, int);
 void lv_obj_set_size(lv_obj_t *, int, int);
+void lv_obj_set_scroll_dir(lv_obj_t *, int);
+void lv_obj_set_flex_flow(lv_obj_t *, int);
+void lv_obj_set_style_pad_all(lv_obj_t *, int, int);
+void lv_obj_set_style_pad_row(lv_obj_t *, int, int);
 void lv_obj_set_style_bg_color(lv_obj_t *, lv_color_t, int);
 void lv_obj_set_style_bg_opa(lv_obj_t *, int, int);
 void lv_obj_set_style_radius(lv_obj_t *, int, int);
