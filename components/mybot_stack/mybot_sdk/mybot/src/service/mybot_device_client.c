@@ -148,7 +148,8 @@ static char *build_pair_code_body(const char *device_id, const char *firmware_ve
     return body;
 }
 
-static char *build_conversation_start_body(const char *source_language,
+static char *build_conversation_start_body(mybot_translation_mode_t mode,
+                                           const char *source_language,
                                            const char *target_language) {
     mybot_json_t *root = mybot_json_create_object();
     mybot_json_t *audio = NULL;
@@ -197,9 +198,13 @@ static char *build_conversation_start_body(const char *source_language,
     features = NULL;
 
     translation = mybot_json_create_object();
-    if (!translation || mybot_json_add_string(translation, "mode", "listen") < 0 ||
-        mybot_json_add_string(translation, "remote_language", source_language) < 0 ||
-        mybot_json_add_string(translation, "local_language", target_language) < 0 ||
+    bool bidirectional = mode == MYBOT_TRANSLATION_LISTEN_SPEAK;
+    if (!translation ||
+        mybot_json_add_string(translation, "mode", bidirectional ? "listen_speak" : "listen") < 0 ||
+        mybot_json_add_string(translation, "remote_language",
+                              bidirectional ? target_language : source_language) < 0 ||
+        mybot_json_add_string(translation, "local_language",
+                              bidirectional ? source_language : target_language) < 0 ||
         mybot_json_add_item(root, "translation", translation) < 0) {
         goto done;
     }
@@ -321,71 +326,111 @@ static int reject_translation_route(mybot_device_conversation_t *resp, const cha
     return -1;
 }
 
-static int parse_translation_route(const mybot_json_t *data, const char *source_language,
-                                   const char *target_language, mybot_device_conversation_t *resp) {
+static int parse_translation_route(const mybot_json_t *data, mybot_translation_mode_t mode,
+                                   const char *source_language, const char *target_language,
+                                   mybot_device_conversation_t *resp) {
     mybot_json_t *session = mybot_json_get_object_item(data, "translation_session");
     mybot_json_t *routes = mybot_json_get_object_item(session, "routes");
+    bool bidirectional = mode == MYBOT_TRANSLATION_LISTEN_SPEAK;
     if (!json_string_is(data, "voice_agent_type", "v2vt") ||
         !json_string_is(data, "data_channel", "rtm") ||
-        !json_string_is(data, "status", "started") || !json_string_is(session, "mode", "listen") ||
-        !routes || routes->type != MYBOT_JSON_ARRAY || !routes->child || routes->child->next) {
+        !json_string_is(data, "status", "started") ||
+        !json_string_is(session, "mode", bidirectional ? "listen_speak" : "listen") || !routes ||
+        routes->type != MYBOT_JSON_ARRAY || !routes->child) {
         return reject_translation_route(resp, "INVALID_TRANSLATION_ROUTE", "session_contract");
     }
-    mybot_json_t *route = routes->child;
-    mybot_json_t *rtc = mybot_json_get_object_item(route, "rtc");
-    if (route->type != MYBOT_JSON_OBJECT || !json_string_is(route, "direction", "listen") ||
-        !json_string_is(route, "input_role", "remote_original") ||
-        !json_string_is(route, "output_role", "local_translation") ||
-        copy_required_json_string(rtc, "app_id", resp->rtc_app_id, sizeof(resp->rtc_app_id)) < 0 ||
-        copy_required_json_string(rtc, "channel", resp->rtc_channel, sizeof(resp->rtc_channel)) <
-            0 ||
-        copy_required_json_string(rtc, "uid", resp->rtc_uid, sizeof(resp->rtc_uid)) < 0 ||
-        copy_required_json_string(rtc, "token", resp->rtc_token, sizeof(resp->rtc_token)) < 0 ||
-        copy_required_json_string(route, "agent_uid", resp->rtc_agent_uid,
-                                  sizeof(resp->rtc_agent_uid)) < 0 ||
-        copy_required_json_string(route, "source_language", resp->source_language,
-                                  sizeof(resp->source_language)) < 0 ||
-        copy_required_json_string(route, "target_language", resp->target_language,
-                                  sizeof(resp->target_language)) < 0 ||
-        !account_is_valid(resp->rtc_app_id) ||
-        !mybot_http_header_value_is_safe(resp->rtc_channel, false) ||
-        !mybot_http_header_value_is_safe(resp->rtc_token, false) ||
-        !account_is_valid(resp->rtc_uid) || !account_is_valid(resp->rtc_agent_uid) ||
-        strcmp(resp->rtc_uid, resp->rtc_agent_uid) == 0 ||
-        strcmp(resp->source_language, source_language) != 0 ||
-        strcmp(resp->target_language, target_language) != 0) {
-        return reject_translation_route(resp, "INVALID_TRANSLATION_ROUTE",
-                                        "roles_credentials_or_languages");
-    }
-    mybot_json_t *tts = mybot_json_get_object_item(route, "tts_enabled");
-    if (tts && tts->type == MYBOT_JSON_FALSE) {
-        return reject_translation_route(resp, "TRANSLATION_TTS_DISABLED", "tts_disabled");
-    }
-    if (!tts || tts->type != MYBOT_JSON_TRUE ||
-        copy_required_json_string(route, "audio_publisher_uid", resp->audio_publisher_uid,
-                                  sizeof(resp->audio_publisher_uid)) < 0 ||
-        !account_is_valid(resp->audio_publisher_uid) ||
-        strcmp(resp->audio_publisher_uid, resp->rtc_agent_uid) != 0) {
-        return reject_translation_route(resp, "INVALID_TRANSLATION_ROUTE", "audio_publisher");
-    }
-    int64_t parent_expiry;
-    const char *route_expiry = mybot_json_get_string(mybot_json_get_object_item(rtc, "expires_at"));
     const char *session_expiry =
         mybot_json_get_string(mybot_json_get_object_item(data, "expires_at"));
-    if (parse_utc_expiry(route_expiry, &resp->expires_at) < 0 ||
-        parse_utc_expiry(session_expiry, &parent_expiry) < 0) {
+    if (parse_utc_expiry(session_expiry, &resp->expires_at) < 0)
         return reject_translation_route(resp, "INVALID_TRANSLATION_EXPIRY", "utc_timestamp");
+    unsigned seen = 0;
+    for (const mybot_json_t *route = routes->child; route; route = route->next) {
+        bool listen = json_string_is(route, "direction", "listen");
+        bool speak = json_string_is(route, "direction", "speak");
+        unsigned index = listen ? 0 : 1;
+        if (route->type != MYBOT_JSON_OBJECT || (!listen && !speak) || (speak && !bidirectional) ||
+            (seen & (1U << index)))
+            return reject_translation_route(resp, "INVALID_TRANSLATION_ROUTE", "route_direction");
+        seen |= 1U << index;
+        mybot_device_translation_route_t *out = &resp->routes[index];
+        out->direction =
+            listen ? MYBOT_TRANSLATION_DIRECTION_LISTEN : MYBOT_TRANSLATION_DIRECTION_SPEAK;
+        const mybot_json_t *rtc = mybot_json_get_object_item(route, "rtc");
+        const char *expected_source = listen && bidirectional ? target_language : source_language;
+        const char *expected_target = listen && bidirectional ? source_language : target_language;
+        if (!json_string_is(route, "input_role", listen ? "remote_original" : "local_original") ||
+            !json_string_is(route, "output_role",
+                            listen ? "local_translation" : "remote_translation") ||
+            copy_required_json_string(rtc, "app_id", out->rtc_app_id, sizeof(out->rtc_app_id)) <
+                0 ||
+            copy_required_json_string(rtc, "channel", out->rtc_channel, sizeof(out->rtc_channel)) <
+                0 ||
+            copy_required_json_string(rtc, "uid", out->rtc_uid, sizeof(out->rtc_uid)) < 0 ||
+            copy_required_json_string(rtc, "token", out->rtc_token, sizeof(out->rtc_token)) < 0 ||
+            copy_required_json_string(route, "agent_uid", out->rtc_agent_uid,
+                                      sizeof(out->rtc_agent_uid)) < 0 ||
+            copy_required_json_string(route, "source_language", out->source_language,
+                                      sizeof(out->source_language)) < 0 ||
+            copy_required_json_string(route, "target_language", out->target_language,
+                                      sizeof(out->target_language)) < 0 ||
+            !account_is_valid(out->rtc_app_id) ||
+            !mybot_http_header_value_is_safe(out->rtc_channel, false) ||
+            !mybot_http_header_value_is_safe(out->rtc_token, false) ||
+            !account_is_valid(out->rtc_uid) || !account_is_valid(out->rtc_agent_uid) ||
+            strcmp(out->rtc_uid, out->rtc_agent_uid) == 0 ||
+            strcmp(out->source_language, expected_source) ||
+            strcmp(out->target_language, expected_target)) {
+            return reject_translation_route(resp, "INVALID_TRANSLATION_ROUTE",
+                                            "roles_credentials_or_languages");
+        }
+        const mybot_json_t *tts = mybot_json_get_object_item(route, "tts_enabled");
+        if (!tts || (tts->type != MYBOT_JSON_TRUE && tts->type != MYBOT_JSON_FALSE))
+            return reject_translation_route(resp, "INVALID_TRANSLATION_ROUTE", "tts_type");
+        out->tts_enabled = tts->type == MYBOT_JSON_TRUE;
+        if (speak && !out->tts_enabled)
+            return reject_translation_route(resp, "TRANSLATION_TTS_DISABLED", "speak_tts_disabled");
+        const mybot_json_t *publisher = mybot_json_get_object_item(route, "audio_publisher_uid");
+        if (out->tts_enabled) {
+            if (copy_required_json_string(route, "audio_publisher_uid", out->audio_publisher_uid,
+                                          sizeof(out->audio_publisher_uid)) < 0 ||
+                !account_is_valid(out->audio_publisher_uid) ||
+                strcmp(out->audio_publisher_uid, out->rtc_agent_uid))
+                return reject_translation_route(resp, "INVALID_TRANSLATION_ROUTE",
+                                                "audio_publisher");
+        } else if (!publisher || publisher->type != MYBOT_JSON_NULL) {
+            return reject_translation_route(resp, "INVALID_TRANSLATION_ROUTE",
+                                            "disabled_publisher");
+        }
+        const char *route_expiry =
+            mybot_json_get_string(mybot_json_get_object_item(rtc, "expires_at"));
+        if (parse_utc_expiry(route_expiry, &out->expires_at) < 0 ||
+            out->expires_at != resp->expires_at)
+            return reject_translation_route(resp, "INVALID_TRANSLATION_EXPIRY", "route_expiry");
     }
-    if (parent_expiry != resp->expires_at) {
-        return reject_translation_route(resp, "INVALID_TRANSLATION_EXPIRY", "expiry_mismatch");
+    if (seen != (bidirectional ? 3U : 1U))
+        return reject_translation_route(resp, "INVALID_TRANSLATION_ROUTE", "missing_route");
+    if (bidirectional) {
+        const mybot_device_translation_route_t *listen = &resp->routes[0];
+        const mybot_device_translation_route_t *speak = &resp->routes[1];
+        if (strcmp(listen->rtc_app_id, speak->rtc_app_id) ||
+            strcmp(listen->rtc_channel, speak->rtc_channel))
+            return reject_translation_route(resp, "INVALID_TRANSLATION_ROUTE",
+                                            "project_or_channel");
+        const char *identities[] = {listen->rtc_uid, listen->rtc_agent_uid, speak->rtc_uid,
+                                    speak->rtc_agent_uid};
+        for (unsigned i = 0; i < 4; ++i)
+            for (unsigned j = i + 1; j < 4; ++j)
+                if (!strcmp(identities[i], identities[j]))
+                    return reject_translation_route(resp, "INVALID_TRANSLATION_ROUTE",
+                                                    "identity_collision");
     }
     time_t now = time(NULL);
-    if (now < 1577836800) {
+    if (now < 1577836800)
         return reject_translation_route(resp, "TIME_NOT_SYNCED", "local_utc_unavailable");
-    }
-    if (resp->expires_at <= (int64_t)now) {
+    if (resp->expires_at <= (int64_t)now)
         return reject_translation_route(resp, "TRANSLATION_EXPIRED", "token_expired");
-    }
+    resp->mode = mode;
+    resp->route_count = bidirectional ? 2 : 1;
     return 0;
 }
 
@@ -535,13 +580,17 @@ done:
 }
 
 int mybot_device_client_start_conversation(const char *base_url, const char *device_id,
-                                           const char *device_token, const char *source_language,
-                                           const char *target_language,
+                                           const char *device_token, mybot_translation_mode_t mode,
+                                           const char *source_language, const char *target_language,
                                            mybot_device_conversation_t *resp) {
     if (!resp) {
         return -1;
     }
     memset(resp, 0, sizeof(*resp));
+    if (mode != MYBOT_TRANSLATION_LISTEN && mode != MYBOT_TRANSLATION_LISTEN_SPEAK) {
+        set_start_error(resp, "INVALID_TRANSLATION_MODE");
+        return -1;
+    }
     if (!base_url || !device_id || !device_token || !language_is_valid(source_language) ||
         !language_is_valid(target_language) || strcmp(source_language, target_language) == 0) {
         set_start_error(resp, "INVALID_TRANSLATION_LANGUAGES");
@@ -559,7 +608,7 @@ int mybot_device_client_start_conversation(const char *base_url, const char *dev
         AOSL_LOG_ERR("translation start deferred: local UTC clock not synchronized");
         return -1;
     }
-    char *body = build_conversation_start_body(source_language, target_language);
+    char *body = build_conversation_start_body(mode, source_language, target_language);
     if (!body) {
         set_start_error(resp, "OUT_OF_MEMORY");
         return -1;
@@ -614,7 +663,7 @@ int mybot_device_client_start_conversation(const char *base_url, const char *dev
         set_start_error(resp, "START_RESULT_UNKNOWN");
         goto done;
     }
-    if (parse_translation_route(data, source_language, target_language, resp) < 0) {
+    if (parse_translation_route(data, mode, source_language, target_language, resp) < 0) {
         if (!resp->error_code[0]) {
             set_start_error(resp, "INVALID_TRANSLATION_ROUTE");
         }

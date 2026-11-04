@@ -6,7 +6,7 @@
 
 目录与 ESP32 工程保持一致：`components/mybot_stack/mybot_sdk/` 是组件包装及项目维护的听译 SDK，`components/mybot_stack/aosl/` 是 AOSL 上游源码及 S31 组件包装，`components/mybot_stack/agora_rtc/` 是固定 S31 RTSA；三者都是独立 ESP-IDF 组件。`main/` 负责启动、设备身份和 MyBot/网络生命周期，`components/mybot_platform/boards/esp32-s31-korvo-1/` 定义硬件、默认值、分区和 ADC 参考源。平台 `services/` 管理 Wi-Fi、HTTPS、NVS、提示音、PCM FIFO 和诊断，`drivers/` 管理 ES8389、ADC 键、触摸和 RGB/LVGL，`internal/` 为私有接口。
 
-平台仅使用 SDK 的公开 `include/mybot/` API。SDK 是项目维护的 `v2vt/listen` 分支，硬件细节留在平台组件；AOSL 除组件包装/S31 适配器外及保留的依赖快照仍不可修改。根 CMake 通过 `EXTRA_COMPONENT_DIRS` 分别注册三个运行时组件，`mybot_stack` 父目录只是 bundle。
+平台仅使用 SDK 的公开 `include/mybot/` API。SDK 是项目维护的 V2VT 媒体/面对面翻译分支，硬件细节留在平台组件；AOSL 除组件包装/S31 适配器外及保留的依赖快照仍不可修改。根 CMake 通过 `EXTRA_COMPONENT_DIRS` 分别注册三个运行时组件，`mybot_stack` 父目录只是 bundle。
 
 板级 `prepare()` 在注册平台前准备硬件；`ensure_network()` 返回前必须获得可用网络。配网先停止 MyBot，连接恢复后返回。输入由板级长期持有，因此 SDK 回调脱离期间 SET 仍可请求配网。
 

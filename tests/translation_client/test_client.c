@@ -52,6 +52,35 @@ static const char service_listen_response[] =
     "\"source_language\":\"zh-CN\",\"target_language\":\"en-US\",\"tts_enabled\":true,"
     "\"output_role\":\"local_translation\"}]}}}";
 
+/* Both routes use one channel, with four independent identities. */
+static const char face_listen_route[] =
+    "{\"direction\":\"listen\",\"input_role\":\"remote_original\","
+    "\"output_role\":\"local_translation\",\"source_language\":\"en-US\","
+    "\"target_language\":\"zh-CN\",\"tts_enabled\":true,"
+    "\"agent_uid\":\"agent-listen\",\"audio_publisher_uid\":\"agent-listen\","
+    "\"rtc\":{\"app_id\":\"face-app\",\"channel\":\"face-channel\","
+    "\"uid\":\"device-listen\",\"token\":\"listen-token\","
+    "\"expires_at\":\"2026-11-03T03:00:00.000Z\"}}";
+static const char face_speak_route[] =
+    "{\"direction\":\"speak\",\"input_role\":\"local_original\","
+    "\"output_role\":\"remote_translation\",\"source_language\":\"zh-CN\","
+    "\"target_language\":\"en-US\",\"tts_enabled\":true,"
+    "\"agent_uid\":\"agent-speak\",\"audio_publisher_uid\":\"agent-speak\","
+    "\"rtc\":{\"app_id\":\"face-app\",\"channel\":\"face-channel\","
+    "\"uid\":\"device-speak\",\"token\":\"speak-token\","
+    "\"expires_at\":\"2026-11-03T03:00:00.000Z\"}}";
+
+static void face_response(char *out, size_t capacity, const char *first, const char *second) {
+    int length =
+        snprintf(out, capacity,
+                 "{\"data\":{\"conversation_id\":\"face-parent\","
+                 "\"voice_agent_type\":\"v2vt\",\"status\":\"started\",\"data_channel\":\"rtm\","
+                 "\"expires_at\":\"2026-11-03T03:00:00.000Z\","
+                 "\"translation_session\":{\"mode\":\"listen_speak\",\"routes\":[%s%s%s]}}}",
+                 first, second ? "," : "", second ? second : "");
+    assert(length > 0 && (size_t)length < capacity);
+}
+
 static int response_status, response_result, http_calls, allocations;
 static int request_timeout;
 static const char *response_body;
@@ -174,11 +203,23 @@ static void respond(int status, int result, const char *body) {
 static int start_languages(mybot_device_conversation_t *session, const char *source,
                            const char *target) {
     int result = mybot_device_client_start_conversation("https://global.invalid/api", "device-1",
-                                                        "device-token", source, target, session);
+                                                        "device-token", MYBOT_TRANSLATION_LISTEN,
+                                                        source, target, session);
     assert(allocations == 0);
     if (http_calls) {
         assert(request_timeout == 30000);
     }
+    checks++;
+    return result;
+}
+
+static int start_face(mybot_device_conversation_t *session) {
+    int result = mybot_device_client_start_conversation(
+        "https://global.invalid/api", "device-1", "device-token", MYBOT_TRANSLATION_LISTEN_SPEAK,
+        "zh-CN", "en-US", session);
+    assert(allocations == 0);
+    if (http_calls)
+        assert(request_timeout == 30000);
     checks++;
     return result;
 }
@@ -241,13 +282,13 @@ static void test_valid_and_request(void) {
     assert(http_calls == 1);
     assert(!session.cleanup_required && !session.start_unknown && !session.error_code[0]);
     assert(strcmp(session.conversation_id, "parent-1") == 0);
-    assert(strcmp(session.rtc_app_id, "route-app") == 0);
-    assert(strcmp(session.rtc_channel, "route-channel") == 0);
-    assert(strcmp(session.rtc_token, "route-token") == 0);
-    assert(strcmp(session.rtc_uid, "01K7M2Z0F00000000000000001") == 0);
-    assert(strcmp(session.audio_publisher_uid, session.rtc_agent_uid) == 0);
-    assert(strcmp(session.source_language, "en-US") == 0);
-    assert(strcmp(session.target_language, "zh-CN") == 0);
+    assert(strcmp(session.routes[0].rtc_app_id, "route-app") == 0);
+    assert(strcmp(session.routes[0].rtc_channel, "route-channel") == 0);
+    assert(strcmp(session.routes[0].rtc_token, "route-token") == 0);
+    assert(strcmp(session.routes[0].rtc_uid, "01K7M2Z0F00000000000000001") == 0);
+    assert(strcmp(session.routes[0].audio_publisher_uid, session.routes[0].rtc_agent_uid) == 0);
+    assert(strcmp(session.routes[0].source_language, "en-US") == 0);
+    assert(strcmp(session.routes[0].target_language, "zh-CN") == 0);
     assert(session.expires_at == 1793674800);
     assert_request("en-US", "zh-CN");
 }
@@ -268,8 +309,8 @@ static void test_service_response_and_clock(void) {
     assert(start_languages(&session, "zh-CN", "en-US") == 0);
     assert(http_calls == 1 && !session.cleanup_required && !session.start_unknown);
     assert(strcmp(session.conversation_id, "conv_rtc_synthetic_demo") == 0);
-    assert(strcmp(session.rtc_uid, "01K7M2Z0F00000000000000001") == 0);
-    assert(strcmp(session.audio_publisher_uid, "01K7M2Z0F00000000000000002") == 0);
+    assert(strcmp(session.routes[0].rtc_uid, "01K7M2Z0F00000000000000001") == 0);
+    assert(strcmp(session.routes[0].audio_publisher_uid, "01K7M2Z0F00000000000000002") == 0);
     assert(session.expires_at == 1793674800);
     assert_request("zh-CN", "en-US");
 
@@ -341,7 +382,16 @@ static void test_tts_and_expiry(void) {
                  sizeof(modified));
     respond(201, 0, modified);
     assert(start(&session) < 0);
-    assert(strcmp(session.error_code, "TRANSLATION_TTS_DISABLED") == 0);
+    assert(strcmp(session.error_code, "INVALID_TRANSLATION_ROUTE") == 0);
+    char caption_only[4096];
+    replace_once(modified, "\"audio_publisher_uid\":\"01K7M2Z0F00000000000000002\"",
+                 "\"audio_publisher_uid\":null", caption_only, sizeof(caption_only));
+    respond(201, 0, caption_only);
+    assert(start(&session) == 0);
+    assert(!session.routes[0].tts_enabled && !session.routes[0].audio_publisher_uid[0]);
+    assert(!session.cleanup_required && !session.start_unknown);
+    respond(201, 0, modified);
+    assert(start(&session) < 0);
     assert(session.cleanup_required && !session.start_unknown);
     replace_once(valid_response, "\"expires_at\":\"2026-11-03T03:00:00.000Z\"",
                  "\"expires_at\":\"2026-02-29T03:00:00.000Z\"", modified, sizeof(modified));
@@ -406,7 +456,8 @@ static void test_local_failures(void) {
     mybot_device_conversation_t session;
     respond(201, 0, valid_response);
     assert(mybot_device_client_start_conversation("https://global.invalid/api", "device-1",
-                                                  "device-token", "en-US", "en-US", &session) < 0);
+                                                  "device-token", MYBOT_TRANSLATION_LISTEN, "en-US",
+                                                  "en-US", &session) < 0);
     assert(!session.start_unknown && !session.cleanup_required && http_calls == 0);
     checks++;
     fail_header_allocation = true;
@@ -468,8 +519,119 @@ static void test_allocation_failures(void) {
     }
 }
 
+static void test_face_routes_and_request(void) {
+    char body[4096];
+    mybot_device_conversation_t session;
+    /* Reversed response order must still normalize listen to slot zero. */
+    face_response(body, sizeof(body), face_speak_route, face_listen_route);
+    respond(201, 0, body);
+    assert(start_face(&session) == 0);
+    assert(session.mode == MYBOT_TRANSLATION_LISTEN_SPEAK && session.route_count == 2);
+    assert(session.routes[0].direction == MYBOT_TRANSLATION_DIRECTION_LISTEN);
+    assert(session.routes[1].direction == MYBOT_TRANSLATION_DIRECTION_SPEAK);
+    assert(strcmp(session.routes[0].rtc_uid, "device-listen") == 0);
+    assert(strcmp(session.routes[1].rtc_uid, "device-speak") == 0);
+    assert(strcmp(session.routes[0].rtc_token, "listen-token") == 0);
+    assert(strcmp(session.routes[1].rtc_token, "speak-token") == 0);
+    assert(strcmp(session.routes[0].source_language, "en-US") == 0);
+    assert(strcmp(session.routes[1].source_language, "zh-CN") == 0);
+    mybot_json_t *root = mybot_json_parse(request_body);
+    mybot_json_t *translation = mybot_json_get_object_item(root, "translation");
+    assert(strcmp(json_string(translation, "mode"), "listen_speak") == 0);
+    assert(strcmp(json_string(translation, "local_language"), "zh-CN") == 0);
+    assert(strcmp(json_string(translation, "remote_language"), "en-US") == 0);
+    mybot_json_delete(root);
+    assert(allocations == 0);
+    char listen[2048], caption_only[2048];
+    replace_once(face_listen_route, "\"tts_enabled\":true", "\"tts_enabled\":false", listen,
+                 sizeof(listen));
+    replace_once(listen, "\"audio_publisher_uid\":\"agent-listen\"", "\"audio_publisher_uid\":null",
+                 caption_only, sizeof(caption_only));
+    face_response(body, sizeof(body), caption_only, face_speak_route);
+    respond(201, 0, body);
+    assert(start_face(&session) == 0);
+    assert(!session.routes[0].tts_enabled && session.routes[1].tts_enabled);
+    assert(!session.routes[0].audio_publisher_uid[0]);
+}
+
+static void test_face_route_rejections(void) {
+    static const struct {
+        const char *needle;
+        const char *replacement;
+    } cases[] = {
+        {"\"direction\":\"speak\"", "\"direction\":\"listen\""},
+        {"\"direction\":\"speak\"", "\"direction\":\"other\""},
+        {"\"input_role\":\"local_original\"", "\"input_role\":\"remote_original\""},
+        {"\"output_role\":\"remote_translation\"", "\"output_role\":\"local_translation\""},
+        {"\"app_id\":\"face-app\"", "\"app_id\":\"other-app\""},
+        {"\"channel\":\"face-channel\"", "\"channel\":\"other-channel\""},
+        {"\"uid\":\"device-speak\"", "\"uid\":\"device-listen\""},
+        {"\"uid\":\"device-speak\"", "\"uid\":\"agent-listen\""},
+        {"\"uid\":\"device-speak\"", "\"uid\":\"agent-speak\""},
+        {"\"agent_uid\":\"agent-speak\"", "\"agent_uid\":\"device-listen\""},
+        {"\"agent_uid\":\"agent-speak\"", "\"agent_uid\":\"agent-listen\""},
+        {"\"source_language\":\"zh-CN\"", "\"source_language\":\"en-US\""},
+        {"\"target_language\":\"en-US\"", "\"target_language\":\"zh-CN\""},
+        {"\"tts_enabled\":true", "\"tts_enabled\":false"},
+        {"\"audio_publisher_uid\":\"agent-speak\"", "\"audio_publisher_uid\":null"},
+        {"\"token\":\"speak-token\"", "\"token\":null"},
+        {"\"expires_at\":\"2026-11-03T03:00:00.000Z\"",
+         "\"expires_at\":\"2026-11-03T02:00:00.000Z\""},
+    };
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i) {
+        char speak[2048], body[4096];
+        replace_once(face_speak_route, cases[i].needle, cases[i].replacement, speak, sizeof(speak));
+        face_response(body, sizeof(body), face_listen_route, speak);
+        respond(201, 0, body);
+        mybot_device_conversation_t session;
+        assert(start_face(&session) < 0);
+        assert(session.cleanup_required && !session.start_unknown);
+        assert(strcmp(session.conversation_id, "face-parent") == 0);
+        assert(session.error_code[0] && session.route_count == 0);
+    }
+    const char *first[] = {face_listen_route, face_speak_route, face_listen_route};
+    const char *second[] = {NULL, NULL, face_listen_route};
+    for (unsigned i = 0; i < 3; ++i) {
+        char body[4096];
+        face_response(body, sizeof(body), first[i], second[i]);
+        respond(201, 0, body);
+        mybot_device_conversation_t session;
+        assert(start_face(&session) < 0 && session.cleanup_required);
+    }
+    mybot_device_conversation_t session;
+    respond(201, 0, valid_response);
+    assert(start_face(&session) < 0 && session.cleanup_required);
+    respond(201, 0, valid_response);
+    assert(mybot_device_client_start_conversation("https://global.invalid/api", "device-1",
+                                                  "device-token", (mybot_translation_mode_t)99,
+                                                  "zh-CN", "en-US", &session) < 0);
+    assert(http_calls == 0 && strcmp(session.error_code, "INVALID_TRANSLATION_MODE") == 0);
+}
+
+static void test_face_allocation_failures(void) {
+    char body[4096];
+    face_response(body, sizeof(body), face_listen_route, face_speak_route);
+    respond(201, 0, body);
+    mybot_device_conversation_t session;
+    assert(start_face(&session) == 0);
+    int count = allocation_calls;
+    for (int i = 1; i <= count; ++i) {
+        respond(201, 0, body);
+        fail_allocation_at = i;
+        assert(start_face(&session) < 0);
+        fail_allocation_at = 0;
+        if (http_calls)
+            assert(session.cleanup_required || session.start_unknown);
+        else
+            assert(!session.cleanup_required && !session.start_unknown);
+    }
+}
+
 int main(void) {
     test_valid_and_request();
+    test_face_routes_and_request();
+    test_face_route_rejections();
+    test_face_allocation_failures();
     test_service_response_and_clock();
     test_invalid_routes();
     test_tts_and_expiry();

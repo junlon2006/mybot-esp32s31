@@ -7,7 +7,7 @@ The only supported profile is `esp32-s31-korvo-1`, selected by the root `MYBOT_B
 ```text
 main/                              startup, device identity, MyBot/network lifecycle
 components/mybot_stack/
-  mybot_sdk/                       component wrapper + maintained listen-translation SDK
+  mybot_sdk/                       component wrapper + maintained V2VT translation SDK
   aosl/                            upstream sources + S31 component wrapper
   agora_rtc/                       S31 RTSA header, library and component wrapper
 components/mybot_platform/
@@ -18,7 +18,7 @@ components/mybot_platform/
   src/internal/                    platform-private interfaces
 ```
 
-The platform uses MyBot through its public `include/mybot/` API. The SDK is a project-maintained `v2vt/listen` fork; hardware details stay in the platform component. AOSL outside its wrapper/S31 adapter and retained dependency snapshots remain immutable. Root CMake registers the three independent runtime components under `components/mybot_stack`; the stack parent directory is a bundle, not an IDF component.
+The platform uses MyBot through its public `include/mybot/` API. The SDK is a project-maintained V2VT media/face-to-face fork; hardware details stay in the platform component. AOSL outside its wrapper/S31 adapter and retained dependency snapshots remain immutable. Root CMake registers the three independent runtime components under `components/mybot_stack`; the stack parent directory is a bundle, not an IDF component.
 
 The board profile owns target, defaults, partition, component dependencies and capabilities. `prepare()` initializes hardware before registering the platform; `ensure_network()` returns only after usable connectivity. Provisioning stops MyBot first and returns after reconnection. Input remains board-owned so SET can request provisioning while SDK key callbacks are detached.
 

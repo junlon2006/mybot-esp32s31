@@ -1,22 +1,40 @@
+<!-- SPDX-License-Identifier: MIT -->
 # Translation UI host checks
 
 Run `sh tests/translation_ui/run.sh`. Both display languages compile the real LVGL
-view and the SDK's public language list against an object/event model. The checks
-cover the native 800×480 layout bounds; initial widget allocation failure and
-repeated cleanup; home, three scenes, and non-operational scene previews; direct
-language selection and duplicate-language rejection; language submission rejection,
-controls locked across delayed acknowledgements, timer expiry and unrelated volume
-or unchanged old-error readback, subsequent edits retaining the acknowledged pair,
-and failed-save recovery;
-slider release and actual
-volume readback; acknowledged pause/resume; fixed demo captions, full text and
-history; start/cancel/late-start/stop/cleanup retry; disabled controls for unknown
-outcomes; and pairing code/Wi-Fi provisioning SSID. Language changes use the public
-nonblocking SDK mailbox directly and remain locked until their pair is read back
-or a failure/state change arrives. Other commands retain a bounded local guard so
-a dropped platform mailbox message permits retry.
+view and SDK language list against an object/event model. Tests cover the native
+800×480 bounds, initial allocation failures, repeated teardown, media translation,
+face-to-face turn selection, and the remaining meeting preview.
 
-These tests verify semantic callbacks and view ownership, not touch-panel
-coordinates, physical LCD colors or real-device rendering. The S31 input and
-display tests separately cover input cancellation and hardware lifecycle. Font
-checks require all used Chinese glyphs at each of the 20, 28, and 40 pixel sizes.
+Media and face-to-face share one stored language pair. The face-to-face UI labels
+that pair as my/other language, starts with microphone direction NONE, and exposes
+two language buttons. Selecting a direction requests the corresponding SDK route;
+only the actual direction readback changes the highlight. Selecting the same active
+direction is a no-op; selecting it while paused resumes it. Pause stays unavailable
+until a direction has been selected. Sound controls remain in the existing menu.
+Mode and direction requests use the public nonblocking mailbox. Their controls stay
+locked until selection_revision changes and the actual result or failure is read
+back; volume, subtitle updates, timer expiry and an old failure code do not complete
+the request. The tests also cover mailbox rejection and repeated same-code failures.
+
+Language tests cover shared real settings, meeting-only previews, duplicate-language
+rejection, delayed acknowledgement, rejected submissions and failed saves. Input
+checks cover slider commit on release, actual volume readback and acknowledged
+pause/resume. Lifecycle coverage includes start/cancel/late start, stop/cleanup retry,
+unknown outcomes, pairing and Wi-Fi provisioning.
+
+Caption tests exercise real copied records: shorter streaming revisions update
+labels without rebuilding widgets; busy reads retry on the owned timer; each face
+input direction follows its own latest record, so delayed captions from the other
+route cannot replace the live sentence. History uses one 64-record SDK store and
+shows each sentence's language direction; full text retains the selected sentence
+and scroll container while new records arrive. Evicting that sentence preserves its
+existing UI snapshot; entering an already-evicted sentence prompts a return to
+history. Ended-session history remains available, a new generation clears old text,
+and unavailable caption storage is distinguished from waiting for the first caption.
+
+These checks establish view ownership and semantic callbacks. They do not establish
+touch coordinates, physical LCD colors, audio routing, cloud translation or acoustic
+behavior. S31 display/input tests cover their own driver boundaries. Font checks
+require all static UI glyphs at 20/28/40 px, all 6,763 common Chinese caption glyphs,
+Latin-1 and punctuation, the 28 px font fallback, and the caption font size budget.

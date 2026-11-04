@@ -95,11 +95,13 @@ void mybot_device_lifecycle_service_result(mybot_device_lifecycle_t *lifecycle,
     delivered++;
 }
 int mybot_device_client_start_conversation(const char *base, const char *id, const char *token,
-                                           const char *source, const char *target,
+                                           mybot_translation_mode_t mode, const char *source,
+                                           const char *target,
                                            mybot_device_conversation_t *response) {
     (void)base;
     (void)id;
     (void)token;
+    assert(mode == MYBOT_TRANSLATION_LISTEN);
     assert(strcmp(source, "en-US") == 0 && strcmp(target, "zh-CN") == 0);
     http_starts++;
     if (disable_during_start)

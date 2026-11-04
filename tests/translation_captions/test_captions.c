@@ -33,7 +33,8 @@ void aosl_hal_free(void *value) {
 }
 
 static int apply(mybot_captions_t *captions, const char *json) {
-    return mybot_captions_apply_json(captions, json, strlen(json));
+    return mybot_captions_apply_json(captions, MYBOT_TRANSLATION_DIRECTION_LISTEN, json,
+                                     strlen(json));
 }
 
 static mybot_caption_state_t state(mybot_captions_t *captions) {
@@ -184,14 +185,18 @@ static void test_limits(mybot_captions_t *captions) {
     size_t length = strlen(base);
     memcpy(json, base, length);
     memset(json + length, ' ', sizeof(json) - length);
-    CHECK(mybot_captions_apply_json(captions, json, 8192) == 1);
-    CHECK(mybot_captions_apply_json(captions, json, 8193) == -1);
-    CHECK(mybot_captions_apply_json(captions, base, length + 1) == 0);
+    CHECK(mybot_captions_apply_json(captions, MYBOT_TRANSLATION_DIRECTION_LISTEN, json, 8192) == 1);
+    CHECK(mybot_captions_apply_json(captions, MYBOT_TRANSLATION_DIRECTION_LISTEN, json, 8193) ==
+          -1);
+    CHECK(mybot_captions_apply_json(captions, MYBOT_TRANSLATION_DIRECTION_LISTEN, base,
+                                    length + 1) == 0);
     memcpy(json, base, length + 1);
     json[length + 1] = '\0';
-    CHECK(mybot_captions_apply_json(captions, json, length + 2) == -1);
+    CHECK(mybot_captions_apply_json(captions, MYBOT_TRANSLATION_DIRECTION_LISTEN, json,
+                                    length + 2) == -1);
     json[10] = '\0';
-    CHECK(mybot_captions_apply_json(captions, json, length) == -1);
+    CHECK(mybot_captions_apply_json(captions, MYBOT_TRANSLATION_DIRECTION_LISTEN, json, length) ==
+          -1);
 }
 
 static void test_invalid(mybot_captions_t *captions) {
@@ -259,8 +264,8 @@ static void test_invalid(mybot_captions_t *captions) {
     CHECK(apply(captions,
                 "{\"object\":\"user.transcription\",\"stream_id\":\"9223372036854775807\","
                 "\"turn_id\":\"9007199254740993\",\"text\":\"large ID\"}") == 0);
-    CHECK(mybot_captions_apply_json(NULL, "{}", 2) == -1);
-    CHECK(mybot_captions_apply_json(captions, NULL, 2) == -1);
+    CHECK(mybot_captions_apply_json(NULL, MYBOT_TRANSLATION_DIRECTION_LISTEN, "{}", 2) == -1);
+    CHECK(mybot_captions_apply_json(captions, MYBOT_TRANSLATION_DIRECTION_LISTEN, NULL, 2) == -1);
 }
 
 static void test_allocation_failures(mybot_captions_t *captions) {
@@ -286,6 +291,61 @@ static void test_allocation_failures(mybot_captions_t *captions) {
     CHECK(reached_success);
 }
 
+static void test_direction_pairing_and_eviction(mybot_captions_t *captions) {
+    mybot_captions_reset(captions, 9);
+    const char *listen =
+        "{\"object\":\"user.transcription\",\"stream_id\":1,\"turn_id\":1,\"text\":\"Listen\"}";
+    const char *speak =
+        "{\"object\":\"user.transcription\",\"stream_id\":1,\"turn_id\":1,\"text\":\"Speak\"}";
+    CHECK(mybot_captions_apply_json(captions, MYBOT_TRANSLATION_DIRECTION_LISTEN, listen,
+                                    strlen(listen)) == 1);
+    CHECK(mybot_captions_apply_json(captions, MYBOT_TRANSLATION_DIRECTION_SPEAK, speak,
+                                    strlen(speak)) == 1);
+    mybot_caption_state_t current = state(captions);
+    CHECK(current.count == 2 && current.latest_sequence == 2);
+    CHECK(current.latest_listen_sequence == 1 && current.latest_speak_sequence == 2);
+    CHECK(record(captions, 1).direction == MYBOT_TRANSLATION_DIRECTION_LISTEN);
+    CHECK(record(captions, 2).direction == MYBOT_TRANSLATION_DIRECTION_SPEAK);
+    CHECK(!strcmp(record(captions, 1).source_text, "Listen"));
+    CHECK(!strcmp(record(captions, 2).source_text, "Speak"));
+    CHECK(apply(captions, "{\"object\":\"user.translation\",\"stream_id\":1,\"turn_id\":1,"
+                          "\"text\":\"听译\",\"final\":true,\"direction\":\"speak\"}") == 1);
+    CHECK(!strcmp(record(captions, 1).target_text, "听译"));
+    CHECK(!record(captions, 2).target_text[0]);
+    CHECK(state(captions).latest_sequence == 2 && state(captions).latest_listen_sequence == 1);
+    CHECK(apply(captions, "{\"object\":\"user.transcription\",\"stream_id\":1,\"turn_id\":2,"
+                          "\"text\":\"next\"}") == 1);
+    const char *speak_final = "{\"object\":\"user.translation\",\"stream_id\":1,\"turn_id\":1,"
+                              "\"text\":\"说译\",\"final\":true}";
+    CHECK(mybot_captions_apply_json(captions, MYBOT_TRANSLATION_DIRECTION_SPEAK, speak_final,
+                                    strlen(speak_final)) == 1);
+    CHECK(state(captions).latest_sequence == 3 && state(captions).latest_speak_sequence == 2);
+    for (unsigned turn = 3; turn <= 65; ++turn) {
+        char json[256];
+        snprintf(json, sizeof(json),
+                 "{\"object\":\"user.transcription\",\"stream_id\":1,"
+                 "\"turn_id\":%u,\"text\":\"later listen\"}",
+                 turn);
+        CHECK(apply(captions, json) == 1);
+    }
+    current = state(captions);
+    CHECK(current.count == 64 && current.first_sequence == 3 && current.latest_sequence == 66);
+    CHECK(current.latest_listen_sequence == 66 && !current.latest_speak_sequence);
+    CHECK(mybot_captions_apply_json(captions, MYBOT_TRANSLATION_DIRECTION_SPEAK, speak_final,
+                                    strlen(speak_final)) == 1);
+    CHECK(state(captions).latest_speak_sequence == 67 &&
+          state(captions).latest_listen_sequence == 66);
+    unsigned revision = state(captions).revision;
+    CHECK(mybot_captions_apply_json(captions, MYBOT_TRANSLATION_DIRECTION_NONE, listen,
+                                    strlen(listen)) < 0);
+    CHECK(mybot_captions_apply_json(captions, (mybot_translation_direction_t)99, listen,
+                                    strlen(listen)) < 0);
+    CHECK(state(captions).revision == revision);
+    mybot_captions_reset(captions, 10);
+    current = state(captions);
+    CHECK(!current.latest_listen_sequence && !current.latest_speak_sequence && !current.count);
+}
+
 int main(void) {
     /* The first allocation failure must not leave a partially-owned store. */
     fail_after = 0;
@@ -302,6 +362,7 @@ int main(void) {
     test_limits(captions);
     test_invalid(captions);
     test_allocation_failures(captions);
+    test_direction_pairing_and_eviction(captions);
     mybot_captions_destroy(captions);
     mybot_captions_destroy(NULL);
     mybot_captions_reset(NULL, 1);

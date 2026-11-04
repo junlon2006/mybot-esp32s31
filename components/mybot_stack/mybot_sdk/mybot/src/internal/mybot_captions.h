@@ -17,7 +17,7 @@ void mybot_captions_reset(mybot_captions_t *captions, uint32_t generation);
 void mybot_captions_get_state(const mybot_captions_t *captions, mybot_caption_state_t *out);
 int mybot_captions_copy(const mybot_captions_t *captions, uint32_t sequence, mybot_caption_t *out);
 
-/* Apply one already-authenticated listen-route message. Returns 1 for a visible
+/* Apply one already-authenticated route message; NONE is invalid. Returns 1 for a visible
  * update, 0 for an ignored/duplicate event and -1 for invalid input or OOM.
  * Input is UTF-8 JSON with at most one optional final NUL, counted in len;
  * embedded NUL, more than 8192 bytes or nested containers beyond depth 16 fail.
@@ -25,6 +25,7 @@ int mybot_captions_copy(const mybot_captions_t *captions, uint32_t sequence, myb
  * integers, normalized to decimal strings. Missing final means interim; a
  * supplied final must be boolean. Optional relative times must be nonnegative
  * integers and are used only when both start_ms and duration_ms are present. */
-int mybot_captions_apply_json(mybot_captions_t *captions, const void *data, size_t len);
+int mybot_captions_apply_json(mybot_captions_t *captions, mybot_translation_direction_t direction,
+                              const void *data, size_t len);
 
 #endif /* MYBOT_CAPTIONS_INTERNAL_H_ */

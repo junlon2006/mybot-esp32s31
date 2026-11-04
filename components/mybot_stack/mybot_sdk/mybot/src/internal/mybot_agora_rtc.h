@@ -7,6 +7,7 @@
 #include <stdbool.h>
 
 #include <mybot/mybot_build_config.h>
+#include "mybot_device_client.h"
 #include <mybot/platform/mybot_video.h>
 
 #ifdef __cplusplus
@@ -36,7 +37,8 @@ typedef enum {
 /* rtc_mpq owns all mutable state. Vendor payloads are copied before dispatch;
  * application callbacks must not re-enter this API. */
 typedef struct {
-    void (*on_remote_audio)(uint32_t uid, const void *data, size_t len, void *user_data);
+    void (*on_remote_audio)(mybot_translation_direction_t direction, uint32_t uid, const void *data,
+                            size_t len, void *user_data);
     void (*on_token_will_expire)(void *user_data);
     void (*on_state_changed)(mybot_rtc_state_t state, void *user_data);
     void (*on_rtm_event)(const char *rtm_uid, mybot_rtm_event_type_t event_type, int error_code,
@@ -68,12 +70,11 @@ int mybot_agora_rtc_init(const char *app_id, const mybot_agora_rtc_callbacks_t *
  */
 bool mybot_agora_rtc_rtm_uid_is_valid(const char *rtm_uid);
 
-/** Create a connection and start joining one 1-to-1 channel. RTM login is
- * requested first using user_account as the local RTM UID and token as the RTM
- * token. After RTM login succeeds, this subscribes to the RTM channel with the
- * same name and waits for subscription success before starting RTC join. */
-int mybot_agora_rtc_join(const char *channel, const char *token, const char *user_account,
-                         const char *agent_uid, const char *publisher_account);
+/** Join one listen route or listen+speak routes on the same App ID/channel.
+ * The listen route supplies the one RTM login; subscribe to the shared channel
+ * once before joining each RTC identity. CONNECTED requires every RTC join and
+ * every enabled TTS publisher subscription. Readiness/reconnect is bounded. */
+int mybot_agora_rtc_join(const mybot_device_translation_route_t *routes, size_t route_count);
 
 /** End the conversation, finalize RTSA and join the forwarding queue.
  * Cancel media sends before calling. A successful global RTSA fini supersedes
@@ -82,8 +83,9 @@ int mybot_agora_rtc_join(const char *channel, const char *token, const char *use
  * Returns zero only when both vendor and forwarding resources were released. */
 int mybot_agora_rtc_fini(void);
 
-/** Send one PCM payload on the active connection. */
-int mybot_agora_rtc_send_audio(const void *data, size_t len);
+/** Send one PCM payload on the specified route when all routes are ready. */
+int mybot_agora_rtc_send_audio(mybot_translation_direction_t direction, const void *data,
+                               size_t len);
 
 #if MYBOT_ENABLE_VIDEO
 /** Send one platform-encoded video frame on the active connection. */

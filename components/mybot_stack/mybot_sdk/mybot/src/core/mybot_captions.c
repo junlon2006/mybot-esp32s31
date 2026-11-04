@@ -52,6 +52,8 @@ void mybot_captions_reset(mybot_captions_t *captions, uint32_t generation) {
     captions->state.count = 0;
     captions->state.first_sequence = 0;
     captions->state.latest_sequence = 0;
+    captions->state.latest_listen_sequence = 0;
+    captions->state.latest_speak_sequence = 0;
     captions->first_slot = 0;
     advance_revision(captions);
 }
@@ -203,22 +205,32 @@ static bool copy_text(char out[MYBOT_CAPTION_TEXT_CAPACITY], bool *truncated, co
     return changed;
 }
 
-static caption_entry_t *find_entry(mybot_captions_t *captions, const char *stream,
+static caption_entry_t *find_entry(mybot_captions_t *captions,
+                                   mybot_translation_direction_t direction, const char *stream,
                                    const char *turn) {
     for (uint32_t i = 0; i < captions->state.count; ++i) {
         caption_entry_t *entry =
             &captions->entries[(captions->first_slot + i) % MYBOT_CAPTION_HISTORY_CAPACITY];
-        if (!strcmp(entry->stream_id, stream) && !strcmp(entry->turn_id, turn))
+        if (entry->value.direction == direction && !strcmp(entry->stream_id, stream) &&
+            !strcmp(entry->turn_id, turn))
             return entry;
     }
     return NULL;
 }
 
-static caption_entry_t *append_entry(mybot_captions_t *captions, const char *stream,
+static caption_entry_t *append_entry(mybot_captions_t *captions,
+                                     mybot_translation_direction_t direction, const char *stream,
                                      const char *turn) {
     if (captions->state.latest_sequence == UINT32_MAX)
         mybot_captions_reset(captions, captions->state.generation);
     if (captions->state.count == MYBOT_CAPTION_HISTORY_CAPACITY) {
+        uint32_t retired = captions->entries[captions->first_slot].value.sequence;
+        /* If the oldest retained entry was also this direction's newest one,
+         * no remaining entry can belong to that direction. */
+        if (captions->state.latest_listen_sequence == retired)
+            captions->state.latest_listen_sequence = 0;
+        if (captions->state.latest_speak_sequence == retired)
+            captions->state.latest_speak_sequence = 0;
         captions->first_slot = (captions->first_slot + 1) % MYBOT_CAPTION_HISTORY_CAPACITY;
         ++captions->state.first_sequence;
         --captions->state.count;
@@ -229,13 +241,19 @@ static caption_entry_t *append_entry(mybot_captions_t *captions, const char *str
     strcpy(entry->stream_id, stream);
     strcpy(entry->turn_id, turn);
     entry->value.sequence = ++captions->state.latest_sequence;
+    entry->value.direction = direction;
+    if (direction == MYBOT_TRANSLATION_DIRECTION_LISTEN)
+        captions->state.latest_listen_sequence = entry->value.sequence;
+    else
+        captions->state.latest_speak_sequence = entry->value.sequence;
     if (!captions->state.count)
         captions->state.first_sequence = entry->value.sequence;
     ++captions->state.count;
     return entry;
 }
 
-static int apply_event(mybot_captions_t *captions, const mybot_json_t *root) {
+static int apply_event(mybot_captions_t *captions, mybot_translation_direction_t direction,
+                       const mybot_json_t *root) {
     if (root->type != MYBOT_JSON_OBJECT)
         return -1;
     bool valid = true;
@@ -265,10 +283,10 @@ static int apply_event(mybot_captions_t *captions, const mybot_json_t *root) {
     if ((fallback_field && !fallback) || !valid)
         return -1;
 
-    caption_entry_t *entry = find_entry(captions, stream, turn);
+    caption_entry_t *entry = find_entry(captions, direction, stream, turn);
     bool changed = !entry;
     if (!entry)
-        entry = append_entry(captions, stream, turn);
+        entry = append_entry(captions, direction, stream, turn);
     caption_side_t *side = translation ? &entry->target : &entry->source;
     bool *stored_final = translation ? &entry->value.target_final : &entry->value.source_final;
     if ((*stored_final && !final) ||
@@ -294,8 +312,11 @@ static int apply_event(mybot_captions_t *captions, const mybot_json_t *root) {
     return changed ? 1 : 0;
 }
 
-int mybot_captions_apply_json(mybot_captions_t *captions, const void *data, size_t len) {
-    if (!captions || !data || !len || len > MYBOT_CAPTION_MESSAGE_CAPACITY)
+int mybot_captions_apply_json(mybot_captions_t *captions, mybot_translation_direction_t direction,
+                              const void *data, size_t len) {
+    if (!captions || !data || !len || len > MYBOT_CAPTION_MESSAGE_CAPACITY ||
+        (direction != MYBOT_TRANSLATION_DIRECTION_LISTEN &&
+         direction != MYBOT_TRANSLATION_DIRECTION_SPEAK))
         return -1;
     const unsigned char *bytes = data;
     if (!bytes[len - 1])
@@ -311,7 +332,7 @@ int mybot_captions_apply_json(mybot_captions_t *captions, const void *data, size
     aosl_hal_free(terminated);
     if (!root)
         return -1;
-    int result = apply_event(captions, root);
+    int result = apply_event(captions, direction, root);
     mybot_json_delete(root);
     return result;
 }

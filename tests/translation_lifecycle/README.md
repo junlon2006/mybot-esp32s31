@@ -4,7 +4,7 @@ Run `./tests/translation_lifecycle/run.sh` from any directory. The runner compil
 lifecycle implementation with a deterministic KV store, HTTP completion queue, allocator and UTC
 clock, enables UBSan, and enforces a 30-second execution deadline.
 
-The 29 scenarios exercise cancellation before dispatch and after HTTP start, late start results
+The 31 scenarios exercise cancellation before dispatch and after HTTP start, late start results
 across disconnect/reconnect and shutdown, durable unknown outcomes, partial starts carrying cleanup
 IDs, exact original server/device/credential cleanup after endpoint changes or re-pair requests,
 1/2/4/8/16/30-second stop retry intervals, revoked credentials, expiry without renewal, stale and
@@ -20,3 +20,8 @@ while the original start failure or latched storage failure remains available to
 This test controls callback ordering and atomic mailboxes rather than creating real RTC/network
 threads. It does not establish network behavior, acoustic echo cancellation, speaker timing, audio
 quality, or long-duration hardware stability.
+
+Mode selection is volatile and starts at listen after reboot. Mode/language changes are
+rejected as soon as a start is requested, during an active session or while cleanup remains.
+Face-to-face failures retain one parent ID and retry its cleanup; they never create a second
+parent or persist a second journal.

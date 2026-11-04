@@ -101,7 +101,7 @@ static void reset(void) {
     mybot_captions_reset(runtime.captions, 7);
     runtime.caption_accepting = true;
     strcpy(runtime.rtc_channel, "translation-channel");
-    strcpy(runtime.rtc_agent_uid, "translation-agent");
+    strcpy(runtime.rtc_agent_uid[0], "translation-agent");
     warnings = last_invalid = last_dropped = 0;
     fail_after = -1;
     inject_on_allocation = INJECT_NONE;
@@ -325,6 +325,44 @@ static void test_receive_revalidates_after_allocation(void) {
     cases++;
 }
 
+static void test_two_agents_share_channel_and_keep_direction(void) {
+    reset();
+    strcpy(runtime.rtc_agent_uid[1], "speak-agent");
+    runtime.input_direction = MYBOT_TRANSLATION_DIRECTION_LISTEN;
+    rtc_on_caption_channel("translation-channel", "speak-agent", original, strlen(original), NULL,
+                           &runtime);
+    rtc_on_caption_channel("translation-channel", "translation-agent", original, strlen(original),
+                           NULL, &runtime);
+    CHECK(drain_caption_inbox(&runtime));
+    CHECK(read_caption(1).direction == MYBOT_TRANSLATION_DIRECTION_SPEAK);
+    CHECK(read_caption(2).direction == MYBOT_TRANSLATION_DIRECTION_LISTEN);
+
+    /* A button switch must not relabel either agent's delayed translation. */
+    runtime.input_direction = MYBOT_TRANSLATION_DIRECTION_SPEAK;
+    rtc_on_caption_channel("translation-channel", "translation-agent", translated,
+                           strlen(translated), NULL, &runtime);
+    rtc_on_caption_channel("translation-channel", "speak-agent", translated, strlen(translated),
+                           NULL, &runtime);
+    CHECK(drain_caption_inbox(&runtime));
+    CHECK(!strcmp(read_caption(1).target_text, "Hello"));
+    CHECK(!strcmp(read_caption(2).target_text, "Hello"));
+    refresh_caption_metadata(&runtime);
+    CHECK(runtime.presenter.captions.count == 2);
+    CHECK(runtime.presenter.captions.latest_speak_sequence == 1);
+    CHECK(runtime.presenter.captions.latest_listen_sequence == 2);
+
+    rtc_on_caption_channel("foreign-channel", "speak-agent", translated, strlen(translated), NULL,
+                           &runtime);
+    rtc_on_caption_channel("translation-channel", "foreign-agent", translated, strlen(translated),
+                           NULL, &runtime);
+    CHECK(!runtime.caption_count);
+    rtc_on_caption_channel("translation-channel", "speak-agent", translated, strlen(translated),
+                           NULL, &runtime);
+    CHECK(!drain_caption_inbox(&runtime));
+    CHECK(allocations == 1);
+    cases++;
+}
+
 int main(void) {
     test_authenticated_direct_channel_and_copy();
     test_payload_nul_and_parser_rejections();
@@ -334,6 +372,7 @@ int main(void) {
     test_public_reads_are_copied_and_nonblocking();
     test_allocation_failure_preserves_history();
     test_receive_revalidates_after_allocation();
+    test_two_agents_share_channel_and_keep_direction();
     close_caption_inbox(&runtime, false);
     mybot_captions_destroy(runtime.captions);
     runtime.captions = NULL;

@@ -15,8 +15,8 @@ typedef struct {
 } notification_t;
 static notification_t notifications[32];
 static unsigned notification_count, language_sets, volume_sets, pause_sets, renders, tests;
-static unsigned conversation_starts, session_ends, rtc_finalizations;
-static bool fail_queue, fail_volume, fail_pause, fail_end_session, paused;
+static unsigned conversation_starts, session_ends, rtc_finalizations, mode_sets;
+static bool fail_queue, fail_volume, fail_pause, fail_end_session, fail_mode, paused;
 static int hardware_volume, rtc_fini_result;
 static mybot_lcd_content_t displayed;
 
@@ -59,6 +59,15 @@ int mybot_device_lifecycle_set_languages(mybot_device_lifecycle_t *lifecycle, co
         return -1;
     snprintf(lifecycle->source_language, sizeof(lifecycle->source_language), "%s", source);
     snprintf(lifecycle->target_language, sizeof(lifecycle->target_language), "%s", target);
+    return 0;
+}
+int mybot_device_lifecycle_set_mode(mybot_device_lifecycle_t *lifecycle,
+                                    mybot_translation_mode_t mode) {
+    assert(lifecycle == &runtime.lifecycle);
+    mode_sets++;
+    if (fail_mode || runtime_get_state(&runtime) != MYBOT_STATE_READY)
+        return -1;
+    lifecycle->mode = mode;
     return 0;
 }
 int mybot_media_pipeline_get_volume(mybot_media_pipeline_t *pipeline, int *volume) {
@@ -114,8 +123,8 @@ static void reset(void) {
     memset(notifications, 0, sizeof(notifications));
     memset(&displayed, 0, sizeof(displayed));
     notification_count = language_sets = volume_sets = pause_sets = renders = 0;
-    conversation_starts = session_ends = rtc_finalizations = 0;
-    fail_queue = fail_volume = fail_pause = fail_end_session = paused = false;
+    conversation_starts = session_ends = rtc_finalizations = mode_sets = 0;
+    fail_queue = fail_volume = fail_pause = fail_end_session = fail_mode = paused = false;
     hardware_volume = 40;
     rtc_fini_result = 0;
     s_lifecycle_gate = s_exit_generation = s_run_exit_generation = 0;
@@ -167,6 +176,16 @@ static void test_validation_and_language_table(void) {
     assert(mybot_ui_submit(&command) == -1);
     command.type = MYBOT_UI_SET_PAUSED;
     command.value = 2;
+    assert(mybot_ui_submit(&command) == -1);
+    command.type = MYBOT_UI_SET_MODE;
+    command.value = -1;
+    assert(mybot_ui_submit(&command) == -1);
+    command.value = 2;
+    assert(mybot_ui_submit(&command) == -1);
+    command.type = MYBOT_UI_SET_DIRECTION;
+    command.value = MYBOT_TRANSLATION_DIRECTION_NONE;
+    assert(mybot_ui_submit(&command) == -1);
+    command.value = 3;
     assert(mybot_ui_submit(&command) == -1);
     command.type = (mybot_ui_command_type_t)99;
     assert(mybot_ui_submit(&command) == -1);
@@ -343,10 +362,11 @@ static void test_each_session_releases_rtc_before_next_start(void) {
     reset();
     active();
     strcpy(runtime.rtc_channel, "first-project-channel");
-    strcpy(runtime.rtc_agent_uid, "first-project-agent");
+    strcpy(runtime.rtc_agent_uid[0], "first-project-agent");
     dev_on_conversation_stop(&runtime);
     assert(rtc_finalizations == 1 && session_ends == 1);
-    assert(runtime.media_cancel_requested && !runtime.rtc_channel[0] && !runtime.rtc_agent_uid[0]);
+    assert(runtime.media_cancel_requested && !runtime.rtc_channel[0] &&
+           !runtime.rtc_agent_uid[0][0]);
     assert(mybot_state_model_set_device_state(&runtime.state_model, MYBOT_DEVICE_STATE_RUNTIME));
     control_start_conversation(&runtime);
     assert(rtc_finalizations == 2 && conversation_starts == 1);
@@ -417,7 +437,122 @@ static void test_rtc_cleanup_failure_preserves_real_error(void) {
     tests++;
 }
 
+static void submit_and_dispatch(const mybot_ui_command_t *command) {
+    unsigned index = notification_count;
+    assert(mybot_ui_submit(command) == 0);
+    dispatch(index);
+}
+static void test_mode_readback_and_repeated_failure(void) {
+    reset();
+    mybot_ui_command_t command = {.type = MYBOT_UI_SET_MODE,
+                                  .value = MYBOT_TRANSLATION_LISTEN_SPEAK};
+    assert(mybot_ui_submit(&command) == 0);
+    assert(runtime.lifecycle.mode == MYBOT_TRANSLATION_LISTEN &&
+           !runtime.presenter.selection_revision);
+    dispatch(0);
+    assert(mode_sets == 1 && displayed.translation_mode == MYBOT_TRANSLATION_LISTEN_SPEAK);
+    assert(displayed.input_direction == MYBOT_TRANSLATION_DIRECTION_NONE &&
+           displayed.selection_revision == 1);
+    assert(!strcmp(displayed.source_language, "zh-CN") &&
+           !strcmp(displayed.target_language, "en-US"));
+    command.value = MYBOT_TRANSLATION_LISTEN;
+    assert(mybot_ui_submit(&command) == 0);
+    active(); /* A mode change must still be rejected if the session started while queued. */
+    dispatch(1);
+    assert(displayed.translation_mode == MYBOT_TRANSLATION_LISTEN_SPEAK &&
+           displayed.selection_revision == 2);
+    assert(!strcmp(displayed.error_code, "MODE_CHANGE_FAILED"));
+    submit_and_dispatch(&command);
+    assert(displayed.selection_revision == 3 &&
+           !strcmp(displayed.error_code, "MODE_CHANGE_FAILED"));
+    assert(mybot_state_model_set_device_state(&runtime.state_model, MYBOT_DEVICE_STATE_RUNTIME));
+    submit_and_dispatch(&command);
+    assert(displayed.translation_mode == MYBOT_TRANSLATION_LISTEN &&
+           displayed.selection_revision == 4);
+    assert(!displayed.error_code[0]);
+    fail_mode = true;
+    command.value = MYBOT_TRANSLATION_LISTEN_SPEAK;
+    submit_and_dispatch(&command);
+    submit_and_dispatch(&command);
+    assert(displayed.selection_revision == 6 &&
+           displayed.translation_mode == MYBOT_TRANSLATION_LISTEN);
+    assert(!strcmp(displayed.error_code, "MODE_CHANGE_FAILED"));
+    fail_queue = true;
+    assert(mybot_ui_submit(&command) < 0 && displayed.selection_revision == 6);
+    fail_queue = fail_mode = false;
+    command.value = MYBOT_TRANSLATION_LISTEN;
+    submit_and_dispatch(&command); /* Same mode also acknowledges completion. */
+    assert(displayed.selection_revision == 7 && !displayed.error_code[0]);
+    tests++;
+}
+static void test_direction_readback_and_independent_revisions(void) {
+    reset();
+    active();
+    runtime.lifecycle.mode = MYBOT_TRANSLATION_LISTEN_SPEAK;
+    mybot_ui_command_t command = {.type = MYBOT_UI_SET_PAUSED, .value = 0};
+    submit_and_dispatch(&command);
+    assert(!pause_sets && !displayed.selection_revision &&
+           displayed.input_direction == MYBOT_TRANSLATION_DIRECTION_NONE);
+    command.type = MYBOT_UI_SET_DIRECTION;
+    command.value = MYBOT_TRANSLATION_DIRECTION_LISTEN;
+    assert(mybot_ui_submit(&command) == 0);
+    assert(runtime.input_direction == MYBOT_TRANSLATION_DIRECTION_NONE);
+    dispatch(1);
+    assert(pause_sets == 2 && !displayed.paused && runtime.presenter.media_ready);
+    assert(displayed.input_direction == MYBOT_TRANSLATION_DIRECTION_LISTEN &&
+           displayed.selection_revision == 1);
+    command.value = MYBOT_TRANSLATION_DIRECTION_SPEAK;
+    fail_pause = true;
+    submit_and_dispatch(&command);
+    assert(displayed.input_direction == MYBOT_TRANSLATION_DIRECTION_LISTEN &&
+           displayed.selection_revision == 2);
+    assert(!strcmp(displayed.error_code, "DIRECTION_CHANGE_FAILED"));
+    submit_and_dispatch(&command);
+    assert(displayed.selection_revision == 3 &&
+           !strcmp(displayed.error_code, "DIRECTION_CHANGE_FAILED"));
+    mybot_ui_command_t other = volume(66);
+    submit_and_dispatch(&other);
+    assert(displayed.volume == 66 && displayed.selection_revision == 3);
+    other = languages("ja-JP", "ko-KR");
+    submit_and_dispatch(&other); /* Busy language rejection cannot acknowledge a direction. */
+    assert(displayed.selection_revision == 3);
+    runtime.captions = mybot_captions_create();
+    assert(runtime.captions);
+    mybot_captions_reset(runtime.captions, 12);
+    const char *json =
+        "{\"object\":\"user.transcription\",\"stream_id\":1,\"turn_id\":1,\"text\":\"Hello\"}";
+    assert(mybot_captions_apply_json(runtime.captions, MYBOT_TRANSLATION_DIRECTION_LISTEN, json,
+                                     strlen(json)) == 1);
+    refresh_caption_metadata(&runtime);
+    mybot_presenter_render_state(&runtime.presenter, &runtime.state_model);
+    assert(displayed.caption_count == 1 && displayed.caption_revision > 0);
+    assert(displayed.selection_revision == 3 &&
+           !strcmp(displayed.error_code, "DIRECTION_CHANGE_FAILED"));
+    mybot_captions_destroy(runtime.captions);
+    runtime.captions = NULL;
+    fail_pause = false;
+    submit_and_dispatch(&command);
+    assert(displayed.input_direction == MYBOT_TRANSLATION_DIRECTION_SPEAK &&
+           displayed.selection_revision == 4);
+    assert(!displayed.error_code[0]);
+    unsigned previous_pause_sets = pause_sets;
+    runtime.lifecycle.stop_request = 1;
+    command.value = MYBOT_TRANSLATION_DIRECTION_LISTEN;
+    submit_and_dispatch(&command);
+    assert(pause_sets == previous_pause_sets && displayed.selection_revision == 5);
+    assert(displayed.input_direction == MYBOT_TRANSLATION_DIRECTION_SPEAK &&
+           !displayed.error_code[0]);
+    runtime.lifecycle.stop_request = 0;
+    runtime.presenter.selection_revision = UINT32_MAX;
+    command.value = MYBOT_TRANSLATION_DIRECTION_SPEAK;
+    submit_and_dispatch(&command);
+    assert(displayed.selection_revision == 1); /* Zero remains the initial no-completion marker. */
+    tests++;
+}
+
 int main(void) {
+    test_mode_readback_and_repeated_failure();
+    test_direction_readback_and_independent_revisions();
     test_validation_and_language_table();
     test_copy_async_and_actual_volume();
     test_language_idle_and_busy();

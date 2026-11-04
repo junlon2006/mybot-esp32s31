@@ -2,7 +2,7 @@
 
 [English](esp32-s31-korvo-1.en.md) · [简体中文](esp32-s31-korvo-1.zh-CN.md)
 
-Board ID 为 `esp32-s31-korvo-1`，基于 ESP-IDF v6.1 的 preview S31 target。当前应用为板载 MIC → 云端 Bot → 板载喇叭的单向听译，包含 Wi-Fi/网页配网、HTTPS/配对、RTC/RTM、ES8389 并行采播、ADC 按键和 RGB/GT1151 界面。视频不在当前移植范围。
+Board ID 为 `esp32-s31-korvo-1`，基于 ESP-IDF v6.1 的 preview S31 target。当前应用为板载 MIC → 云端 Bot → 板载喇叭的媒体听译和面对面双向翻译，包含 Wi-Fi/网页配网、HTTPS/配对、RTC/RTM、ES8389 并行采播、ADC 按键和 RGB/GT1151 界面。视频不在当前移植范围。
 
 ## 编译和烧录
 
@@ -35,7 +35,7 @@ idf.py --preview -B build/korvo-s31 -p PORT flash monitor
 | VOL+/VOL- | 调整音量并保存 |
 | 首次未配置 Wi-Fi | 自动进入网页配网并显示入口/播放提示 |
 
-等待 Wi-Fi 与配对完成后，从首页进入媒体翻译，选择输入语言与目标语言并开始。面对面、会议互译目前提供设置预览，亮度仍为演示；媒体实时字幕、全文与本次历史接收同一会话的 RTM 原文和译文。只有实际控件触摸会触发业务，空白区域不会启停；显示回调只将命令按值复制入队，不执行阻塞的 HTTPS/RTC 操作。清理或未知结果会阻止新会话；设备端 MIC 与播放参考继续沿用云 AEC 配对上行。开发服务为 `https://mybot.sh3t.agoralab.co/api`，需绑定开启译音的 V2VT Bot。完整界面说明见[翻译界面](PLATFORM_UI.zh-CN.md)，配置与烧录见[独立听译](LISTEN_TRANSLATION.zh-CN.md)。
+等待 Wi-Fi 与配对完成后，从首页进入媒体翻译，选择输入语言与目标语言并开始。面对面选择“我的语言/对方语言”后开始，点击语言按钮开启或切换发言方向；两路 RTC 共用一次 RTM 订阅，实时字幕、全文与本次历史按 Agent 区分方向。会议互译提供设置预览，亮度仍为演示。只有实际控件触摸会触发业务，空白区域不会启停；显示回调只将命令按值复制入队，不执行阻塞的 HTTPS/RTC 操作。清理或未知结果会阻止新会话；设备端 MIC 与播放参考继续沿用云 AEC 配对上行。开发服务为 `https://mybot.sh3t.agoralab.co/api`，需绑定 V2VT Bot；听方向允许仅字幕，说方向要求译音。完整界面说明见[翻译界面](PLATFORM_UI.zh-CN.md)，配置与烧录见[独立听译](LISTEN_TRANSLATION.zh-CN.md)。
 
 原有基础音频互通与显示有用户实机确认；当前同传路由、云 AEC、语言操作与恢复仍需本轮实机测试，不能沿用普通对话的验收结论。
 

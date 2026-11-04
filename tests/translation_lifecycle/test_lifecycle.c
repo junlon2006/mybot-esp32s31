@@ -79,6 +79,8 @@ typedef struct {
     bool reject_submit;
     bool callback_ends_session;
     unsigned configurations;
+    char configured_source[33];
+    char configured_target[33];
     unsigned starts;
     unsigned stops;
     unsigned pair_codes;
@@ -183,8 +185,11 @@ static void on_state(mybot_device_state_t value, void *opaque) {
 static void on_configuration(const char *source, const char *target, void *opaque) {
     fixture_t *fixture = opaque;
     assert(source[0] && target[0] && strcmp(source, target) != 0);
-    if (fixture->configurations > 0)
+    if (fixture->configurations > 0 &&
+        (strcmp(source, fixture->configured_source) || strcmp(target, fixture->configured_target)))
         assert(stored(fixture, "tr_languages"));
+    snprintf(fixture->configured_source, sizeof(fixture->configured_source), "%s", source);
+    snprintf(fixture->configured_target, sizeof(fixture->configured_target), "%s", target);
     ++fixture->configurations;
 }
 static int submit(mybot_device_service_request_t *request, void *opaque) {
@@ -264,16 +269,28 @@ static mybot_device_service_request_t *starting(fixture_t *fixture) {
 static void success_response(mybot_device_service_request_t *request, unsigned number) {
     mybot_device_conversation_t *response = &request->payload.start.response;
     snprintf(response->conversation_id, sizeof(response->conversation_id), "parent-%u", number);
-    snprintf(response->rtc_app_id, sizeof(response->rtc_app_id), "test-app");
-    snprintf(response->rtc_channel, sizeof(response->rtc_channel), "test-channel");
-    snprintf(response->rtc_uid, sizeof(response->rtc_uid), "TEST-LOCAL-IDENTITY");
-    snprintf(response->rtc_agent_uid, sizeof(response->rtc_agent_uid), "TEST-AGENT-IDENTITY");
-    snprintf(response->audio_publisher_uid, sizeof(response->audio_publisher_uid),
-             "TEST-AGENT-IDENTITY");
-    snprintf(response->source_language, sizeof(response->source_language), "%s",
-             request->payload.start.source_language);
-    snprintf(response->target_language, sizeof(response->target_language), "%s",
-             request->payload.start.target_language);
+    response->mode = request->payload.start.mode;
+    response->route_count = response->mode == MYBOT_TRANSLATION_LISTEN_SPEAK ? 2 : 1;
+    for (unsigned i = 0; i < response->route_count; ++i) {
+        mybot_device_translation_route_t *route = &response->routes[i];
+        route->direction =
+            i ? MYBOT_TRANSLATION_DIRECTION_SPEAK : MYBOT_TRANSLATION_DIRECTION_LISTEN;
+        snprintf(route->rtc_app_id, sizeof(route->rtc_app_id), "test-app");
+        snprintf(route->rtc_channel, sizeof(route->rtc_channel), "test-channel");
+        snprintf(route->rtc_uid, sizeof(route->rtc_uid), "TEST-LOCAL-%u", i);
+        snprintf(route->rtc_agent_uid, sizeof(route->rtc_agent_uid), "TEST-AGENT-%u", i);
+        snprintf(route->audio_publisher_uid, sizeof(route->audio_publisher_uid), "TEST-AGENT-%u",
+                 i);
+        bool reverse = !i && response->mode == MYBOT_TRANSLATION_LISTEN_SPEAK;
+        snprintf(route->source_language, sizeof(route->source_language), "%s",
+                 reverse ? request->payload.start.target_language
+                         : request->payload.start.source_language);
+        snprintf(route->target_language, sizeof(route->target_language), "%s",
+                 reverse ? request->payload.start.source_language
+                         : request->payload.start.target_language);
+        route->tts_enabled = true;
+        route->expires_at = host_now + 3600;
+    }
     response->expires_at = host_now + 3600;
 }
 static void active(fixture_t *fixture) {
@@ -875,7 +892,93 @@ static void invalid_initial_configuration(void) {
     assert(live_allocations == 0);
 }
 
+static void face_mode_is_volatile_and_idle_only(void) {
+    fixture_t fixture;
+    bound(&fixture);
+    assert(fixture.lifecycle.mode == MYBOT_TRANSLATION_LISTEN);
+    slot_t saved[ARRAY_COUNT(fixture.slots)];
+    memcpy(saved, fixture.slots, sizeof(saved));
+    unsigned configurations = fixture.configurations;
+    assert(mybot_device_lifecycle_set_mode(&fixture.lifecycle, MYBOT_TRANSLATION_LISTEN_SPEAK) ==
+           0);
+    assert(fixture.lifecycle.mode == MYBOT_TRANSLATION_LISTEN_SPEAK);
+    assert(fixture.configurations == configurations + 1);
+    assert(!memcmp(saved, fixture.slots, sizeof(saved))); /* Mode never writes flash. */
+    assert(mybot_device_lifecycle_set_mode(&fixture.lifecycle, MYBOT_TRANSLATION_LISTEN_SPEAK) ==
+           0);
+    assert(fixture.configurations == configurations + 1);
+    assert(mybot_device_lifecycle_set_mode(&fixture.lifecycle, (mybot_translation_mode_t)2) < 0);
+    assert(mybot_device_lifecycle_set_mode(NULL, MYBOT_TRANSLATION_LISTEN) < 0);
+    bool *blocked[] = {&fixture.lifecycle.cleanup_needed, &fixture.lifecycle.pending_unknown,
+                       &fixture.lifecycle.local_media_active};
+    for (size_t i = 0; i < ARRAY_COUNT(blocked); ++i) {
+        *blocked[i] = true;
+        assert(mybot_device_lifecycle_set_mode(&fixture.lifecycle, MYBOT_TRANSLATION_LISTEN) < 0);
+        assert(mybot_device_lifecycle_set_languages(&fixture.lifecycle, "zh-CN", "en-US") < 0);
+        *blocked[i] = false;
+    }
+    mybot_device_lifecycle_request_start(&fixture.lifecycle);
+    /* A physical PLAY request closes settings before the next control tick. */
+    assert(mybot_device_lifecycle_set_mode(&fixture.lifecycle, MYBOT_TRANSLATION_LISTEN) < 0);
+    assert(mybot_device_lifecycle_set_languages(&fixture.lifecycle, "zh-CN", "en-US") < 0);
+    ticks(&fixture, 1);
+    mybot_device_service_request_t *request = take(&fixture, MYBOT_DEVICE_SERVICE_START);
+    assert(request);
+    assert(request->payload.start.mode == MYBOT_TRANSLATION_LISTEN_SPEAK);
+    assert(mybot_device_lifecycle_set_mode(&fixture.lifecycle, MYBOT_TRANSLATION_LISTEN) < 0);
+    assert(request->payload.start.mode == MYBOT_TRANSLATION_LISTEN_SPEAK);
+    success_response(request, 40);
+    assert(request->payload.start.response.route_count == 2);
+    deliver(&fixture, request);
+    assert(fixture.starts == 1 && fixture.lifecycle.local_media_active);
+    assert(mybot_device_lifecycle_set_mode(&fixture.lifecycle, MYBOT_TRANSLATION_LISTEN) < 0);
+    request = stopping(&fixture);
+    assert(mybot_device_lifecycle_set_mode(&fixture.lifecycle, MYBOT_TRANSLATION_LISTEN) < 0);
+    deliver(&fixture, request);
+    assert(fixture.stops == 1 && !stored(&fixture, "tr_session"));
+    assert(mybot_device_lifecycle_set_mode(&fixture.lifecycle, MYBOT_TRANSLATION_LISTEN) == 0);
+    assert(mybot_device_lifecycle_set_mode(&fixture.lifecycle, MYBOT_TRANSLATION_LISTEN_SPEAK) ==
+           0);
+    initialize(&fixture, true, SERVER, DEVICE);
+    assert(fixture.lifecycle.mode == MYBOT_TRANSLATION_LISTEN);
+    dispose(&fixture);
+}
+
+static void face_partial_start_cleans_one_parent(void) {
+    fixture_t fixture;
+    bound(&fixture);
+    assert(mybot_device_lifecycle_set_mode(&fixture.lifecycle, MYBOT_TRANSLATION_LISTEN_SPEAK) ==
+           0);
+    mybot_device_service_request_t *request = starting(&fixture);
+    request->result = 502;
+    request->payload.start.response.cleanup_required = true;
+    snprintf(request->payload.start.response.conversation_id,
+             sizeof(request->payload.start.response.conversation_id), "face-partial-parent");
+    snprintf(request->payload.start.response.error_code,
+             sizeof(request->payload.start.response.error_code), "CONVERSATION_START_FAILED");
+    deliver(&fixture, request);
+    assert(!fixture.starts && stored(&fixture, "tr_session"));
+    assert(mybot_device_lifecycle_set_mode(&fixture.lifecycle, MYBOT_TRANSLATION_LISTEN) < 0);
+    ticks(&fixture, 1);
+    request = take(&fixture, MYBOT_DEVICE_SERVICE_STOP);
+    assert(request && !strcmp(request->payload.stop.conversation_id, "face-partial-parent"));
+    request->result = 503;
+    deliver(&fixture, request);
+    mybot_device_lifecycle_request_start(&fixture.lifecycle);
+    assert(mybot_device_lifecycle_set_mode(&fixture.lifecycle, MYBOT_TRANSLATION_LISTEN) < 0);
+    ticks(&fixture, 50);
+    request = take(&fixture, MYBOT_DEVICE_SERVICE_STOP);
+    assert(request && !strcmp(request->payload.stop.conversation_id, "face-partial-parent"));
+    assert(!take(&fixture, MYBOT_DEVICE_SERVICE_START));
+    deliver(&fixture, request);
+    assert(!stored(&fixture, "tr_session") && !fixture.starts);
+    assert(fixture.lifecycle.mode == MYBOT_TRANSLATION_LISTEN_SPEAK);
+    dispose(&fixture);
+}
+
 int main(void) {
+    face_mode_is_volatile_and_idle_only();
+    face_partial_start_cleans_one_parent();
     successful_stop_clears_cleanup_status();
     repeated_start_stop();
     cancelled_late_start();
@@ -905,6 +1008,6 @@ int main(void) {
     unsynchronized_start_allows_retry_after_sync();
     shutdown_confirmed_stop_does_not_duplicate();
     invalid_initial_configuration();
-    puts("translation lifecycle: 29 fault/lifecycle scenarios passed (UBSan)");
+    puts("translation lifecycle: 31 fault/lifecycle scenarios passed (UBSan)");
     return 0;
 }

@@ -23,7 +23,7 @@ struct lv_obj_t {
     lv_obj_t *parent{};
     std::vector<lv_obj_t *> children;
     std::string text;
-    unsigned flags{}, state{};
+    unsigned flags{}, state{}, background{};
     int x{}, y{}, width{}, height{}, value{}, event_code{}, long_mode{};
     bool slider{};
     lv_event_cb_t callback{};
@@ -128,7 +128,8 @@ void lv_obj_set_style_pad_all(lv_obj_t *, int, int) {
 }
 void lv_obj_set_style_pad_row(lv_obj_t *, int, int) {
 }
-void lv_obj_set_style_bg_color(lv_obj_t *, lv_color_t, int) {
+void lv_obj_set_style_bg_color(lv_obj_t *object, lv_color_t color, int) {
+    object->background = color;
 }
 void lv_obj_set_style_bg_opa(lv_obj_t *, int, int) {
 }
@@ -294,6 +295,243 @@ static void bounds(lv_obj_t *root) {
         bounds(child);
     }
 }
+static void test_face_flow() {
+    lv_display_t display;
+    display.root.width = 800;
+    display.root.height = 480;
+    commands.clear();
+    events.clear();
+    captions.clear();
+    ++caption_generation;
+    CHECK(mybot_lvgl_view_create(&display) == 0);
+    mybot_lcd_content_t content{};
+    content.screen = MYBOT_LCD_SCREEN_READY;
+    content.volume = 40;
+    content.caption_generation = caption_generation;
+    std::strcpy(content.source_language, "zh-CN");
+    std::strcpy(content.target_language, "en-US");
+    mybot_lvgl_view_update(&content);
+    click(find(&display.root, tr("开始\n翻译  >", "Let's\ntranslate  >")));
+    accept_ui_commands = false;
+    click(find(&display.root, tr("面对面", "In person")));
+    CHECK(commands.empty());
+    CHECK(find(&display.root, tr("选择翻译方式", "Choose a translation scene")));
+    accept_ui_commands = true;
+    click(find(&display.root, tr("面对面", "In person")));
+    CHECK(commands.size() == 1 && commands.back().type == MYBOT_UI_SET_MODE &&
+          commands.back().value == MYBOT_TRANSLATION_LISTEN_SPEAK);
+    CHECK(lv_obj_has_state(find(&display.root, tr("中文", "Chinese"))->parent, LV_STATE_DISABLED));
+    CHECK(lv_obj_has_state(find(&display.root, tr("开始翻译  >", "Start translation  >"))->parent,
+                           LV_STATE_DISABLED));
+    ++content.volume;
+    ++content.caption_revision;
+    mybot_lvgl_view_update(&content);
+    ticks += 2000;
+    timer->callback(timer);
+    click(find(&display.root, tr("开始翻译  >", "Start translation  >")));
+    CHECK(events.empty()); // Volume, caption updates and timeouts do not acknowledge mode.
+    std::strcpy(content.error_code, "MODE_CHANGE_FAILED");
+    ++content.selection_revision;
+    mybot_lvgl_view_update(&content);
+    CHECK(find(&display.root, "MODE_CHANGE_FAILED"));
+    click(find(&display.root, tr("返回设置", "Back to settings")));
+    click(find(&display.root, tr("< 返回", "< Back")));
+    click(find(&display.root, tr("面对面", "In person")));
+    ++content.volume;
+    mybot_lvgl_view_update(&content); // A prior failed mode change cannot unlock the next request.
+    CHECK(lv_obj_has_state(find(&display.root, tr("中文", "Chinese"))->parent, LV_STATE_DISABLED));
+    ++content.selection_revision;
+    mybot_lvgl_view_update(&content);
+    CHECK(find(&display.root, "MODE_CHANGE_FAILED")); // A repeated failure remains visible.
+    click(find(&display.root, tr("返回设置", "Back to settings")));
+    click(find(&display.root, tr("< 返回", "< Back")));
+    click(find(&display.root, tr("面对面", "In person")));
+    content.error_code[0] = 0;
+    content.translation_mode = MYBOT_TRANSLATION_LISTEN_SPEAK;
+    ++content.selection_revision;
+    mybot_lvgl_view_update(&content);
+    CHECK(!lv_obj_has_state(find(&display.root, tr("中文", "Chinese"))->parent, LV_STATE_DISABLED));
+    click(find(&display.root, tr("中文", "Chinese")));
+    CHECK(find(&display.root, tr("我的语言", "My language")));
+    click(find(&display.root, tr("日语", "Japanese")));
+    CHECK(commands.back().type == MYBOT_UI_SET_LANGUAGES &&
+          std::strcmp(commands.back().source_language, "ja-JP") == 0);
+    std::strcpy(content.source_language, "ja-JP");
+    mybot_lvgl_view_update(&content);
+    click(find(&display.root, tr("日语", "Japanese")));
+    click(find(&display.root, tr("中文", "Chinese")));
+    std::strcpy(content.source_language, "zh-CN");
+    mybot_lvgl_view_update(&content);
+    click(find(&display.root, tr("开始翻译  >", "Start translation  >")));
+    CHECK(events.back() == MYBOT_KEY_EVENT_CONVERSATION_START);
+    content.screen = MYBOT_LCD_SCREEN_TRANSLATION_STARTING;
+    mybot_lvgl_view_update(&content);
+    content.screen = MYBOT_LCD_SCREEN_IN_CONVERSATION;
+    mybot_lvgl_view_update(&content);
+    CHECK(find(&display.root, tr("面对面翻译", "Face-to-face translation")));
+    CHECK(find(&display.root, tr("请选择发言语言", "Choose the speaking language")));
+    CHECK(find(&display.root, tr("麦克风尚未开启", "Microphone input is off")));
+    CHECK(lv_obj_has_state(find(&display.root, tr("暂停", "Pause"))->parent, LV_STATE_DISABLED));
+    bounds(&display.root);
+    const size_t before_direction = commands.size();
+    accept_ui_commands = false;
+    click(find(&display.root, tr("中文", "Chinese")));
+    CHECK(commands.size() == before_direction);
+    CHECK(!lv_obj_has_state(find(&display.root, tr("英语", "English"))->parent, LV_STATE_DISABLED));
+    accept_ui_commands = true;
+    click(find(&display.root, tr("中文", "Chinese")));
+    CHECK(commands.size() == before_direction + 1 &&
+          commands.back().type == MYBOT_UI_SET_DIRECTION &&
+          commands.back().value == MYBOT_TRANSLATION_DIRECTION_SPEAK);
+    CHECK(lv_obj_has_state(find(&display.root, tr("英语", "English"))->parent, LV_STATE_DISABLED));
+    CHECK(find(&display.root, tr("中文", "Chinese"))->parent->background != 0x8ee3df);
+    ++content.volume;
+    ++content.caption_revision;
+    mybot_lvgl_view_update(&content);
+    ticks += 2000;
+    timer->callback(timer);
+    click(find(&display.root, tr("英语", "English")));
+    CHECK(commands.size() == before_direction + 1);
+    CHECK(find(&display.root, tr("麦克风尚未开启", "Microphone input is off")));
+    content.input_direction = MYBOT_TRANSLATION_DIRECTION_SPEAK;
+    ++content.selection_revision;
+    mybot_lvgl_view_update(&content);
+    CHECK(find(&display.root, tr("中文", "Chinese"))->parent->background == 0x8ee3df);
+    CHECK(find(&display.root, tr("英语", "English"))->parent->background != 0x8ee3df);
+    CHECK(!lv_obj_has_state(find(&display.root, tr("暂停", "Pause"))->parent, LV_STATE_DISABLED));
+    click(find(&display.root, tr("中文", "Chinese")));
+    CHECK(commands.size() == before_direction + 1); // Same active direction has no side effect.
+
+    mybot_caption_t speak{};
+    speak.sequence = 1;
+    speak.direction = MYBOT_TRANSLATION_DIRECTION_SPEAK;
+    std::strcpy(speak.source_text, "请问地铁站在哪里？");
+    std::strcpy(speak.target_text, "Where is the metro station?");
+    captions.push_back(speak);
+    mybot_caption_t listen{};
+    listen.sequence = 2;
+    listen.direction = MYBOT_TRANSLATION_DIRECTION_LISTEN;
+    std::strcpy(listen.source_text, "Turn right at the next corner.");
+    std::strcpy(listen.target_text, "在下一个路口右转。");
+    captions.push_back(listen);
+    content.caption_count = content.caption_latest_sequence = 2;
+    content.caption_first_sequence = 1;
+    content.caption_latest_speak_sequence = 1;
+    content.caption_latest_listen_sequence = 2;
+    ++content.caption_revision;
+    mybot_lvgl_view_update(&content);
+    auto *speaking_label = find(&display.root, speak.target_text);
+    CHECK(speaking_label && !find(&display.root, listen.target_text));
+    listen.sequence = 3;
+    std::strcpy(listen.target_text, "到路口后向右转。");
+    captions.push_back(listen);
+    content.caption_count = content.caption_latest_sequence =
+        content.caption_latest_listen_sequence = 3;
+    ++content.caption_revision;
+    const unsigned before_other_caption = allocations;
+    mybot_lvgl_view_update(&content);
+    CHECK(find(&display.root, speak.target_text) == speaking_label);
+    CHECK(!find(&display.root, listen.target_text) && allocations == before_other_caption);
+    click(find(&display.root, tr("英语", "English")));
+    CHECK(commands.back().type == MYBOT_UI_SET_DIRECTION &&
+          commands.back().value == MYBOT_TRANSLATION_DIRECTION_LISTEN);
+    CHECK(find(&display.root, speak.target_text)); // Old direction remains authoritative until ack.
+    content.input_direction = MYBOT_TRANSLATION_DIRECTION_LISTEN;
+    ++content.selection_revision;
+    mybot_lvgl_view_update(&content);
+    CHECK(find(&display.root, listen.target_text) && !find(&display.root, speak.target_text));
+    CHECK(find(&display.root, tr("英语", "English"))->parent->background == 0x8ee3df);
+    click(find(&display.root, tr("暂停", "Pause")));
+    CHECK(commands.back().type == MYBOT_UI_SET_PAUSED && commands.back().value == 1);
+    content.paused = true;
+    mybot_lvgl_view_update(&content);
+    click(find(&display.root, tr("英语", "English")));
+    CHECK(commands.back().type == MYBOT_UI_SET_DIRECTION &&
+          commands.back().value == MYBOT_TRANSLATION_DIRECTION_LISTEN);
+    ++content.volume;
+    mybot_lvgl_view_update(&content);
+    CHECK(lv_obj_has_state(find(&display.root, tr("中文", "Chinese"))->parent, LV_STATE_DISABLED));
+    content.paused = false;
+    ++content.selection_revision;
+    mybot_lvgl_view_update(&content);
+    CHECK(!lv_obj_has_state(find(&display.root, tr("中文", "Chinese"))->parent, LV_STATE_DISABLED));
+
+    click(find(&display.root, tr("中文", "Chinese")));
+    content.paused = true;
+    std::strcpy(content.error_code, "DIRECTION_CHANGE_FAILED");
+    ++content.selection_revision;
+    mybot_lvgl_view_update(&content);
+    CHECK(find(&display.root, tr("切换失败，请重试", "Could not switch. Retry.")));
+    CHECK(!lv_obj_has_state(find(&display.root, tr("中文", "Chinese"))->parent, LV_STATE_DISABLED));
+    click(find(&display.root, tr("中文", "Chinese")));
+    ++content.caption_revision;
+    ++content.volume;
+    mybot_lvgl_view_update(&content); // An old failure code does not complete the retry.
+    CHECK(lv_obj_has_state(find(&display.root, tr("英语", "English"))->parent, LV_STATE_DISABLED));
+    ++content.selection_revision; // A repeated same-code failure still releases this attempt.
+    mybot_lvgl_view_update(&content);
+    CHECK(!lv_obj_has_state(find(&display.root, tr("英语", "English"))->parent, LV_STATE_DISABLED));
+    click(find(&display.root, tr("中文", "Chinese")));
+    content.input_direction = MYBOT_TRANSLATION_DIRECTION_SPEAK;
+    content.paused = false;
+    content.error_code[0] = 0;
+    ++content.selection_revision;
+    mybot_lvgl_view_update(&content);
+    CHECK(find(&display.root, speak.target_text));
+
+    click(find(&display.root, tr("更多 ...", "More ...")));
+    click(find(&display.root, tr("本次字幕与全文  >", "Captions and full text  >")));
+    CHECK(find(&display.root, tr("中文  >  英语", "Chinese  >  English")));
+    CHECK(find(&display.root, tr("英语  >  中文", "English  >  Chinese")));
+    click(find(&display.root, listen.target_text));
+    CHECK(find(&display.root, tr("英语  >  中文", "English  >  Chinese")));
+    CHECK(!find(&display.root, tr("中文  >  英语", "Chinese  >  English")));
+    speak.sequence = 4;
+    std::strcpy(speak.target_text, "Thanks for your help.");
+    captions.push_back(speak);
+    content.caption_count = content.caption_latest_sequence =
+        content.caption_latest_speak_sequence = 4;
+    ++content.caption_revision;
+    const unsigned full_allocations = allocations;
+    mybot_lvgl_view_update(&content);
+    CHECK(find(&display.root, listen.target_text));
+    CHECK(!find(&display.root, speak.target_text) && allocations == full_allocations);
+    click(find(&display.root, tr("返回实时翻译", "Back to live")));
+    CHECK(find(&display.root, speak.target_text));
+    click(find(&display.root, tr("更多 ...", "More ...")));
+    click(find(&display.root, tr("结束这次翻译", "End this translation")));
+    click(find(&display.root, tr("结束翻译", "End translation")));
+    CHECK(events.back() == MYBOT_KEY_EVENT_CONVERSATION_STOP);
+    content.screen = MYBOT_LCD_SCREEN_READY;
+    mybot_lvgl_view_update(&content);
+    click(find(&display.root, tr("查看本次字幕", "View captions")));
+    CHECK(find(&display.root, tr("英语  >  中文", "English  >  Chinese")));
+    click(find(&display.root, tr("返回结束页", "Back to summary")));
+    click(find(&display.root, tr("再来一次", "Translate again")));
+    click(find(&display.root, tr("< 返回", "< Back")));
+    click(find(&display.root, tr("媒体翻译", "Listen")));
+    CHECK(commands.back().type == MYBOT_UI_SET_MODE &&
+          commands.back().value == MYBOT_TRANSLATION_LISTEN);
+    CHECK(lv_obj_has_state(find(&display.root, tr("开始翻译  >", "Start translation  >"))->parent,
+                           LV_STATE_DISABLED));
+    content.translation_mode = MYBOT_TRANSLATION_LISTEN;
+    content.input_direction = MYBOT_TRANSLATION_DIRECTION_NONE;
+    ++content.selection_revision;
+    mybot_lvgl_view_update(&content);
+    CHECK(find(&display.root, tr("中文", "Chinese")) && find(&display.root, tr("英语", "English")));
+    CHECK(!lv_obj_has_state(find(&display.root, tr("开始翻译  >", "Start translation  >"))->parent,
+                            LV_STATE_DISABLED));
+    click(find(&display.root, tr("开始翻译  >", "Start translation  >")));
+    content.screen = MYBOT_LCD_SCREEN_IN_CONVERSATION;
+    mybot_lvgl_view_update(&content);
+    CHECK(find(&display.root, tr("媒体翻译", "Media translation")));
+    CHECK(!find(&display.root, tr("面对面翻译", "Face-to-face translation")));
+    mybot_lvgl_view_destroy();
+    CHECK(!live && !timer && display.root.children.empty());
+    std::puts(
+        "PASS face UI: mode/direction readback, turn selection, pause, per-direction captions "
+        "and history, failures and unchanged media controls");
+}
 int main() {
     lv_display_t display;
     display.root.width = 800;
@@ -344,8 +582,8 @@ int main() {
     CHECK(find(&display.root, tr("输出音量 37%", "Output volume 37%")));
     click(find(&display.root, tr("开始\n翻译  >", "Let's\ntranslate  >")));
     bounds(&display.root);
-    // Preview scenes can browse languages but cannot create or change a real session.
-    click(find(&display.root, tr("面对面", "In person")));
+    // The meeting preview can browse languages without changing a real session.
+    click(find(&display.root, tr("会议互译", "Meeting")));
     const auto command_count = commands.size();
     click(find(&display.root, tr("待开放", "Coming soon")));
     CHECK(events.empty());
@@ -763,6 +1001,7 @@ int main() {
     mybot_lvgl_view_destroy();
     mybot_lvgl_view_destroy();
     CHECK(!live && !timer && display.root.children.empty());
+    test_face_flow();
     std::puts("PASS native simulator UI: scene previews, direct language selection, real volume, "
               "pause, streamed captions/history, lifecycle gates and allocation cleanup");
 }

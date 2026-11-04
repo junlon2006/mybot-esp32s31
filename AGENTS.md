@@ -5,8 +5,10 @@ board is `esp32-s31-korvo-1`; `MYBOT_BOARD` is the board selector. Use `idf.py -
 User instructions take precedence. Preserve unrelated changes; do not commit or push unless asked.
 
 The MyBot SDK under `components/mybot_stack/mybot_sdk/mybot/` is a project-maintained
-listen-translation fork. Keep its cloud-AEC MIC/reference PCM contract and 60 ms cadence.
-Only `v2vt/listen` is supported; there is no assistant compatibility runtime.
+translation fork. Keep its cloud-AEC MIC/reference PCM contract and 60 ms cadence.
+Media uses `v2vt/listen`; face-to-face uses `listen_speak` with two RTC connections
+and one RTM login/channel subscription. Meeting remains a UI preview. There is no
+assistant compatibility runtime. Keep the supplied RTSA library unchanged.
 
 Keep these other source inputs immutable:
 

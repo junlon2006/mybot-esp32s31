@@ -5,9 +5,10 @@
 
 **[English](README.md) | [简体中文](README.zh-CN.md)**
 
-`mybot-esp32s31` is an ESP-IDF firmware project for standalone `v2vt/listen` translation on the
+`mybot-esp32s31` is an ESP-IDF firmware project for standalone V2VT translation on the
 ESP32-S31-Korvo-1 V1.1 board. The media scene sends board microphone audio to the cloud and plays
-translated speech through the board speaker, initially Chinese to English. The project maintains
+translated speech through the board speaker, initially Chinese to English. Face-to-face supports
+alternating Chinese/English speech, with language buttons selecting the microphone route. The project maintains
 the MyBot translation SDK fork and its board, network, audio, display and lifecycle integration.
 The development API is `https://mybot.sh3t.agoralab.co/api`.
 
@@ -34,8 +35,9 @@ and current limitations.
 - ES8389 audio with four 16-bit Philips TDM slots, independent capture/playback attachment,
   and reference-counted codec/I2S ownership.
 - Automatic LVGL on the 800 x 480 RGB565 display with GT1151 touch.
-- Native media translation controls for languages, start/stop, local pause and actual volume;
-  PLAY also starts/stops translation. Face-to-face and meeting scenes are settings previews.
+- Native media and face-to-face controls for languages, start/stop, local pause and actual volume;
+  PLAY also starts/stops translation. Face-to-face shares one parent session, two RTC connections
+  and one RTM channel subscription. Meeting remains a settings preview.
 - Localized pairing and Wi-Fi provisioning prompts, with the actual hotspot name shown during
   provisioning.
 

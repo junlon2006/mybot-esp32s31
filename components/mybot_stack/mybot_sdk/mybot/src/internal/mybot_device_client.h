@@ -5,6 +5,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
+#include <mybot/mybot_translation.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -42,9 +43,9 @@ typedef struct {
     int poll_after_seconds;
 } mybot_device_binding_t;
 
-/** Conversation-start response. */
+/** One validated direction; each route owns its RTC identity and credentials. */
 typedef struct {
-    char conversation_id[MYBOT_DEVICE_CLIENT_MAX_ID];
+    mybot_translation_direction_t direction;
     char rtc_app_id[64];
     char rtc_channel[128];
     char rtc_uid[64];       /* string UID assigned by server */
@@ -53,6 +54,16 @@ typedef struct {
     char audio_publisher_uid[64];
     char source_language[33];
     char target_language[33];
+    bool tts_enabled;
+    int64_t expires_at;
+} mybot_device_translation_route_t;
+
+/** Conversation-start response. Routes are normalized: listen first, then speak. */
+typedef struct {
+    char conversation_id[MYBOT_DEVICE_CLIENT_MAX_ID];
+    mybot_translation_mode_t mode;
+    unsigned route_count;
+    mybot_device_translation_route_t routes[2];
     int64_t expires_at;    /* UTC epoch seconds */
     bool cleanup_required; /* Keep conversation_id until stop confirms ended. */
     bool start_unknown;    /* The server may have created a session without returning its ID. */
@@ -73,11 +84,12 @@ int mybot_device_client_create_pair_code(const char *base_url, const char *devic
 int mybot_device_client_get_binding_status(const char *base_url, const char *device_id,
                                            const char *auth_header, mybot_device_binding_t *resp);
 
-/** Start one listen translation session using the selected input/output languages.
+/** Start one translation parent. LISTEN uses input/output languages; LISTEN_SPEAK
+ *  uses local/remote languages. Both directions are returned in normalized order.
  *  Inspect cleanup_required/start_unknown even on failure before attempting another start. */
 int mybot_device_client_start_conversation(const char *base_url, const char *device_id,
-                                           const char *device_token, const char *source_language,
-                                           const char *target_language,
+                                           const char *device_token, mybot_translation_mode_t mode,
+                                           const char *source_language, const char *target_language,
                                            mybot_device_conversation_t *resp);
 
 /** Stop a conversation. */

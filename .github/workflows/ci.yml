@@ -46,7 +46,8 @@ jobs:
             "$sdk/src/internal/mybot_http_client.h" "$sdk/src/media/mybot_media_pipeline.c" \
             "$sdk/src/internal/mybot_media_pipeline.h" "$sdk/include/mybot/mybot_ui.h" \
             "$sdk/src/core/mybot_ui.c" "$sdk/include/mybot/mybot_captions.h" \
-            "$sdk/src/internal/mybot_captions.h" "$sdk/src/core/mybot_captions.c"; do
+            "$sdk/src/internal/mybot_captions.h" "$sdk/src/core/mybot_captions.c" \
+            "$sdk/include/mybot/mybot_translation.h"; do
             clang-format --dry-run --Werror "$file"
             head -n 5 "$file" | grep -q 'SPDX-License-Identifier:'
           done

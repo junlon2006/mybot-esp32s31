@@ -34,6 +34,7 @@ typedef struct mybot_device_service_request {
     union {
         mybot_device_binding_t binding;
         struct {
+            mybot_translation_mode_t mode;
             char source_language[33];
             char target_language[33];
             mybot_device_conversation_t response;
@@ -69,6 +70,8 @@ typedef struct {
     char hw_model[64];
     char source_language[33];
     char target_language[33];
+    /** Session selection is volatile; boot always starts with media/listen. */
+    mybot_translation_mode_t mode;
     char error_code[64];
     mybot_device_lifecycle_callbacks_t cbs;
     mybot_kv_store_t *kv_store;
@@ -143,6 +146,9 @@ int mybot_device_lifecycle_cycle_language(mybot_device_lifecycle_t *lifecycle, b
 /** Set both supported languages in one durable record while idle. */
 int mybot_device_lifecycle_set_languages(mybot_device_lifecycle_t *lifecycle, const char *source,
                                          const char *target);
+/** Select media or face-to-face only while idle; does not write KV. */
+int mybot_device_lifecycle_set_mode(mybot_device_lifecycle_t *lifecycle,
+                                    mybot_translation_mode_t mode);
 
 #ifdef __cplusplus
 }

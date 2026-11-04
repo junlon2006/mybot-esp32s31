@@ -40,3 +40,15 @@ esac
     "$test_dir/test_captions.c" "$sdk_dir/src/core/mybot_captions.c" \
     "$test_binary.json.o" -lm -o "$test_binary"
 "$test_binary"
+
+for cloud_aec in 0 1; do
+    "${CC:-cc}" -std=c99 -Wall -Wextra -Werror -Wno-unused-function \
+        -DMYBOT_CLOUD_AEC="$cloud_aec" \
+        -fsanitize="${SANITIZERS:-undefined}" -fno-omit-frame-pointer \
+        -ffunction-sections -fdata-sections "$strip_flag" \
+        -I"$test_dir/mocks" -I"$sdk_dir/src/internal" -I"$sdk_dir/include" \
+        "$test_dir/test_face.c" "$sdk_dir/src/core/mybot_captions.c" \
+        "$sdk_dir/src/core/mybot_presenter.c" "$sdk_dir/src/core/mybot_state_model.c" \
+        "$test_binary.json.o" -lm -o "$test_binary"
+    "$test_binary"
+done
