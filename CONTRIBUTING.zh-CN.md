@@ -14,20 +14,20 @@ MyBot SDK 是项目维护的 `v2vt/listen` 分支，保持 Cloud AEC MIC/参考 
 
 ## 验证
 
-安装 ffmpeg 和 ESP-IDF v6.1。固定版本 RTSA payload 随工程提供，开发直接使用 `idf.py`：
+安装 ffmpeg 和 ESP-IDF v6.1。固定版本 RTSA payload 随工程提供。开发直接使用 `idf.py` 构建中文，所有本地编译固定使用 `build/korvo-s31` 和 `build/korvo-s31/sdkconfig`：
 
 ```sh
 . /path/to/esp-idf/export.sh
 test "$(idf.py --preview --version)" = "ESP-IDF v6.1"
-idf.py --preview -B build/contribution \
+idf.py --preview -B build/korvo-s31 \
   -DMYBOT_BOARD=esp32-s31-korvo-1 \
-  -DSDKCONFIG=build/contribution/sdkconfig \
+  -DSDKCONFIG=build/korvo-s31/sdkconfig \
   -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;ci/ptime60.defaults" build size
-python3 scripts/check_s31_build.py --build-dir build/contribution --language zh-CN
+python3 scripts/check_s31_build.py --build-dir build/korvo-s31 --language zh-CN
 git diff --check
 ```
 
-英文使用独立目录，并添加 `ci/en-us.defaults`。[CI](.github/workflows/ci.yml)定义源码检查、host 测试和固件变体。运行 `tests/` 下受影响的测试；生命周期/回调改动需覆盖初始化失败、部分清理、超时、反复启停和资源所有权。[交付文档](docs/RELEASING.zh-CN.md)说明双语打包。
+CI 保留独立 job 目录，英文添加 `ci/en-us.defaults`；本地固定目录不改变 CI 矩阵。[CI](.github/workflows/ci.yml)定义源码检查、host 测试和固件变体。运行 `tests/` 下受影响的测试；生命周期/回调改动需覆盖初始化失败、部分清理、超时、反复启停和资源所有权。[交付文档](docs/RELEASING.zh-CN.md)说明双语打包。
 
 在[验证记录](docs/s31-validation.md)分别记录源码检查、host 测试、目标构建与真机结果。编译通过不能证明触摸、声学质量或长稳表现。S31 命令需要 `--preview`，视频保持关闭。
 

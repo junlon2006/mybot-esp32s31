@@ -14,20 +14,20 @@ Never commit credentials, device identifiers, Wi-Fi passwords, original RTSA arc
 
 ## Validation
 
-Install ffmpeg and ESP-IDF v6.1. The pinned RTSA payload is bundled, so development builds use `idf.py` directly:
+Install ffmpeg and ESP-IDF v6.1. The pinned RTSA payload is bundled. Build Chinese firmware directly with `idf.py`, always using `build/korvo-s31` and `build/korvo-s31/sdkconfig` locally:
 
 ```sh
 . /path/to/esp-idf/export.sh
 test "$(idf.py --preview --version)" = "ESP-IDF v6.1"
-idf.py --preview -B build/contribution \
+idf.py --preview -B build/korvo-s31 \
   -DMYBOT_BOARD=esp32-s31-korvo-1 \
-  -DSDKCONFIG=build/contribution/sdkconfig \
+  -DSDKCONFIG=build/korvo-s31/sdkconfig \
   -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;ci/ptime60.defaults" build size
-python3 scripts/check_s31_build.py --build-dir build/contribution --language zh-CN
+python3 scripts/check_s31_build.py --build-dir build/korvo-s31 --language zh-CN
 git diff --check
 ```
 
-Build English in a separate directory with `ci/en-us.defaults`. The [workflow](.github/workflows/ci.yml) defines the source checks, host tests and firmware variants. Run affected host tests under `tests/`; lifecycle or callback changes require fault-injection coverage for failures, timeout, repeated start/stop and resource ownership. The [release guide](docs/RELEASING.md) covers both-language packaging.
+CI retains isolated job directories and covers English using `ci/en-us.defaults`; the fixed local directory does not change CI's matrix. The [workflow](.github/workflows/ci.yml) defines the source checks, host tests and firmware variants. Run affected host tests under `tests/`; lifecycle or callback changes require fault-injection coverage for failures, timeout, repeated start/stop and resource ownership. The [release guide](docs/RELEASING.md) covers both-language packaging.
 
 Record source checks, host tests, target builds and physical-board results separately in [s31-validation.md](docs/s31-validation.md). Successful compilation does not validate touch interaction, acoustic quality or long-term stability. The S31 target requires `--preview`. Video stays disabled.
 

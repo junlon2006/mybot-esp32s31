@@ -44,8 +44,10 @@ Original SDK archives, firmware and generated outputs are ignored and must not b
 
 Before handing off changes, run relevant host lifecycle/fault-injection tests,
 clang-format/SPDX and git diff --check; build Chinese firmware with direct idf.py during development.
-Use independent build/sdkconfig directories. The builder supports dry-run; its safe
-cleanup requires Python 3.11+, while direct IDF builds support the installed IDF
+All local firmware builds use `build/korvo-s31` and `build/korvo-s31/sdkconfig`;
+do not create or switch to another local build directory. CI jobs retain isolated
+build/sdkconfig directories. The builder supports dry-run; its safe cleanup
+requires Python 3.11+, while direct IDF builds support the installed IDF
 Python environment. Record binary/config/map checks separately from real hardware
 results. Update board docs, validation, source provenance and license notices when
 inputs or hardware facts change. The inherited TDM audio and display have user-reported hardware confirmation;

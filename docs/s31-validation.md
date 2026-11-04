@@ -1,6 +1,6 @@
 # S31 validation record
 
-The latest local checks are under [AI QoS default disabled](#2026-11-04-ai-qos-default-disabled). Earlier sections describe the revision tested at that time. Use the manifests and checksums beside delivered images for their current binary identity.
+The latest local checks are under [Fixed local build directory](#2026-11-04-fixed-local-build-directory). Earlier sections describe the revision tested at that time. Use the manifests and checksums beside delivered images for their current binary identity.
 
 This records local build/host validation and separately attributed hardware feedback. Basic bidirectional audio passed the user's real-board interoperability test. The user subsequently confirmed normal screen display. Detailed TDM channel/reference mapping, quantitative audio quality, the new touch behavior, power sequencing and long-duration stability are not established by those reports.
 
@@ -224,4 +224,11 @@ Merged image: `esp32-s31-listen-zh-CN.bin`, 2572064 bytes, SHA-256 `8c287ca15037
 
 - Firmware Kconfig/defaults and the SDK fallback now disable AI QoS. Explicit opt-in remains available. The client sends `ai_qos=false` and omits the fast-send multiplier when disabled; the RTC audio option is also false.
 - Existing protocol tests passed both explicit feature states (202 + 198 cases). RTC tests passed 17 scenarios with the new default and another 17 with AI QoS explicitly enabled. Full format/SPDX scopes and whitespace checks passed.
-- Direct Chinese and English ESP-IDF v6.1 preview builds passed in fresh `build/listen-zh-qos-off` and `build/listen-en-qos-off` directories. Both merged images passed link and delivery checks. Both generated configurations disable AI QoS, and both client and RTC compile commands contain `MYBOT_AI_QOS=0`. Cloud AEC remains enabled. Existing sdkconfig values are not silently overwritten; use these fresh builds to flash the new defaults. No device was flashed.
+- Direct Chinese and English ESP-IDF v6.1 preview builds passed in fresh `build/listen-zh-qos-off` and `build/listen-en-qos-off` directories. Both merged images passed link and delivery checks. Both generated configurations disable AI QoS, and both client and RTC compile commands contain `MYBOT_AI_QOS=0`. Cloud AEC remains enabled. Those directories record this earlier validation; subsequent local builds use `build/korvo-s31`. No device was flashed.
+
+## 2026-11-04 fixed local build directory
+
+- The user requires all subsequent local firmware builds and generated sdkconfig to remain under `build/korvo-s31`. Agent guidance and current development/build/flash instructions now use that path. CI job directories and historical records are separate.
+- Rebuilt the current Chinese firmware in that directory using the existing configuration and normal ESP-IDF configuration migration. Verified the development API, Chinese-to-English defaults, AI QoS disabled in generated configuration and service/RTC compiler definitions, cloud AEC enabled, 60 ms audio and three SNTP servers.
+- The application build, partition-size and merged-image link/delivery checks passed: 2769360 application bytes, with 33% application-partition headroom. The merged image and its metadata are also under `build/korvo-s31`. The agent did not flash a device. The original generated configuration was preserved in a private temporary backup.
+- The user subsequently reported that testing passed for this build, separately from the local build and image checks above.
