@@ -4,9 +4,12 @@ This repository targets ESP32-S31-Korvo-1 V1.1 on ESP-IDF v6.1. The only registe
 board is `esp32-s31-korvo-1`; `MYBOT_BOARD` is the board selector. Use `idf.py --preview`.
 User instructions take precedence. Preserve unrelated changes; do not commit or push unless asked.
 
-Keep these source inputs immutable:
+The MyBot SDK under `components/mybot_stack/mybot_sdk/mybot/` is a project-maintained
+listen-translation fork. Keep its cloud-AEC MIC/reference PCM contract and 60 ms cadence.
+Only `v2vt/listen` is supported; there is no assistant compatibility runtime.
 
-- `components/mybot_stack/mybot_sdk/mybot/`
+Keep these other source inputs immutable:
+
 - `components/mybot_stack/aosl/` except the component wrapper `CMakeLists.txt` and the
   project-maintained `s31_port/` adapter
 - `components/esp_codec_dev/` (official 1.5.9 snapshot)
@@ -40,10 +43,12 @@ defaults/Kconfig/CMake and regenerate. The user-approved pinned RTSA header/libr
 Original SDK archives, firmware and generated outputs are ignored and must not be committed. Keep credentials/device IDs out of Git.
 
 Before handing off changes, run relevant host lifecycle/fault-injection tests,
-clang-format/SPDX and git diff --check; build both languages with direct idf.py.
+clang-format/SPDX and git diff --check; build Chinese firmware with direct idf.py during development.
 Use independent build/sdkconfig directories. The builder supports dry-run; its safe
 cleanup requires Python 3.11+, while direct IDF builds support the installed IDF
 Python environment. Record binary/config/map checks separately from real hardware
 results. Update board docs, validation, source provenance and license notices when
-inputs or hardware facts change. Basic bidirectional audio and the display have user-reported hardware confirmation.
-Touch toggling and CI delivery changes still require their own hardware/remote results.
+inputs or hardware facts change. The inherited TDM audio and display have user-reported hardware confirmation;
+this does not establish translation behavior.
+Translation route subscription, language controls, cloud AEC and recovery require
+their own hardware results. The development service is https://mybot.sh3t.agoralab.co/api.

@@ -335,6 +335,11 @@ extern "C" int mybot_wifi_get_provisioning_ssid(char *ssid, size_t capacity) {
     return 0;
 }
 
+extern "C" bool mybot_wifi_is_connected(void) {
+    std::lock_guard<std::mutex> lock(control.state_mutex);
+    return control.initialized && !control.stopping && control.network_connected;
+}
+
 extern "C" void mybot_wifi_shutdown_network(void) {
     auto &manager = WifiManager::GetInstance();
     {

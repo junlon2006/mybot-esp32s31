@@ -1,24 +1,23 @@
-# Korvo S31 ADC keys and board host tests
+# S31 input and board lifecycle host tests
 
-Run `sh tests/korvo_s31_input/run.sh`. Add
-`TEST_SANITIZE_FLAGS='-fsanitize=undefined -fno-sanitize-recover=all'` for UBSan.
+Run `sh tests/korvo_s31_input/run.sh`. Fault injection covers ADC/key initialization,
+partial cleanup and retry, debounce, invalid samples, physical PLAY start/stop,
+volume and provisioning keys, callback/destroy ordering and repeated SDK attach.
 
-The production ADC input runs on a host thread with deterministic 20 ms samples.
-Checks cover ADC/worker initialization failures, partially returned handles,
-failed ADC cleanup and retry, debounce, PLAY start/stop state gating, volume/PAIR,
-ADC and calibration errors, SET held for three seconds while MyBot is stopped,
-and repeated SDK attach/detach. A blocked callback proves detach waits before its
-user data may be released. The board tests exercise prepare failures, display
-cleanup, idempotent prepare, descriptor registration, automatic/manual provisioning
-callbacks, network errors, and process-lifetime hardware ownership.
+Touch samples alone never start or stop translation. A valid LVGL button click
+posts its semantic event through a bounded mailbox. Tests cover language/volume
+buttons, active-session language locking, cancel while connecting, cleanup retry,
+unknown-outcome start suppression, stale SDK epochs, read-error cancellation,
+held touches, burst coalescing and callback ordering. Physical PLAY uses the same
+translation start/stop eligibility. SDK work runs on the key worker, outside the
+LVGL lock.
 
-Touch tests execute the production mailbox on the same polling worker: tap to
-start/stop, release-only delivery, long hold without repeat, bounded tap bursts,
-read-error cancellation, readiness changes, discarded detached input, stale
-gestures across SDK lifetimes, and repeated toggles. A blocked SDK callback also
-proves the touch producer remains non-blocking while detach waits, so LVGL does
-not acquire the callback mutex.
+Parameterized language/volume/pause commands use a separate copied single-slot
+mailbox with the same gesture/epoch validation. Tests verify copying, saturation,
+state changes, detach, invalid values and read-error cancellation. A completed
+start may cross the gesture-to-dispatch boundary only for a STOP command, so a
+late start result cannot silently discard the user's cancel action.
 
-The official ADC calibration helper is not modified or simulated as a hardware
-calibration result. Real voltage thresholds, noise and calibration accuracy still
-require the Korvo-1 V1.1.
+Board tests preserve initialization ordering and defer Wi-Fi provisioning to the
+application lifecycle. These host checks do not establish physical ADC voltages,
+GT1151 coordinates, button placement or real-device timing.

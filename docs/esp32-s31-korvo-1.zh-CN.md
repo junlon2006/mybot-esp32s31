@@ -2,7 +2,7 @@
 
 [English](esp32-s31-korvo-1.en.md) · [简体中文](esp32-s31-korvo-1.zh-CN.md)
 
-Board ID 为 `esp32-s31-korvo-1`，基于 ESP-IDF v6.1 的 preview S31 target。包含 Wi-Fi/网页配网、HTTPS/配对、RTC/RTM、ES8389 双向语音、提示音、ADC 按键和 RGB/GT1151 界面。视频不在当前移植范围。
+Board ID 为 `esp32-s31-korvo-1`，基于 ESP-IDF v6.1 的 preview S31 target。当前应用为板载 MIC → 云端 Bot → 板载喇叭的单向听译，包含 Wi-Fi/网页配网、HTTPS/配对、RTC/RTM、ES8389 并行采播、ADC 按键和 RGB/GT1151 界面。视频不在当前移植范围。
 
 ## 编译和烧录
 
@@ -25,16 +25,19 @@ idf.py --preview -B build/korvo-s31 -p PORT flash monitor
 
 | 操作 | 行为 |
 | --- | --- |
-| 轻点屏幕 | 开启对话；对话中再次轻点结束 |
-| PLAY 短按 | 同样开启/结束对话 |
+| 屏幕语言按钮 | 就绪时选择输入/目标语言并保存 |
+| 屏幕开始/停止按钮 | 开始翻译、连接中取消、运行中停止、清理失败时重试 |
+| 实时页暂停/继续 | 本地暂停与恢复音频，保留 RTC 父会话 |
+| 音量滑条 | 松手提交一次绝对值，显示实际输出音量 |
+| PLAY 短按 | 开始/停止翻译；连接中取消；清理失败时重试 |
 | SET 短按 | 请求重新配对 |
 | SET 长按 3 秒 | 停止 MyBot 后进入配网 |
 | VOL+/VOL- | 调整音量并保存 |
 | 首次未配置 Wi-Fi | 自动进入网页配网并显示入口/播放提示 |
 
-等待 Wi-Fi、配对完成并进入就绪界面后开始对话。触摸通过与 PLAY 相同的公开按键事件进入业务流程，显示/触摸回调不执行 HTTPS 或 RTC 阻塞操作。未就绪时忽略触摸。长按松开只触发一次；首版不区分拖动，正常释放仍视为一次手势。初始化或读错误恢复时已按住，需先松开再重新按。触摸日志为 `event=touch action=conversation_start` / `conversation_stop`。
+等待 Wi-Fi 与配对完成后，从首页进入媒体翻译，选择输入语言与目标语言并开始。面对面、会议互译目前提供设置预览，字幕与亮度明确标为演示。只有实际控件触摸会触发业务，空白区域不会启停；显示回调只将命令按值复制入队，不执行阻塞的 HTTPS/RTC 操作。清理或未知结果会阻止新会话；设备端 MIC 与播放参考继续沿用云 AEC 配对上行。开发服务为 `https://mybot.sh3t.agoralab.co/api`，需绑定开启译音的 V2VT Bot。完整界面说明见[翻译界面](PLATFORM_UI.zh-CN.md)，配置与烧录见[独立听译](LISTEN_TRANSLATION.zh-CN.md)。
 
-用户已确认真机双向音频和屏幕正常显示；新增触摸开启/结束逻辑仍待上板测试。轻点开会话、再次轻点结束，确认一次手势只触发一次，再确认 PLAY 和 SET 仍正常。详见[验证记录](s31-validation.md)。
+原有基础音频互通与显示有用户实机确认；当前同传路由、云 AEC、语言操作与恢复仍需本轮实机测试，不能沿用普通对话的验收结论。
 
 ## 硬件与 TDM
 
@@ -53,11 +56,11 @@ idf.py --preview -B build/korvo-s31 -p PORT flash monitor
 
 按官方文档要求使用 TDM，未照搬固定 factory BSP 的标准 stereo I2S 初始化。ES8389 `use_mclk=false`、`no_dac_ref=false`，适配器检查 STDM 寄存器，播放映射时隙、采集选定麦克风时隙。名义 BCLK 为 1.024 MHz、WS 为 16 kHz，未声称经仪器测量。
 
-基础音频互通通过不代表双麦/参考时隙归属、量化音质或长稳已验收；本地 AEC/波束成形/唤醒、视频、SD/USB 应用和低功耗均未移植。本轮仅增加触摸交互、CI/交付和工程整理，其余项目保持待定。
+基础音频互通通过不代表双麦/参考时隙归属、量化音质或长稳已验收；本地 AEC/波束成形/唤醒、视频、SD/USB 应用和低功耗均未移植。媒体翻译沿用板载 MIC 与扬声器路径，新界面与本地暂停需要各自的实机验收。
 
 ## 开启对话正文日志
 
-`POST .../conversations/start` 的请求和响应完整打印，含 HTTP 错误响应。筛选 `event=http_body`，用连接 `id` 和 `direction=request|response` 归组。`begin/end` 给出字节数和完整性，`offset` 表示顺序；中断标记 incomplete。普通 JSON 按有界 UTF-8 分段，含 NUL 的正文用 hex 保留全部字节。日志可能含认证和设备信息，分享前脱敏。
+所有 HTTPS 请求与响应正文均打印，包括配对、binding-status、翻译 start/stop 和 HTTP 错误响应。筛选 `event=http_body`，用连接 `id` 和 `direction=request|response` 归组。每个正文一次完整输出到单条 `phase=data` 日志，空正文输出 `data=`；`begin/end` 保留长度和完整性信息，未完成的正文标记 `complete=no`。begin 还提供方法、脱敏路径、状态、实际与捕获字节数及传输错误。正文捕获有界（请求含头 2 KiB，响应含头 32 KiB），超限会明确标记。含 NUL 的正文一次输出完整 hex，临时 PSRAM 分配失败会标记输出不可用。日志可能含认证和设备信息，分享前脱敏。时间同步、启动超时和未知会话恢复见[听译排查](LISTEN_TRANSLATION.zh-CN.md#启动排查与恢复)。
 
 ## 参考
 

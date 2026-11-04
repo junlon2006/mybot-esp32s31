@@ -48,6 +48,13 @@ typedef struct {
     bool initialized;
     aosl_atomic_t running;
     aosl_atomic_t rtc_connected;
+    aosl_atomic_t paused;
+    /* Control calls are serialized; remote PCM uses a nonblocking producer gate. */
+    aosl_atomic_t pause_control_busy;
+    aosl_atomic_t remote_audio_busy;
+    aosl_atomic_t pause_fence_generation;
+    aosl_atomic_t pause_fence_done[3];
+    bool playback_suspended;
 #if MYBOT_WAKE_WORDS
     aosl_atomic_t wake_words_enabled;
 #endif
@@ -111,6 +118,17 @@ void mybot_media_pipeline_set_rtc_connected(mybot_media_pipeline_t *pipeline, bo
 int mybot_media_pipeline_flush_session(mybot_media_pipeline_t *pipeline);
 /** Mark the RTC session ended and synchronously drain its PCM buffers. */
 int mybot_media_pipeline_end_session(mybot_media_pipeline_t *pipeline);
+/**
+ * Pause/resume local session audio without leaving RTC or changing saved volume.
+ * Keep sending 60 ms MIC/reference pairs; a paused MIC is silent. Playback is
+ * stopped independently of capture to discard device-owned PCM. Resume publishes
+ * unpaused only after worker fences, PCM draining and playback start succeed.
+ * Call on the lifecycle control thread, serialized with start/stop/end_session.
+ * Worker/producer fences have a bounded wait and retain pipeline-owned callbacks
+ * after timeout. On failure query is_paused(); a failed resume stays paused.
+ */
+int mybot_media_pipeline_set_paused(mybot_media_pipeline_t *pipeline, bool paused);
+bool mybot_media_pipeline_is_paused(const mybot_media_pipeline_t *pipeline);
 #if MYBOT_WAKE_WORDS
 void mybot_media_pipeline_set_wake_words_enabled(mybot_media_pipeline_t *pipeline, bool enabled);
 #endif
@@ -119,6 +137,8 @@ void mybot_media_pipeline_push_remote_audio(mybot_media_pipeline_t *pipeline, co
 int mybot_media_pipeline_play_prompt(mybot_media_pipeline_t *pipeline, mybot_prompt_type_t type,
                                      const void *args);
 void mybot_media_pipeline_stop_prompt(mybot_media_pipeline_t *pipeline);
+/** Read the active hardware/software playback volume (0..100); leave output unchanged on error. */
+int mybot_media_pipeline_get_volume(mybot_media_pipeline_t *pipeline, int *volume);
 /** Set playback volume from 0 to 100. */
 int mybot_media_pipeline_set_volume(mybot_media_pipeline_t *pipeline, int volume);
 /** Adjust playback volume by -100..100, saturating the result to 0..100. */

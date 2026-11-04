@@ -25,6 +25,7 @@
 #endif
 
 #define MYBOT_RTM_LOGIN_POLL_MS 10U
+#define MYBOT_RTC_APP_ID_CAPACITY 64U
 
 #define MYBOT_RTC_PCM_SAMPLE_RATE 16000U
 #define MYBOT_RTC_PCM_CHANNELS 1U
@@ -37,8 +38,12 @@ typedef struct {
     mybot_rtc_state_t state;
     connection_id_t conn_id;
     mybot_agora_rtc_callbacks_t callbacks;
-    char app_id[64];
+    bool fini_failed;
     char rtm_uid[MYBOT_RTM_UID_MAX_LEN];
+    char agent_uid[MYBOT_RTM_UID_MAX_LEN];
+    char publisher_account[MYBOT_RTM_UID_MAX_LEN];
+    uint32_t publisher_uid;
+    bool publisher_subscribed;
     char rtm_channel[AGORA_RTC_CHANNEL_NAME_MAX_LEN + 1];
     bool rtm_login_requested;
     bool rtm_logged_in;
@@ -111,6 +116,7 @@ static void on_connection_lost(connection_id_t);
 static void on_rejoin_channel_success(connection_id_t, uint32_t, int);
 static void on_user_joined(connection_id_t, const user_info_t *, int);
 static void on_user_offline(connection_id_t, const user_info_t *, int);
+static void on_user_info_updated(connection_id_t, const user_info_t *);
 static void on_audio_data(connection_id_t, uint32_t, uint16_t, const void *, size_t,
                           const audio_frame_info_t *);
 #if MYBOT_ENABLE_VIDEO
@@ -847,11 +853,40 @@ static int wait_for_rtm_subscription(const char *channel) {
     }
 }
 
+static int subscribe_translation_publisher(const user_info_t *user) {
+    if (!user || !user->uid || strcmp(user->user_account, s_rtc.publisher_account) != 0) {
+        return -1;
+    }
+    if (s_rtc.publisher_subscribed && s_rtc.publisher_uid == user->uid) {
+        return 0;
+    }
+    if (agora_rtc_mute_remote_audio(s_rtc.conn_id, user->uid, false) < 0) {
+        AOSL_LOG_ERR("event=translation action=subscribe result=error");
+        set_state(MYBOT_RTC_STATE_ERROR);
+        return -1;
+    }
+    s_rtc.publisher_uid = user->uid;
+    s_rtc.publisher_subscribed = true;
+    AOSL_LOG_NTC("event=translation action=subscribe result=ok uid=%u", user->uid);
+    return 0;
+}
+
+static void resolve_translation_publisher(void) {
+    user_info_t user = {0};
+    if (agora_rtc_get_user_info_by_user_account(s_rtc.conn_id, s_rtc.publisher_account, &user) ==
+        0) {
+        (void)subscribe_translation_publisher(&user);
+    }
+}
+
 static void process_join_channel_success(connection_id_t conn_id, uint32_t uid, int elapsed) {
     if (!connection_is_active(conn_id)) {
         return;
     }
     AOSL_LOG_NTC("join channel success (uid=%u, elapsed=%d ms)", uid, elapsed);
+    resolve_translation_publisher();
+    if (s_rtc.state == MYBOT_RTC_STATE_ERROR)
+        return;
     set_state(MYBOT_RTC_STATE_CONNECTED);
 }
 
@@ -887,6 +922,9 @@ static void process_user_joined(connection_id_t conn_id, const user_info_t *user
         return;
     }
     AOSL_LOG_NTC("[RTC] user \"%s\" (uid=%u) joined", user->user_account, user->uid);
+    if (strcmp(user->user_account, s_rtc.publisher_account) == 0) {
+        (void)subscribe_translation_publisher(user);
+    }
 }
 
 static void process_user_offline(connection_id_t conn_id, const user_info_t *user, int reason) {
@@ -898,12 +936,20 @@ static void process_user_offline(connection_id_t conn_id, const user_info_t *use
     }
     AOSL_LOG_NTC("[RTC] user \"%s\" (uid=%u) offline (reason=%d)", user->user_account, user->uid,
                  reason);
+    if (strcmp(user->user_account, s_rtc.agent_uid) == 0 ||
+        strcmp(user->user_account, s_rtc.publisher_account) == 0) {
+        s_rtc.publisher_subscribed = false;
+        set_state(MYBOT_RTC_STATE_ERROR);
+    }
 }
 
 static void process_audio_data(connection_id_t conn_id, uint32_t uid, uint16_t sent_ts,
                                const void *data, size_t len, const audio_frame_info_t *info) {
     (void)sent_ts;
     if (!connection_is_active(conn_id)) {
+        return;
+    }
+    if (!s_rtc.publisher_subscribed || uid != s_rtc.publisher_uid) {
         return;
     }
     /* The selected RTSA build emits one decoded PCM frame per callback; its
@@ -1132,6 +1178,9 @@ static void on_user_joined(connection_id_t c, const user_info_t *u, int elapsed)
         (void)rtc_event_queue(e);
     }
 }
+static void on_user_info_updated(connection_id_t c, const user_info_t *u) {
+    on_user_joined(c, u, 0);
+}
 static void on_user_offline(connection_id_t c, const user_info_t *u, int reason) {
     if (!u)
         return;
@@ -1221,40 +1270,25 @@ static void on_token_will_expire(connection_id_t c, const char *t) {
 static void clear_runtime_state(void) {
     s_rtc.conn_id = CONNECTION_ID_INVALID;
     memset(&s_rtc.callbacks, 0, sizeof(s_rtc.callbacks));
-    s_rtc.app_id[0] = '\0';
     clear_rtm_login();
 }
 
 static int rtc_init_impl(const char *app_id, const mybot_agora_rtc_callbacks_t *callbacks) {
-    if (!app_id || !app_id[0] || strlen(app_id) >= sizeof(s_rtc.app_id)) {
+    if (!app_id || !app_id[0] || strlen(app_id) >= MYBOT_RTC_APP_ID_CAPACITY) {
         AOSL_LOG_ERR("[RTC] init rejected: invalid App ID");
         return -1;
     }
 
     if (s_rtc.state != MYBOT_RTC_STATE_IDLE) {
-        mybot_rtc_state_t state = s_rtc.state;
-        bool app_id_matches = strcmp(s_rtc.app_id, app_id) == 0;
-        bool ready = state == MYBOT_RTC_STATE_INITIALIZED &&
-                     s_rtc.conn_id == CONNECTION_ID_INVALID && app_id_matches;
-        if (ready) {
-            if (callbacks) {
-                s_rtc.callbacks = *callbacks;
-            } else {
-                memset(&s_rtc.callbacks, 0, sizeof(s_rtc.callbacks));
-            }
-        }
-        if (!ready) {
-            AOSL_LOG_ERR("[RTC] init rejected (state=%s, app_id_match=%d)", state_name(state),
-                         app_id_matches ? 1 : 0);
-        }
-        return ready ? 0 : -1;
+        AOSL_LOG_ERR("[RTC] init rejected: previous session not finalized (state=%s)",
+                     state_name(s_rtc.state));
+        return -1;
     }
 
     clear_runtime_state();
     if (callbacks) {
         s_rtc.callbacks = *callbacks;
     }
-    memcpy(s_rtc.app_id, app_id, strlen(app_id) + 1);
 
     agora_rtc_event_handler_t handler;
     memset(&handler, 0, sizeof(handler));
@@ -1264,6 +1298,7 @@ static int rtc_init_impl(const char *app_id, const mybot_agora_rtc_callbacks_t *
     handler.on_rejoin_channel_success = on_rejoin_channel_success;
     handler.on_user_joined_with_user_account = on_user_joined;
     handler.on_user_offline_with_user_account = on_user_offline;
+    handler.on_user_info_updated = on_user_info_updated;
     handler.on_audio_data = on_audio_data;
 #if MYBOT_ENABLE_VIDEO
     handler.on_target_bitrate_changed = on_video_target_bitrate_changed;
@@ -1319,22 +1354,18 @@ static int rtc_logout_rtm_impl(void) {
 }
 
 static int rtc_join_impl(const char *channel, const char *token, const char *user_account,
-                         uint32_t video_min_bps, uint32_t video_max_bps) {
+                         const char *agent_uid, const char *publisher_account) {
     if (!channel || !channel[0] || strlen(channel) >= AGORA_RTC_CHANNEL_NAME_MAX_LEN ||
-        !user_account || !user_account[0]) {
+        !user_account || !user_account[0] || !agent_uid || !publisher_account ||
+        !mybot_agora_rtc_rtm_uid_is_valid(agent_uid) ||
+        !mybot_agora_rtc_rtm_uid_is_valid(publisher_account)) {
         AOSL_LOG_ERR("[RTC] join rejected: invalid channel or user account");
         return -1;
     }
-#if MYBOT_ENABLE_VIDEO
-    if (video_max_bps == 0 || video_max_bps < video_min_bps) {
-        AOSL_LOG_ERR("[RTC] join rejected: invalid video bitrate range (min=%u, max=%u)",
-                     (unsigned int)video_min_bps, (unsigned int)video_max_bps);
-        return -1;
-    }
-#else
-    (void)video_min_bps;
-    (void)video_max_bps;
-#endif
+    snprintf(s_rtc.agent_uid, sizeof(s_rtc.agent_uid), "%s", agent_uid);
+    snprintf(s_rtc.publisher_account, sizeof(s_rtc.publisher_account), "%s", publisher_account);
+    s_rtc.publisher_subscribed = false;
+    s_rtc.publisher_uid = 0;
     bool rtm_started_for_join = false;
     if (s_rtc.rtm_login_requested) {
         if (strcmp(s_rtc.rtm_uid, user_account) != 0) {
@@ -1393,7 +1424,7 @@ static int rtc_join_impl(const char *channel, const char *token, const char *use
 
     rtc_channel_options_t channel_options;
     memset(&channel_options, 0, sizeof(channel_options));
-    channel_options.auto_subscribe_audio = true;
+    channel_options.auto_subscribe_audio = false;
     /* MyBot only uplinks device video; the service never sends video back. */
     channel_options.auto_subscribe_video = false;
     channel_options.enable_audio_jitter_buffer = true;
@@ -1409,14 +1440,6 @@ static int rtc_join_impl(const char *channel, const char *token, const char *use
     /* RTSA cloud AEC pairs microphone and reference data while PCM remains mono. */
     channel_options.audio_codec_opt.pcm_channel_num = 1;
     channel_options.audio_codec_opt.pcm_duration = MYBOT_AUDIO_PTIME_MS;
-
-#if MYBOT_ENABLE_VIDEO
-    uint32_t bwe_start_bps = video_min_bps + (video_max_bps - video_min_bps) / 2U;
-    int bwe_ret = agora_rtc_set_bwe_param(conn_id, video_min_bps, video_max_bps, bwe_start_bps);
-    if (bwe_ret < 0) {
-        AOSL_LOG_WRN("set_bwe_param failed: %s", agora_rtc_err_2_str(bwe_ret));
-    }
-#endif
 
     s_rtc.conn_id = conn_id;
     set_state(MYBOT_RTC_STATE_CONNECTING);
@@ -1452,6 +1475,8 @@ static int rtc_leave_impl(void) {
     }
 
     s_rtc.conn_id = CONNECTION_ID_INVALID;
+    s_rtc.publisher_subscribed = false;
+    s_rtc.publisher_uid = 0;
     AOSL_LOG_NTC("[RTC] leaving connection (conn_id=%u)", conn_id);
     int leave_ret = agora_rtc_leave_channel(conn_id);
     if (leave_ret < 0) {
@@ -1469,6 +1494,9 @@ static int rtc_leave_impl(void) {
 }
 
 static int rtc_fini_impl(void) {
+    /* RTSA does not guarantee that a failed global fini can be called again. */
+    if (s_rtc.fini_failed)
+        return -1;
     if (s_rtc.state == MYBOT_RTC_STATE_IDLE) {
         return 0;
     }
@@ -1479,14 +1507,17 @@ static int rtc_fini_impl(void) {
     if (ret < 0) {
         AOSL_LOG_ERR("agora_rtc_fini failed; RTSA source does not guarantee retry: %s",
                      agora_rtc_err_2_str(ret));
+        s_rtc.fini_failed = true;
         s_rtc.state = MYBOT_RTC_STATE_ERROR;
         return -1;
     }
 
     clear_runtime_state();
     s_rtc.state = MYBOT_RTC_STATE_IDLE;
+    if (leave_ret < 0 || rtm_ret < 0)
+        AOSL_LOG_WRN("[RTC] intermediate teardown failed; global RTSA finalization completed");
     AOSL_LOG_NTC("[RTC] Agora RTSA finalized");
-    return (leave_ret < 0 || rtm_ret < 0) ? -1 : 0;
+    return 0;
 }
 
 #if MYBOT_ENABLE_VIDEO
@@ -1563,24 +1594,6 @@ static int rtc_send_audio_impl(const void *data, size_t len) {
     return ret;
 }
 
-static int rtc_renew_token_impl(const char *token) {
-    if (!token || !token[0]) {
-        AOSL_LOG_ERR("[RTC] renew_token rejected: invalid token");
-        return -1;
-    }
-
-    int ret = -1;
-    if (s_rtc.conn_id != CONNECTION_ID_INVALID) {
-        ret = agora_rtc_renew_token(s_rtc.conn_id, token);
-        if (ret < 0) {
-            AOSL_LOG_ERR("renew_token failed: %s", agora_rtc_err_2_str(ret));
-        }
-    } else {
-        AOSL_LOG_ERR("[RTC] renew_token rejected without an active connection");
-    }
-    return ret;
-}
-
 typedef void (*rtc_mpq_func_t)(const aosl_ts_t *, aosl_refobj_t, uintptr_t, uintptr_t[]);
 
 static int rtc_call(const char *name, rtc_mpq_func_t func, uintptr_t argc, uintptr_t argv[]) {
@@ -1605,13 +1618,7 @@ static void cmd_join(const aosl_ts_t *ts, aosl_refobj_t ref, uintptr_t argc, uin
     if (argc == 6)
         *(int *)argv[0] =
             rtc_join_impl((const char *)argv[1], (const char *)argv[2], (const char *)argv[3],
-                          (uint32_t)argv[4], (uint32_t)argv[5]);
-}
-static void cmd_leave(const aosl_ts_t *ts, aosl_refobj_t ref, uintptr_t argc, uintptr_t argv[]) {
-    (void)ts;
-    (void)ref;
-    if (argc == 1)
-        *(int *)argv[0] = rtc_leave_impl();
+                          (const char *)argv[4], (const char *)argv[5]);
 }
 static void cmd_fini(const aosl_ts_t *ts, aosl_refobj_t ref, uintptr_t argc, uintptr_t argv[]) {
     (void)ts;
@@ -1646,23 +1653,19 @@ static void cmd_send_video(const aosl_ts_t *ts, aosl_refobj_t ref, uintptr_t arg
     }
 }
 #endif
-static void cmd_renew(const aosl_ts_t *ts, aosl_refobj_t ref, uintptr_t argc, uintptr_t argv[]) {
-    (void)ts;
-    (void)ref;
-    if (argc == 2)
-        *(int *)argv[0] = rtc_renew_token_impl((const char *)argv[1]);
-}
-
 int mybot_agora_rtc_init(const char *app_id, const mybot_agora_rtc_callbacks_t *callbacks) {
-    aosl_mpq_t q = (aosl_mpq_t)aosl_atomic_read(&s_rtc_mpq_id);
-    if (q == AOSL_MPQ_INVALID) {
-        q = aosl_mpq_create_flags(AOSL_MPQ_FLAG_SIGP_EVENT | AOSL_MPQ_FLAG_NONBLOCK,
-                                  AOSL_THRD_PRI_NORMAL, 8192, 1000, "mybot_rtc", NULL, NULL, NULL);
-        if (q == AOSL_MPQ_INVALID)
-            return -1;
-        aosl_atomic_set(&s_rtc_mpq_id, q);
-        set_callbacks_enabled(true);
+    /* Each conversation starts with a fresh RTSA service and forwarding queue. */
+    if (aosl_atomic_read(&s_rtc_mpq_id) != AOSL_MPQ_INVALID ||
+        s_rtc.state != MYBOT_RTC_STATE_IDLE || s_rtc.fini_failed) {
+        AOSL_LOG_ERR("[RTC] init rejected: previous session not finalized");
+        return -1;
     }
+    aosl_mpq_t q =
+        aosl_mpq_create_flags(AOSL_MPQ_FLAG_SIGP_EVENT | AOSL_MPQ_FLAG_NONBLOCK,
+                              AOSL_THRD_PRI_NORMAL, 8192, 1000, "mybot_rtc", NULL, NULL, NULL);
+    if (q == AOSL_MPQ_INVALID)
+        return -1;
+    aosl_atomic_set(&s_rtc_mpq_id, q);
     set_callbacks_enabled(true);
     int result = -1;
     uintptr_t argv[] = {(uintptr_t)&result, (uintptr_t)app_id, (uintptr_t)callbacks};
@@ -1672,21 +1675,16 @@ int mybot_agora_rtc_init(const char *app_id, const mybot_agora_rtc_callbacks_t *
 }
 
 int mybot_agora_rtc_join(const char *channel, const char *token, const char *user,
-                         uint32_t video_min_bps, uint32_t video_max_bps) {
+                         const char *agent_uid, const char *publisher_account) {
     int result = -1;
-    uintptr_t argv[] = {(uintptr_t)&result, (uintptr_t)channel,       (uintptr_t)token,
-                        (uintptr_t)user,    (uintptr_t)video_min_bps, (uintptr_t)video_max_bps};
+    uintptr_t argv[] = {(uintptr_t)&result, (uintptr_t)channel,   (uintptr_t)token,
+                        (uintptr_t)user,    (uintptr_t)agent_uid, (uintptr_t)publisher_account};
     return rtc_call("rtc_join", cmd_join, 6, argv) < 0 ? -1 : result;
-}
-int mybot_agora_rtc_leave(void) {
-    int result = -1;
-    uintptr_t argv[] = {(uintptr_t)&result};
-    return rtc_call("rtc_leave", cmd_leave, 1, argv) < 0 ? -1 : result;
 }
 int mybot_agora_rtc_fini(void) {
     aosl_mpq_t q = (aosl_mpq_t)aosl_atomic_read(&s_rtc_mpq_id);
     if (q == AOSL_MPQ_INVALID)
-        return 0;
+        return s_rtc.fini_failed ? -1 : 0;
     int result = -1;
     uintptr_t argv[] = {(uintptr_t)&result};
     if (rtc_call("rtc_fini", cmd_fini, 1, argv) < 0)
@@ -1722,8 +1720,3 @@ int mybot_agora_rtc_send_video(const mybot_video_frame_t *frame) {
     return rtc_call("rtc_send_video", cmd_send_video, 2, argv) < 0 ? -1 : result;
 }
 #endif
-int mybot_agora_rtc_renew_token(const char *token) {
-    int result = -1;
-    uintptr_t argv[] = {(uintptr_t)&result, (uintptr_t)token};
-    return rtc_call("rtc_renew", cmd_renew, 2, argv) < 0 ? -1 : result;
-}

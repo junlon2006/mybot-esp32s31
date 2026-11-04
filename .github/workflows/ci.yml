@@ -23,12 +23,30 @@ jobs:
       - name: Format check
         run: |
           find main components/mybot_platform tests/korvo_s31_display \
-            tests/korvo_s31_audio tests/korvo_s31_input tests/pcm_playback_buffer \
-            tests/conversation_http_trace \
+            tests/korvo_s31_audio tests/korvo_s31_input tests/pcm_playback_buffer tests/media_pause \
+            tests/conversation_http_trace tests/http_time_sync tests/translation_http tests/translation_ui tests/translation_client \
+            tests/translation_lifecycle tests/translation_rtc tests/translation_control tests/translation_state tests/translation_volume \
             -path '*/mybot_stack/agora_rtc' -prune -o \
             -type f ! -path '*/boards/esp32-s31-korvo-1/reference/*' \
             \( -name '*.c' -o -name '*.h' -o -name '*.cc' -o -name '*.cpp' \) \
             -exec clang-format --dry-run --Werror {} +
+      - name: Translation SDK format and SPDX
+        run: |
+          sdk=components/mybot_stack/mybot_sdk/mybot
+          for file in "$sdk/include/mybot/mybot.h" "$sdk/include/mybot/platform/mybot_key.h" \
+            "$sdk/include/mybot/platform/mybot_lcd.h" \
+            "$sdk/src/core/mybot_app.c" "$sdk/src/core/mybot_device_lifecycle.c" \
+            "$sdk/src/core/mybot_presenter.c" "$sdk/src/core/mybot_state_model.c" \
+            "$sdk/src/service/mybot_device_client.c" "$sdk/src/rtc/mybot_agora_rtc.c" \
+            "$sdk/src/internal/mybot_device_client.h" "$sdk/src/internal/mybot_device_lifecycle.h" \
+            "$sdk/src/internal/mybot_device_state.h" "$sdk/src/internal/mybot_presenter.h" \
+            "$sdk/src/internal/mybot_agora_rtc.h" "$sdk/src/support/mybot_http_client.c" \
+            "$sdk/src/internal/mybot_http_client.h" "$sdk/src/media/mybot_media_pipeline.c" \
+            "$sdk/src/internal/mybot_media_pipeline.h" "$sdk/include/mybot/mybot_ui.h" \
+            "$sdk/src/core/mybot_ui.c"; do
+            clang-format --dry-run --Werror "$file"
+            head -n 5 "$file" | grep -q 'SPDX-License-Identifier:'
+          done
       - name: Whitespace check
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
@@ -42,8 +60,9 @@ jobs:
       - name: SPDX check
         run: |
           find main components/mybot_platform tests/korvo_s31_display \
-            tests/korvo_s31_audio tests/korvo_s31_input tests/pcm_playback_buffer \
-            tests/conversation_http_trace \
+            tests/korvo_s31_audio tests/korvo_s31_input tests/pcm_playback_buffer tests/media_pause \
+            tests/conversation_http_trace tests/http_time_sync tests/translation_http tests/translation_ui tests/translation_client \
+            tests/translation_lifecycle tests/translation_rtc tests/translation_control tests/translation_state tests/translation_volume \
             -path '*/mybot_stack/agora_rtc' -prune -o -type f \
             \( -name '*.c' -o -name '*.h' -o -name '*.cc' -o -name '*.cpp' \) \
             -print0 | while IFS= read -r -d '' file; do
@@ -56,12 +75,26 @@ jobs:
         run: |
           sh tests/korvo_s31_display/run.sh
           sh tests/korvo_s31_input/run.sh
+          sh tests/translation_ui/run.sh
       - name: S31 TDM audio and ADC input host lifecycle tests
         run: sh tests/korvo_s31_audio/run.sh
-      - name: Conversation HTTPS body logging tests
-        run: sh tests/conversation_http_trace/run.sh
+      - name: Translation protocol, lifecycle and RTC ownership tests
+        run: |
+          sh tests/translation_http/run.sh
+          sh tests/translation_client/run.sh
+          sh tests/translation_lifecycle/run.sh
+          sh tests/translation_rtc/run.sh
+          sh tests/translation_control/run.sh
+          sh tests/translation_state/run.sh
+          sh tests/translation_volume/run.sh
+      - name: HTTPS body logging and initial UTC tests
+        run: |
+          sh tests/conversation_http_trace/run.sh
+          sh tests/http_time_sync/run.sh
       - name: Shared PCM playback buffer lifecycle regression tests
-        run: sh tests/pcm_playback_buffer/run.sh
+        run: |
+          sh tests/pcm_playback_buffer/run.sh
+          sh tests/media_pause/run.sh
       - name: Board capabilities, safe cleanup and firmware delivery regression tests
         run: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests/build_all -p 'test_*.py' -v
       - name: Record CI scope

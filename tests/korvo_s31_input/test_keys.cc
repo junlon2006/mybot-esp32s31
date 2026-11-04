@@ -50,6 +50,7 @@ static bool partial_new;
 static std::mutex event_lock;
 static std::condition_variable event_changed;
 static std::vector<mybot_key_event_t> events;
+static std::vector<mybot_ui_command_t> commands;
 static bool block_callback, entered_callback, release_callback;
 
 static bool fail(const char *name) {
@@ -153,6 +154,11 @@ int64_t esp_timer_get_time() {
 mybot_state_t mybot_get_state() {
     return state.load();
 }
+int mybot_ui_submit(const mybot_ui_command_t *command) {
+    CHECK(command);
+    commands.push_back(*command);
+    return 0;
+}
 void mybot_board_request_wifi_provisioning() {
     ++provisioning;
 }
@@ -193,6 +199,15 @@ static void touch_sample(bool valid, bool pressed) {
 static void tap() {
     touch_sample(true, true);
     touch_sample(true, false);
+    mybot_korvo_s31_keys_ui_event(state == MYBOT_STATE_IN_CONVERSATION
+                                      ? MYBOT_KEY_EVENT_CONVERSATION_STOP
+                                      : MYBOT_KEY_EVENT_CONVERSATION_START);
+}
+
+static void button(mybot_key_event_t event) {
+    touch_sample(true, true);
+    touch_sample(true, false);
+    mybot_korvo_s31_keys_ui_event(event);
 }
 
 int main(int argc, char **argv) {
@@ -202,7 +217,8 @@ int main(int argc, char **argv) {
     void *ctx = reinterpret_cast<void *>(1);
     CHECK(ops->init(&ctx, emit, &events) < 0 && !ctx); // source not prepared
     if (scenario != "behavior" && scenario != "ordering" && scenario != "touch" &&
-        scenario != "touch_stale" && scenario != "touch_ordering") {
+        scenario != "touch_stale" && scenario != "touch_ordering" && scenario != "ui_controls" &&
+        scenario != "ui_commands" && scenario != "late_cancel") {
         failure = scenario == "cleanup_retry" ? "channel" : scenario;
         if (scenario == "partial_adc_new") {
             failure = "adc_new";
@@ -242,6 +258,7 @@ int main(int argc, char **argv) {
         feed(2000, 2);
         CHECK(events.size() == 2); // holding never repeats
         touch_sample(true, false);
+        mybot_korvo_s31_keys_ui_event(MYBOT_KEY_EVENT_CONVERSATION_STOP);
         feed(2000, 1);
         CHECK(events.size() == 3 && events.back() == MYBOT_KEY_EVENT_CONVERSATION_STOP);
         touch_sample(true, false);
@@ -307,6 +324,134 @@ int main(int argc, char **argv) {
         tap();
         feed(2000, 1);
         CHECK(events.size() == 1);
+    } else if (scenario == "late_cancel") {
+        touch_sample(true, false);
+        state = MYBOT_STATE_TRANSLATION_STARTING;
+        touch_sample(true, true);
+        state = MYBOT_STATE_IN_CONVERSATION;
+        touch_sample(true, false);
+        mybot_korvo_s31_keys_ui_event(MYBOT_KEY_EVENT_CONVERSATION_STOP);
+        feed(2000, 1);
+        CHECK(events.size() == 1 && events.back() == MYBOT_KEY_EVENT_CONVERSATION_STOP);
+        state = MYBOT_STATE_TRANSLATION_STARTING;
+        button(MYBOT_KEY_EVENT_CONVERSATION_STOP);
+        state = MYBOT_STATE_IN_CONVERSATION;
+        feed(2000, 1);
+        CHECK(events.size() == 2 && events.back() == MYBOT_KEY_EVENT_CONVERSATION_STOP);
+        state = MYBOT_STATE_TRANSLATION_STARTING;
+        button(MYBOT_KEY_EVENT_CONVERSATION_STOP);
+        state = MYBOT_STATE_READY;
+        feed(2000, 1);
+        CHECK(events.size() == 2); // completed teardown must not affect another start
+        state = MYBOT_STATE_TRANSLATION_STARTING;
+        touch_sample(true, true);
+        state = MYBOT_STATE_IN_CONVERSATION;
+        touch_sample(true, false);
+        mybot_korvo_s31_keys_ui_event(MYBOT_KEY_EVENT_VOLUME_UP);
+        feed(2000, 1);
+        CHECK(events.size() == 2); // only stop can cross the start-completion boundary
+    } else if (scenario == "ui_commands") {
+        touch_sample(true, false);
+        mybot_ui_command_t command{};
+        command.type = MYBOT_UI_SET_VOLUME;
+        command.value = 40;
+        auto submit = [&] {
+            touch_sample(true, true);
+            touch_sample(true, false);
+            mybot_korvo_s31_keys_ui_command(&command);
+        };
+        submit();
+        CHECK(commands.empty()); // GUI copies only; the worker invokes the SDK.
+        command.value = 99;
+        feed(2000, 1);
+        CHECK(commands.size() == 1 && commands.back().value == 40);
+        command.value = 65;
+        for (unsigned i = 0; i < 20; ++i)
+            submit();
+        feed(2000, 1);
+        CHECK(commands.size() == 2 && commands.back().value == 65); // bounded mailbox
+        command.type = MYBOT_UI_SET_LANGUAGES;
+        std::snprintf(command.source_language, sizeof(command.source_language), "zh-CN");
+        std::snprintf(command.target_language, sizeof(command.target_language), "en-US");
+        submit();
+        feed(2000, 1);
+        CHECK(commands.size() == 3 && !std::strcmp(commands.back().source_language, "zh-CN"));
+        state = MYBOT_STATE_IN_CONVERSATION;
+        submit();
+        feed(2000, 1);
+        CHECK(commands.size() == 3); // language changes freeze during streaming
+        command.type = MYBOT_UI_SET_PAUSED;
+        command.value = 1;
+        submit();
+        feed(2000, 1);
+        CHECK(commands.size() == 4 && commands.back().type == MYBOT_UI_SET_PAUSED);
+        submit();
+        state = MYBOT_STATE_READY;
+        feed(2000, 1);
+        CHECK(commands.size() == 4); // state changed before worker delivery
+        submit();
+        feed(2000, 1);
+        CHECK(commands.size() == 4); // pause requires an active session
+        command.type = MYBOT_UI_SET_VOLUME;
+        command.value = 101;
+        submit();
+        feed(2000, 1);
+        CHECK(commands.size() == 4);
+        command.value = 20;
+        submit();
+        ops->destroy(ctx);
+        CHECK(ops->init(&ctx, emit, &events) == 0);
+        feed(2000, 1);
+        CHECK(commands.size() == 4); // old attachment generation cannot replay
+        touch_sample(true, true);
+        touch_sample(false, false);
+        touch_sample(true, false);
+        mybot_korvo_s31_keys_ui_command(&command);
+        feed(2000, 1);
+        CHECK(commands.size() == 4); // read error cancels the gesture
+        submit();
+        feed(2000, 1);
+        CHECK(commands.size() == 5 && commands.back().value == 20);
+    } else if (scenario == "ui_controls") {
+        touch_sample(true, false);
+        touch_sample(true, true);
+        touch_sample(true, false);
+        feed(2000, 1);
+        CHECK(events.empty()); // raw touches never start translation
+        button(MYBOT_KEY_EVENT_SOURCE_LANGUAGE_NEXT);
+        feed(2000, 1);
+        CHECK(events.size() == 1 && events.back() == MYBOT_KEY_EVENT_SOURCE_LANGUAGE_NEXT);
+        button(MYBOT_KEY_EVENT_TARGET_LANGUAGE_NEXT);
+        feed(2000, 1);
+        CHECK(events.size() == 2 && events.back() == MYBOT_KEY_EVENT_TARGET_LANGUAGE_NEXT);
+        state = MYBOT_STATE_IN_CONVERSATION;
+        button(MYBOT_KEY_EVENT_SOURCE_LANGUAGE_NEXT);
+        feed(2000, 1);
+        CHECK(events.size() == 2); // languages freeze while streaming
+        button(MYBOT_KEY_EVENT_VOLUME_DOWN);
+        feed(2000, 1);
+        CHECK(events.size() == 3 && events.back() == MYBOT_KEY_EVENT_VOLUME_DOWN);
+        state = MYBOT_STATE_TRANSLATION_STARTING;
+        press(1340);
+        CHECK(events.size() == 4 && events.back() == MYBOT_KEY_EVENT_CONVERSATION_STOP);
+        state = MYBOT_STATE_CLEANUP_PENDING;
+        press(1340);
+        CHECK(events.size() == 5 && events.back() == MYBOT_KEY_EVENT_CONVERSATION_STOP);
+        state = MYBOT_STATE_START_UNKNOWN;
+        press(1340);
+        button(MYBOT_KEY_EVENT_CONVERSATION_START);
+        feed(2000, 1);
+        CHECK(events.size() == 5);
+        state = MYBOT_STATE_TRANSLATION_ERROR;
+        press(1340);
+        CHECK(events.size() == 6 && events.back() == MYBOT_KEY_EVENT_CONVERSATION_START);
+        state = MYBOT_STATE_READY;
+        touch_sample(true, true);
+        touch_sample(false, false);
+        touch_sample(true, false);
+        mybot_korvo_s31_keys_ui_event(MYBOT_KEY_EVENT_SOURCE_LANGUAGE_NEXT);
+        feed(2000, 1);
+        CHECK(events.size() == 6); // I2C failure cannot synthesize a button click
     } else if (scenario == "behavior") {
         feed(1340, 2);
         feed(2000, 4); // bounce: never stable

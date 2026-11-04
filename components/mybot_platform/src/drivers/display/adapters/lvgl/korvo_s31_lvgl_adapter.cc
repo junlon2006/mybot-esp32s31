@@ -28,6 +28,7 @@ namespace {
 struct Context {
     mybot_korvo_s31_rgb_panel_t panel{};
     mybot_korvo_s31_touch_t touch{};
+    bool touch_released = false;
     lv_display_t *display = nullptr;
     lv_indev_t *input = nullptr;
     lv_timer_t *apply_timer = nullptr;
@@ -120,14 +121,21 @@ void flush(lv_display_t *display, const lv_area_t *area, uint8_t *pixels) {
 }
 
 void read_touch(lv_indev_t *input, lv_indev_data_t *data) {
-    (void)input;
     uint16_t x = 0, y = 0;
     bool pressed = false;
     data->state = LV_INDEV_STATE_RELEASED;
     bool valid = !__atomic_load_n(&context.failed, __ATOMIC_ACQUIRE) &&
                  mybot_korvo_s31_touch_read(&context.touch, &x, &y, &pressed) == 0;
     mybot_korvo_s31_keys_touch_sample(valid, pressed);
-    if (valid && pressed) {
+    if (!valid) {
+        context.touch_released = false;
+        lv_indev_reset(input, nullptr);
+    } else if (!pressed) {
+        context.touch_released = true;
+    }
+    if (valid && pressed && !context.touch_released)
+        lv_indev_reset(input, nullptr);
+    if (valid && pressed && context.touch_released) {
         data->point.x = x;
         data->point.y = y;
         data->state = LV_INDEV_STATE_PRESSED;
@@ -307,6 +315,22 @@ int render(void *opaque, const mybot_lcd_content_t *content) {
     }
     mybot_lcd_content_t snapshot{};
     snapshot.screen = content->screen;
+    snapshot.volume = content->volume;
+    snapshot.paused = content->paused;
+    const char *fields[] = {content->source_language, content->target_language,
+                            content->error_code};
+    char *outputs[] = {snapshot.source_language, snapshot.target_language, snapshot.error_code};
+    const size_t sizes[] = {sizeof(snapshot.source_language), sizeof(snapshot.target_language),
+                            sizeof(snapshot.error_code)};
+    for (unsigned field = 0; field < 3; ++field) {
+        size_t length = strnlen(fields[field], sizes[field]);
+        if (length == sizes[field])
+            return -1;
+        for (size_t i = 0; i < length; ++i)
+            if (fields[field][i] < ' ' || fields[field][i] > '~')
+                return -1;
+        memcpy(outputs[field], fields[field], length);
+    }
     if (snapshot.screen == MYBOT_LCD_SCREEN_IN_CONVERSATION) {
         snapshot.indicators = content->indicators;
     }

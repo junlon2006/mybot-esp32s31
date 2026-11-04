@@ -17,6 +17,7 @@ if(IDF_VERSION_MAJOR GREATER_EQUAL 6)
             "assets/wifi_configuration.html"
             "assets/wifi_configuration_done.html"
         REQUIRES "esp_timer" "esp_http_server" "esp_wifi" "nvs_flash"
+        PRIV_REQUIRES espressif__cjson
     )
 else()
     # v5

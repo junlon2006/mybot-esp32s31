@@ -23,7 +23,7 @@ static void *s_display;
 static bool s_automatic_provisioning;
 static bool s_prepared;
 static int show(mybot_lcd_screen_t screen) {
-    const mybot_lcd_content_t content = {.screen = screen};
+    const mybot_lcd_content_t content = {.screen = screen, .volume = -1};
     return s_lcd && s_display ? s_lcd->render(s_display, &content) : -1;
 }
 static void provisioning(void) {

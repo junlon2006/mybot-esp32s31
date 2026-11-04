@@ -30,15 +30,13 @@ endif()
 
 set(MYBOT_SOURCES
     "${MYBOT_ROOT}/src/core/mybot_app.c"
-    "${MYBOT_ROOT}/src/core/mybot_device_command.c"
     "${MYBOT_ROOT}/src/core/mybot_device_lifecycle.c"
     "${MYBOT_ROOT}/src/core/mybot_presenter.c"
     "${MYBOT_ROOT}/src/core/mybot_state_model.c"
+    "${MYBOT_ROOT}/src/core/mybot_ui.c"
     "${MYBOT_ROOT}/src/core/mybot_version.c"
     "${MYBOT_ROOT}/src/media/mybot_audio.c"
     "${MYBOT_ROOT}/src/media/mybot_media_pipeline.c"
-    "${MYBOT_ROOT}/src/media/mybot_video.c"
-    "${MYBOT_ROOT}/src/media/mybot_wake_words.c"
     "${MYBOT_ROOT}/src/platform/mybot_announce.c"
     "${MYBOT_ROOT}/src/platform/mybot_key.c"
     "${MYBOT_ROOT}/src/platform/mybot_https.c"
@@ -68,8 +66,8 @@ idf_component_register(
 target_compile_features(${COMPONENT_LIB} PRIVATE c_std_99)
 target_compile_options(${COMPONENT_LIB} PRIVATE -fvisibility=hidden)
 
-# Keep the vendored SDK snapshot byte-identical while its ESP32 portability fixes are pending
-# upstream. Xtensa defines uint32_t as unsigned long, while the snapshot logs it with %u.
+# This project customizes MyBot for S31 listen translation. The historical
+# snapshot logs uint32_t with %u; S31 newlib uses unsigned long for that type.
 set_source_files_properties(
     "${MYBOT_ROOT}/src/rtc/mybot_agora_rtc.c"
     PROPERTIES COMPILE_OPTIONS "-Wno-format"

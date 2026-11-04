@@ -1,9 +1,23 @@
 # Changelog
 
-## Unreleased — S31 touch and delivery
+## Unreleased — standalone S31 listen translation
 
-- Tap the GT1151 screen to start a conversation and tap again to stop through the same public key path as PLAY. Keep the physical PLAY/SET/VOL controls.
-- Limit the project to the active ESP32-S31 no-video integration; remove unused S3 profiles, drivers, dependencies and tests while preserving immutable source snapshots.
+- Customize MyBot SDK for one V2VT listen route with persistent source/target selection and a dedicated touch UI.
+- Preserve cloud-AEC MIC/reference audio, G.722 and the bundled 60 ms RTSA cadence.
+- Subscribe only to the returned translated-audio publisher; retain pending cloud cleanup across cancellation, reconnect and restart.
+- Add host protocol, lifecycle, RTC ownership, control mailbox and UI tests. Hardware translation validation is pending.
+- Trace request/response bodies for every HTTPS endpoint, with method, redacted path, byte counts, completeness and transport errors.
+- Print each captured HTTPS body in one complete log record, including full hex for binary bodies.
+- Reject translation starts before UTC is usable, distinguish clock/route/expiry failures, and give translation start a shared 30-second HTTP budget while other requests retain 5 seconds.
+- Bootstrap an unset clock from a validated HTTPS response Date header and configure three SNTP alternatives, so initial translation can proceed when NTP has not answered.
+- Display the active hardware output volume, including restored and adjusted values, through the same volume source used by the controls.
+- Add the native simulator-inspired scene UI, direct language/volume commands, real local media pause/resume, fixed demo captions and preview-only face-to-face/meeting scenes.
+- Clear temporary cleanup status after confirmed session stop and show completion instead of a stale startup-error page, while retaining genuine failures.
+- Finalize RTC after each translation session so another Bot project's App ID can be used; block cloud starts when local RTC cleanup is incomplete.
+- Keep language selection locked until its submitted pair is read back, and correct volume-persistence failure log arguments.
+
+- Retain physical PLAY/SET/VOL controls alongside the native translation UI.
+- Limit the project to the active ESP32-S31 no-video integration; remove unused S3 profiles, drivers, dependencies and tests while preserving pinned third-party inputs.
 - Add checked S31 delivery metadata and language-specific artifacts, with push/PR firmware CI using the bundled pinned RTSA dependency.
 - Align the runtime layout with the ESP32 project by placing `mybot_sdk`, `aosl` and `agora_rtc` directly under `components/mybot_stack`, removing the platform-local ports directory.
 - Update Chinese/English build, board, contribution, support, architecture and delivery documentation.

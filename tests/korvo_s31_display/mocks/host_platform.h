@@ -141,6 +141,7 @@ bool lv_display_flush_is_last(lv_display_t *);
 void lv_display_flush_ready(lv_display_t *);
 lv_indev_t *lv_indev_create(void);
 void lv_indev_delete(lv_indev_t *);
+void lv_indev_reset(lv_indev_t *, void *);
 void lv_indev_set_type(lv_indev_t *, int);
 void lv_indev_set_display(lv_indev_t *, lv_display_t *);
 void lv_indev_set_read_cb(lv_indev_t *, lv_indev_read_cb_t);

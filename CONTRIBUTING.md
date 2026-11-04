@@ -8,7 +8,7 @@ This repository supports ESP32-S31-Korvo-1 V1.1 only, using ESP-IDF v6.1 and 60 
 
 Application startup and MyBot lifecycle belong in `main/`; board hardware, drivers and services belong in `components/mybot_platform/`. Use only the MyBot public headers under `components/mybot_stack/mybot_sdk/mybot/include/mybot/`.
 
-Keep the MyBot, AOSL, esp_codec_dev, LVGL and esp_lvgl_port source snapshots unchanged. The `mybot_sdk`, `aosl` and `agora_rtc` runtime components live directly under `components/mybot_stack/`. AOSL keeps its upstream sources while its component CMake wrapper and `s31_port/` adapter apply S31 configuration. The legacy-named AOSL `esp32-s3` HAL is portable code and remains part of the immutable source input.
+The MyBot SDK is a project-maintained `v2vt/listen` fork. Preserve its Cloud AEC MIC/reference PCM contract and 60 ms cadence. Keep AOSL, esp_codec_dev, LVGL, esp_lvgl_port and the pinned RTSA header/library unchanged, except for AOSL's component CMake wrapper and `s31_port/` adapter. The `mybot_sdk`, `aosl` and `agora_rtc` runtime components live directly under `components/mybot_stack/`. The legacy-named AOSL `esp32-s3` HAL is portable code and remains part of the immutable source input.
 
 Never commit credentials, device identifiers, Wi-Fi passwords, original RTSA archives, generated configurations or firmware. Add SPDX headers to maintained C/C++ files and format changed files with `.clang-format`. Update user documentation, `CHANGELOG.md`, source provenance and license notices when applicable.
 
@@ -18,7 +18,7 @@ Install ffmpeg and ESP-IDF v6.1. The pinned RTSA payload is bundled, so developm
 
 ```sh
 . /path/to/esp-idf/export.sh
-test "$(idf.py --version)" = "ESP-IDF v6.1"
+test "$(idf.py --preview --version)" = "ESP-IDF v6.1"
 idf.py --preview -B build/contribution \
   -DMYBOT_BOARD=esp32-s31-korvo-1 \
   -DSDKCONFIG=build/contribution/sdkconfig \

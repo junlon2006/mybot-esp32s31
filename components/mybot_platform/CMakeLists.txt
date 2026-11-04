@@ -71,6 +71,7 @@ idf_component_register(
     SRCS
         "src/platform/platform_register.c"
         "src/services/network/https.c"
+        "src/services/network/http_time_sync.c"
         "src/services/network/conversation_http_trace.c"
         "src/services/storage/kv_store.c"
         "src/services/network/wifi.cpp"
@@ -86,6 +87,7 @@ idf_component_register(
         mybot_sdk
         aosl
         esp-wifi-connect
+        esp_netif
         esp-tls
         esp_hw_support
         mbedtls

@@ -29,6 +29,9 @@ typedef enum {
     MYBOT_KEY_EVENT_VOLUME_UP,
     /** Lower the active playback volume. Optional. */
     MYBOT_KEY_EVENT_VOLUME_DOWN,
+    /** Select the next source or target language while idle. */
+    MYBOT_KEY_EVENT_SOURCE_LANGUAGE_NEXT,
+    MYBOT_KEY_EVENT_TARGET_LANGUAGE_NEXT,
 } mybot_key_event_t;
 
 /**
