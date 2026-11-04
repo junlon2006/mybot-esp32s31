@@ -16,11 +16,9 @@
 #define MYBOT_DISPLAY_HEIGHT 480
 #define MYBOT_DISPLAY_PCLK_HZ 26000000
 #define MYBOT_DISPLAY_RGB_DATA_PINS                                                                \
-    {                                                                                              \
-        GPIO_NUM_8, GPIO_NUM_9, GPIO_NUM_10, GPIO_NUM_11, GPIO_NUM_12, GPIO_NUM_13, GPIO_NUM_14,   \
-            GPIO_NUM_15, GPIO_NUM_16, GPIO_NUM_17, GPIO_NUM_18, GPIO_NUM_19, GPIO_NUM_33,          \
-            GPIO_NUM_34, GPIO_NUM_35, GPIO_NUM_36                                                  \
-    }
+    {GPIO_NUM_8,  GPIO_NUM_9,  GPIO_NUM_10, GPIO_NUM_11, GPIO_NUM_12, GPIO_NUM_13,                 \
+     GPIO_NUM_14, GPIO_NUM_15, GPIO_NUM_16, GPIO_NUM_17, GPIO_NUM_18, GPIO_NUM_19,                 \
+     GPIO_NUM_33, GPIO_NUM_34, GPIO_NUM_35, GPIO_NUM_36}
 #define MYBOT_DISPLAY_PCLK GPIO_NUM_40
 #define MYBOT_DISPLAY_DE GPIO_NUM_43
 #define MYBOT_DISPLAY_HSYNC GPIO_NUM_44

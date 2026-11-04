@@ -7,8 +7,8 @@ typedef intptr_t aosl_mpq_t;
 typedef void *aosl_refobj_t;
 typedef intptr_t aosl_ref_t;
 typedef void (*aosl_mpq_func_t)(const aosl_ts_t *, aosl_refobj_t, uintptr_t, uintptr_t[]);
-#define AOSL_MPQ_INVALID ((aosl_mpq_t)-1)
-#define AOSL_REF_INVALID ((aosl_ref_t)-1)
+#define AOSL_MPQ_INVALID ((aosl_mpq_t) - 1)
+#define AOSL_REF_INVALID ((aosl_ref_t) - 1)
 #define AOSL_MPQ_FLAG_NONBLOCK 1
 #define AOSL_MPQ_FLAG_SIGP_EVENT 2
 #define AOSL_THRD_PRI_NORMAL 2

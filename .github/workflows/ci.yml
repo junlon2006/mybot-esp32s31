@@ -19,7 +19,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install host tools
-        run: sudo apt-get update && sudo apt-get install -y clang-format
+        run: sudo apt-get update && sudo apt-get install -y clang-format-18
       - name: Format check
         run: |
           find main components/mybot_platform tests/korvo_s31_display \
@@ -29,7 +29,7 @@ jobs:
             -path '*/mybot_stack/agora_rtc' -prune -o \
             -type f ! -path '*/boards/esp32-s31-korvo-1/reference/*' \
             \( -name '*.c' -o -name '*.h' -o -name '*.cc' -o -name '*.cpp' \) \
-            -exec clang-format --dry-run --Werror {} +
+            -exec clang-format-18 --dry-run --Werror {} +
       - name: Translation SDK format and SPDX
         run: |
           sdk=components/mybot_stack/mybot_sdk/mybot
@@ -44,7 +44,7 @@ jobs:
             "$sdk/src/internal/mybot_http_client.h" "$sdk/src/media/mybot_media_pipeline.c" \
             "$sdk/src/internal/mybot_media_pipeline.h" "$sdk/include/mybot/mybot_ui.h" \
             "$sdk/src/core/mybot_ui.c"; do
-            clang-format --dry-run --Werror "$file"
+            clang-format-18 --dry-run --Werror "$file"
             head -n 5 "$file" | grep -q 'SPDX-License-Identifier:'
           done
       - name: Whitespace check

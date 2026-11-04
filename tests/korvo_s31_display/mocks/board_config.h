@@ -12,5 +12,4 @@
 #define MYBOT_DISPLAY_VSYNC 45
 #define MYBOT_DISPLAY_DE 43
 #define MYBOT_DISPLAY_PCLK 40
-#define MYBOT_DISPLAY_RGB_DATA_PINS                                                                \
-    { 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 33, 34, 35, 36 }
+#define MYBOT_DISPLAY_RGB_DATA_PINS {8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 33, 34, 35, 36}
