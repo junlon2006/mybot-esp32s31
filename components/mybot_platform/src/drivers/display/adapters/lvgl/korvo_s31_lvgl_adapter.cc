@@ -317,6 +317,11 @@ int render(void *opaque, const mybot_lcd_content_t *content) {
     snapshot.screen = content->screen;
     snapshot.volume = content->volume;
     snapshot.paused = content->paused;
+    snapshot.caption_generation = content->caption_generation;
+    snapshot.caption_revision = content->caption_revision;
+    snapshot.caption_count = content->caption_count;
+    snapshot.caption_first_sequence = content->caption_first_sequence;
+    snapshot.caption_latest_sequence = content->caption_latest_sequence;
     const char *fields[] = {content->source_language, content->target_language,
                             content->error_code};
     char *outputs[] = {snapshot.source_language, snapshot.target_language, snapshot.error_code};

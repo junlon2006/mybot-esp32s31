@@ -16,6 +16,15 @@ static queued_callback_t queue[64];
 static unsigned queued, allocations, audio_callbacks, errors, unmute_calls, leave_calls;
 static unsigned init_calls, fini_calls, destroy_calls, queue_creates, queue_destroys;
 static unsigned tests;
+static unsigned direct_messages, channel_messages;
+typedef struct {
+    char uid[MYBOT_RTM_UID_MAX_LEN];
+    char channel[AGORA_RTC_CHANNEL_NAME_MAX_LEN + 1];
+    char custom[64];
+    unsigned char data[AGORA_RTM_DATA_MAX_LEN];
+    size_t length;
+} received_message_t;
+static received_message_t direct_message, channel_message;
 static connection_id_t next_connection = 40;
 static aosl_mpq_t next_queue = 2, live_queue;
 static rtc_channel_options_t joined_options;
@@ -216,6 +225,25 @@ static void audio_received(uint32_t uid, const void *data, size_t length, void *
     last_audio = *(const int16_t *)data;
     audio_callbacks++;
 }
+static void copy_message(received_message_t *message, const char *channel, const char *uid,
+                         const void *data, size_t length, const char *custom, void *user) {
+    assert(user == &tests && uid && data && length <= sizeof(message->data));
+    snprintf(message->uid, sizeof(message->uid), "%s", uid);
+    snprintf(message->channel, sizeof(message->channel), "%s", channel ? channel : "");
+    snprintf(message->custom, sizeof(message->custom), "%s", custom ? custom : "");
+    memcpy(message->data, data, length);
+    message->length = length;
+}
+static void direct_received(const char *uid, const void *data, size_t length, const char *custom,
+                            void *user) {
+    copy_message(&direct_message, NULL, uid, data, length, custom, user);
+    direct_messages++;
+}
+static void channel_received(const char *channel, const char *uid, const void *data, size_t length,
+                             const char *custom, void *user) {
+    copy_message(&channel_message, channel, uid, data, length, custom, user);
+    channel_messages++;
+}
 static void state_changed(mybot_rtc_state_t state, void *user) {
     (void)user;
     if (state == MYBOT_RTC_STATE_ERROR)
@@ -240,6 +268,9 @@ static void reset(void) {
     s_rtc_callback_gate = 0;
     s_rtm_login_done = s_rtm_login_ok = s_rtm_sub_done = s_rtm_sub_ok = 0;
     errors = audio_callbacks = unmute_calls = leave_calls = 0;
+    direct_messages = channel_messages = 0;
+    memset(&direct_message, 0, sizeof(direct_message));
+    memset(&channel_message, 0, sizeof(channel_message));
     init_calls = fini_calls = destroy_calls = queue_creates = queue_destroys = 0;
     unmute_result = join_result = destroy_result = fini_result = queue_destroy_result = 0;
     initialized_app_id[0] = '\0';
@@ -256,7 +287,10 @@ static void reset_public(void) {
 }
 static void init_public(const char *app_id) {
     const mybot_agora_rtc_callbacks_t callbacks = {.on_remote_audio = audio_received,
-                                                   .on_state_changed = state_changed};
+                                                   .on_state_changed = state_changed,
+                                                   .on_rtm_data = direct_received,
+                                                   .on_rtm_subscribe_data = channel_received,
+                                                   .user_data = &tests};
     assert(mybot_agora_rtc_init(app_id, &callbacks) == 0);
     assert(s_rtc.state == MYBOT_RTC_STATE_INITIALIZED);
     assert(strcmp(initialized_app_id, app_id) == 0);
@@ -529,6 +563,131 @@ static void test_forwarding_queue_destroy_retry(void) {
     assert(mybot_agora_rtc_fini() == 0);
     tests++;
 }
+static const char caption_json[] =
+    "{\"object\":\"user.translation\",\"text\":\"你好，world\",\"final\":true}";
+
+static void test_rtm_copied_payload(rtm_message_type_e type) {
+    reset_public();
+    init_public("caption-project");
+    join_public();
+    assert(s_rtc.rtm_logged_in && s_rtc.rtm_subscribed);
+    char uid[MYBOT_RTM_UID_MAX_LEN], channel[AGORA_RTC_CHANNEL_NAME_MAX_LEN + 1];
+    char custom[64], payload[sizeof(caption_json)];
+    strcpy(uid, agent);
+    strcpy(channel, "translation-channel");
+    strcpy(custom, "caption-json");
+    memcpy(payload, caption_json, sizeof(payload));
+    const size_t length = sizeof(caption_json) - 1; /* No terminating NUL is delivered. */
+    on_rtm_data(uid, payload, length, type, custom);
+    on_rtm_subscribe_data(channel, uid, payload, length, type, custom);
+    assert(queued == 2 && direct_messages == 0 && channel_messages == 0);
+    /* RTSA reuses every borrowed argument as soon as its callback returns. */
+    memset(uid, 'x', strlen(uid));
+    memset(channel, 'x', strlen(channel));
+    memset(custom, 'x', strlen(custom));
+    memset(payload, 'x', sizeof(payload));
+    drain();
+    assert(direct_messages == 1 && channel_messages == 1);
+    assert(direct_message.length == length && channel_message.length == length);
+    assert(memcmp(direct_message.data, caption_json, length) == 0);
+    assert(memcmp(channel_message.data, caption_json, length) == 0);
+    assert(strcmp(direct_message.uid, agent) == 0 && strcmp(channel_message.uid, agent) == 0);
+    assert(strcmp(direct_message.custom, "caption-json") == 0);
+    assert(strcmp(channel_message.custom, "caption-json") == 0);
+    assert(strcmp(channel_message.channel, "translation-channel") == 0);
+    assert(mybot_agora_rtc_fini() == 0);
+    tests++;
+}
+static void test_rtm_binary_bytes(void) {
+    reset_public();
+    init_public("caption-project");
+    join_public();
+    const unsigned char expected[] = {'{', 0, 0xff, '}'};
+    unsigned char payload[sizeof(expected)];
+    memcpy(payload, expected, sizeof(payload));
+    on_rtm_data(agent, payload, sizeof(payload), RTM_MESSAGE_TYPE_BINARY, NULL);
+    on_rtm_subscribe_data("translation-channel", agent, payload, sizeof(payload),
+                          RTM_MESSAGE_TYPE_BINARY, NULL);
+    memset(payload, 'x', sizeof(payload));
+    drain();
+    /* The wrapper preserves bytes. The application separately validates UTF-8 JSON. */
+    assert(direct_messages == 1 && channel_messages == 1);
+    assert(direct_message.length == sizeof(expected) && channel_message.length == sizeof(expected));
+    assert(memcmp(direct_message.data, expected, sizeof(expected)) == 0);
+    assert(memcmp(channel_message.data, expected, sizeof(expected)) == 0);
+    assert(!direct_message.custom[0] && !channel_message.custom[0]);
+    assert(mybot_agora_rtc_fini() == 0);
+    tests++;
+}
+static void test_rtm_channel_and_type_filters(void) {
+    reset_public();
+    init_public("caption-project");
+    join_public();
+    const size_t length = sizeof(caption_json) - 1;
+    on_rtm_subscribe_data("wrong-channel", agent, caption_json, length, RTM_MESSAGE_TYPE_STRING,
+                          NULL);
+    assert(queued == 0 && allocations == 0);
+    on_rtm_data(agent, caption_json, length, (rtm_message_type_e)999, NULL);
+    on_rtm_subscribe_data("translation-channel", agent, caption_json, length,
+                          (rtm_message_type_e)999, NULL);
+    drain();
+    assert(direct_messages == 0 && channel_messages == 0);
+    /* A channel can change after callback capture but before its forwarding work. */
+    on_rtm_subscribe_data("translation-channel", agent, caption_json, length,
+                          RTM_MESSAGE_TYPE_STRING, NULL);
+    strcpy(s_rtc.rtm_channel, "new-channel");
+    drain();
+    assert(channel_messages == 0);
+    strcpy(s_rtc.rtm_channel, "translation-channel");
+    assert(mybot_agora_rtc_fini() == 0);
+    tests++;
+}
+static void test_rtm_stale_generations(void) {
+    reset_public();
+    init_public("caption-project");
+    join_public();
+    const size_t length = sizeof(caption_json) - 1;
+    const uint32_t old_login = s_rtc.rtm_login_generation;
+    const uint32_t old_subscription = s_rtc.rtm_subscribe_generation;
+    on_rtm_data(agent, caption_json, length, RTM_MESSAGE_TYPE_STRING, NULL);
+    on_rtm_subscribe_data("translation-channel", agent, caption_json, length,
+                          RTM_MESSAGE_TYPE_BINARY, NULL);
+    assert(queued == 2);
+    /* Rejoin on the owner while old callback work is still deferred. */
+    assert(rtc_leave_impl() == 0);
+    assert(rtc_join_impl("translation-channel", "route-token", "device-input", agent, publisher) ==
+           0);
+    assert(s_rtc.rtm_login_generation != old_login);
+    assert(s_rtc.rtm_subscribe_generation != old_subscription);
+    drain();
+    assert(direct_messages == 0 && channel_messages == 0);
+    on_rtm_data(agent, caption_json, length, RTM_MESSAGE_TYPE_BINARY, NULL);
+    on_rtm_subscribe_data("translation-channel", agent, caption_json, length,
+                          RTM_MESSAGE_TYPE_STRING, NULL);
+    drain();
+    assert(direct_messages == 1 && channel_messages == 1);
+    assert(mybot_agora_rtc_fini() == 0);
+    tests++;
+}
+static void test_rtm_callback_shutdown(void) {
+    reset_public();
+    init_public("caption-project");
+    join_public();
+    const size_t length = sizeof(caption_json) - 1;
+    set_callbacks_enabled(false);
+    on_rtm_data(agent, caption_json, length, RTM_MESSAGE_TYPE_STRING, NULL);
+    on_rtm_subscribe_data("translation-channel", agent, caption_json, length,
+                          RTM_MESSAGE_TYPE_BINARY, NULL);
+    assert(queued == 0 && allocations == 0);
+    assert(direct_messages == 0 && channel_messages == 0);
+    assert(mybot_agora_rtc_fini() == 0);
+    on_rtm_data(agent, caption_json, length, RTM_MESSAGE_TYPE_BINARY, NULL);
+    on_rtm_subscribe_data("translation-channel", agent, caption_json, length,
+                          RTM_MESSAGE_TYPE_STRING, NULL);
+    assert(queued == 0 && allocations == 0);
+    assert(direct_messages == 0 && channel_messages == 0);
+    tests++;
+}
 int main(void) {
     test_options();
     test_whitelist();
@@ -543,7 +702,13 @@ int main(void) {
     test_failed_fini_is_terminal();
     test_fini_drains_old_session_callbacks();
     test_forwarding_queue_destroy_retry();
+    test_rtm_copied_payload(RTM_MESSAGE_TYPE_STRING);
+    test_rtm_copied_payload(RTM_MESSAGE_TYPE_BINARY);
+    test_rtm_binary_bytes();
+    test_rtm_channel_and_type_filters();
+    test_rtm_stale_generations();
+    test_rtm_callback_shutdown();
     reset();
-    printf("translation RTC: %u source-level whitelist/lifecycle scenarios passed\n", tests);
+    printf("translation RTC: %u source-level whitelist/lifecycle/RTM scenarios passed\n", tests);
     return 0;
 }

@@ -112,6 +112,12 @@ typedef struct {
     int volume;
     /** Actual local media pause state; the RTC session remains connected. */
     bool paused;
+    /** Copied caption metadata; text is read through mybot_ui_copy_caption(). */
+    uint32_t caption_generation;
+    uint32_t caption_revision;
+    uint32_t caption_count;
+    uint32_t caption_first_sequence;
+    uint32_t caption_latest_sequence;
 } mybot_lcd_content_t;
 
 /**

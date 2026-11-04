@@ -400,10 +400,18 @@ int main(int argc, char **argv) {
             content.screen = MYBOT_LCD_SCREEN_CLEANUP_PENDING;
             content.volume = 65;
             content.paused = true;
+            content.caption_generation = 7;
+            content.caption_revision = 11;
+            content.caption_count = 4;
+            content.caption_first_sequence = 2;
+            content.caption_latest_sequence = 5;
             lvgl_port_unlock();
             CHECK(ops->render(ctx, &content) == 0);
             CHECK(lvgl_port_lock(100));
             timer.callback(&timer);
+            CHECK(applied.caption_generation == 7 && applied.caption_revision == 11 &&
+                  applied.caption_count == 4 && applied.caption_first_sequence == 2 &&
+                  applied.caption_latest_sequence == 5);
             CHECK(applied.volume == 65 && applied.paused &&
                   !std::strcmp(applied.source_language, "en-US") &&
                   !std::strcmp(applied.target_language, "zh-CN") &&

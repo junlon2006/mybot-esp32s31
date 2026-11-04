@@ -28,8 +28,8 @@ and current limitations.
 - HTTPS with `esp-tls`, the system CA bundle, SNI, and hostname verification.
 - 16 kHz mono signed-16 PCM capture and playback with 60 ms packets for the bundled RTSA
   package; other packet durations require a matching RTSA build.
-- Agora RTSA microphone/reference uplink with Cloud AEC and AI QoS, RTM channel subscription,
-  and subscription to the returned translated-audio publisher.
+- Agora RTSA microphone/reference uplink with Cloud AEC and optional AI QoS (disabled by default),
+  RTM channel subscription, and subscription to the returned translated-audio publisher.
 - A shared bounded PCM playback buffer and independent TDM writer on the supported board.
 - ES8389 audio with four 16-bit Philips TDM slots, independent capture/playback attachment,
   and reference-counted codec/I2S ownership.
@@ -64,7 +64,7 @@ install `ffmpeg`, then activate ESP-IDF in the current shell:
 test "$(idf.py --preview --version)" = "ESP-IDF v6.1"
 ```
 
-Build the board with an isolated build directory and sdkconfig:
+Use `build/korvo-s31` and `build/korvo-s31/sdkconfig` for all local firmware builds:
 
 ```sh
 idf.py --preview -B build/korvo-s31 \
@@ -73,21 +73,9 @@ idf.py --preview -B build/korvo-s31 \
   -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;ci/ptime60.defaults" build
 ```
 
-Build both languages with the project builder:
-
-```sh
-python3 scripts/build_all.py --board esp32-s31-korvo-1 --language both
-```
-
-The script places intermediate builds in `build/` and merged images in `releases/`. It uses the
-bundled 60 ms RTSA cadence and validates target configuration, RISC-V link provenance, RTSA
-members, local AOSL ownership, flash segments, and delivery metadata. Use `--dry-run` to inspect
-commands and `--no-clean` only for an incremental build.
-
-Build and output roots must be dedicated, non-overlapping, and free of `..` or symbolic-link
-components. A normal run cleans roots owned by the script; an existing non-empty root without
-the matching `.mybot-generated-root.json` marker is rejected. Safe cleanup requires Python 3.11
-or newer. The direct flash command and board-specific hardware details are in the
+CI builds language variants in isolated jobs. The [release guide](docs/RELEASING.md) describes
+the packaging builder and delivery checks; local development uses the direct command above.
+The direct flash command and board-specific hardware details are in the
 [board guide](docs/esp32-s31-korvo-1.en.md).
 
 The pinned RTSA header and library are bundled under `components/mybot_stack/agora_rtc`, so no
@@ -104,10 +92,11 @@ reconnection.
 Open Media translation, select input/output languages and use its start/stop controls. Pause
 retains the cloud session; empty screen taps have no action. A short PLAY press starts/stops
 translation, cancels a pending start or retries cleanup. SET requests pairing, a 3-second SET hold
-requests provisioning, and VOL+/VOL- change and persist volume in NVS. Captions, full text,
-history and brightness are labelled demonstrations. See the [translation UI](docs/PLATFORM_UI.md).
+requests provisioning, and VOL+/VOL- change and persist volume in NVS. Live captions, scrollable
+full text and session history share RTM original/translated text; brightness remains a demo.
+See the [translation UI](docs/PLATFORM_UI.md).
 
-Use `idf.py --preview -B <build-dir> menuconfig` under `mybot` to select the product language,
+Use `idf.py --preview -B build/korvo-s31 menuconfig` under `mybot` to select the product language,
 initial translation languages, Cloud AEC and AI QoS. The product language selects UI text and
 prompts; both builds use `https://mybot.sh3t.agoralab.co/api`. Runtime language selections take
 precedence over the initial translation languages.
@@ -121,8 +110,8 @@ hardware DMA, kernel objects, and the flash-writing main stack retain internal R
 ## Validation
 
 Current build coverage, recorded real-device results, and unsupported areas are maintained in
-the [validation record](docs/s31-validation.md). Local CI-equivalent checks build both languages,
-merge both images, and verify link and delivery metadata. The record distinguishes local builds
+the [validation record](docs/s31-validation.md). Local development builds Chinese firmware;
+CI covers both languages and verifies link and delivery metadata. The record distinguishes local builds
 from remote CI and hardware results. CI builds and host tests do not establish acoustic
 quality, panel behavior, power sequencing, Wi-Fi recovery, or long-duration results.
 

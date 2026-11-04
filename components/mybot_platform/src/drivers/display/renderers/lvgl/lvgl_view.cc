@@ -6,6 +6,7 @@
 #include "sdkconfig.h"
 
 #include <mybot/mybot_ui.h>
+#include <mybot/mybot_captions.h>
 
 #include <cstdio>
 #include <cstring>
@@ -14,6 +15,8 @@
 LV_FONT_DECLARE(mybot_lvgl_font_20);
 LV_FONT_DECLARE(mybot_lvgl_font_28);
 LV_FONT_DECLARE(mybot_lvgl_font_40);
+LV_FONT_DECLARE(mybot_caption_font_20);
+LV_FONT_DECLARE(mybot_caption_font_28);
 
 namespace {
 constexpr uint32_t kBackground = 0xb9d3ff;
@@ -28,6 +31,7 @@ constexpr uint32_t kPink = 0xf3c1d9;
 constexpr uint32_t kSoft = 0xdbe7fc;
 constexpr uint32_t kWarning = 0x7b334b;
 constexpr unsigned kLanguagesPerPage = 6;
+constexpr unsigned kCaptionsPerPage = 4;
 #if CONFIG_MYBOT_LANGUAGE_ZH_CN
 constexpr const char *tr(const char *zh, const char *) {
     return zh;
@@ -77,11 +81,15 @@ enum Action : uintptr_t {
     ConfirmChange,
     RetryStop,
     CancelStart,
+    CaptionExit,
+    HistoryPrevious,
+    HistoryNext,
     LanguagePrevious,
     LanguageNext,
     Volume,
     Brightness,
-    LanguageBase = 100
+    LanguageBase = 100,
+    CaptionBase = 200
 };
 struct Slider {
     lv_obj_t *object{};
@@ -103,6 +111,19 @@ struct View {
     Slider volume_slider;
     Slider brightness_slider;
     lv_timer_t *timer{};
+    mybot_caption_t *caption{};
+    lv_obj_t *caption_source{};
+    lv_obj_t *caption_target{};
+    lv_obj_t *caption_notice{};
+    lv_obj_t *history_source[kCaptionsPerPage]{};
+    lv_obj_t *history_target[kCaptionsPerPage]{};
+    lv_obj_t *history_buttons[kCaptionsPerPage]{};
+    lv_obj_t *history_previous{};
+    lv_obj_t *history_next{};
+    uint32_t history_sequences[kCaptionsPerPage]{};
+    uint32_t history_first = 0;
+    uint32_t selected_sequence = 0;
+    bool captions_dirty = false;
     mybot_lcd_content_t content{};
     Page page = Page::Service;
     Scene scene = Scene::Media;
@@ -152,6 +173,7 @@ bool volume_allowed() {
 }
 
 void redraw();
+void refresh_captions();
 void clicked(lv_event_t *event);
 void slider_event(lv_event_t *event);
 void command(mybot_ui_command_type_t type, int value);
@@ -254,6 +276,7 @@ void update_clock(lv_timer_t *timer) {
         s_view.command_pending = false;
         redraw();
     }
+    refresh_captions();
     const time_t now = std::time(nullptr);
     char clock[16] = "--:--";
     char date[64];
@@ -450,8 +473,6 @@ void languages() {
     button(586, 358, 190, 48, tr("下一页 >", "Next >"), LanguageNext, kSoft,
            begin + kLanguagesPerPage < count);
 }
-constexpr const char *kDemoSource = "我们现在可以开始会议了。";
-constexpr const char *kDemoTarget = "We can start the meeting now.";
 void route_label(int y) {
     char text[128];
     std::snprintf(text, sizeof(text), "%s  >  %s", language_name(s_view.content.source_language),
@@ -461,10 +482,16 @@ void route_label(int y) {
 void live() {
     heading(tr("媒体翻译", "Media translation"), NoAction, tr("更多 ...", "More ..."), Menu);
     auto *card = button(24, 82, 752, 202, "", Full, kWhite);
-    label(card, 20, 12, 580, 32, tr("演示字幕 · 固定示例", "Demo captions · Fixed example"),
-          &mybot_lvgl_font_20, LV_TEXT_ALIGN_LEFT, kMuted);
-    label(card, 20, 58, 712, 72, kDemoTarget, &mybot_lvgl_font_28, LV_TEXT_ALIGN_LEFT);
-    label(card, 20, 140, 712, 40, kDemoSource, &mybot_lvgl_font_20, LV_TEXT_ALIGN_LEFT);
+    s_view.caption_notice =
+        label(card, 20, 12, 712, 32, "", &mybot_lvgl_font_20, LV_TEXT_ALIGN_LEFT, kMuted);
+    s_view.caption_target =
+        label(card, 20, 58, 712, 78, "", &mybot_caption_font_28, LV_TEXT_ALIGN_LEFT);
+    s_view.caption_source =
+        label(card, 20, 140, 712, 30, "", &mybot_caption_font_20, LV_TEXT_ALIGN_LEFT);
+    if (s_view.caption_target)
+        lv_label_set_long_mode(s_view.caption_target, LV_LABEL_LONG_DOT);
+    if (s_view.caption_source)
+        lv_label_set_long_mode(s_view.caption_source, LV_LABEL_LONG_DOT);
     route_label(290);
     button(628, 284, 148, 44, s_view.content.paused ? tr("继续", "Resume") : tr("暂停", "Pause"),
            Pause, kPurple, !s_view.command_pending);
@@ -479,21 +506,157 @@ void menu() {
     button(40, 338, 720, 64, tr("结束这次翻译", "End this translation"), End, kPink);
 }
 void captions(bool history) {
-    heading(history ? tr("演示字幕历史", "Demo caption history")
-                    : tr("完整演示字幕", "Full demo caption"),
-            Live);
-    label(s_view.body, 36, 76, 728, 34,
-          tr("固定演示内容，与实时音频无关", "Fixed demo content; independent of live audio"),
-          &mybot_lvgl_font_20, LV_TEXT_ALIGN_LEFT, kMuted);
+    heading(history ? tr("本次字幕历史", "Caption history") : tr("完整字幕", "Full caption"),
+            history ? CaptionExit : History);
     if (history) {
-        button(36, 134, 728, 90, kDemoTarget, Full, kWhite);
-        label(s_view.body, 56, 248, 690, 50, kDemoSource, &mybot_lvgl_font_20, LV_TEXT_ALIGN_LEFT);
+        s_view.caption_notice = label(s_view.body, 36, 64, 728, 30, "", &mybot_lvgl_font_20,
+                                      LV_TEXT_ALIGN_LEFT, kMuted);
+        for (unsigned i = 0; i < kCaptionsPerPage; ++i) {
+            auto *card = button(28, 102 + i * 62, 744, 58, "", static_cast<Action>(CaptionBase + i),
+                                kWhite, false, 12);
+            s_view.history_buttons[i] = card;
+            s_view.history_target[i] =
+                label(card, 16, 2, 712, 28, "", &mybot_caption_font_20, LV_TEXT_ALIGN_LEFT);
+            s_view.history_source[i] = label(card, 16, 29, 712, 28, "", &mybot_caption_font_20,
+                                             LV_TEXT_ALIGN_LEFT, kMuted);
+            if (s_view.history_target[i])
+                lv_label_set_long_mode(s_view.history_target[i], LV_LABEL_LONG_DOT);
+            if (s_view.history_source[i])
+                lv_label_set_long_mode(s_view.history_source[i], LV_LABEL_LONG_DOT);
+        }
+        s_view.history_previous =
+            button(28, 370, 190, 44, tr("< 上一页", "< Previous"), HistoryPrevious, kSoft, false);
+        button(242, 370, 316, 44,
+               active() ? tr("返回实时翻译", "Back to live") : tr("返回结束页", "Back to summary"),
+               CaptionExit, kTeal);
+        s_view.history_next =
+            button(582, 370, 190, 44, tr("下一页 >", "Next >"), HistoryNext, kSoft, false);
     } else {
-        auto *card = panel(s_view.body, 28, 130, 744, 200, kWhite);
-        label(card, 24, 24, 696, 96, kDemoTarget, &mybot_lvgl_font_28, LV_TEXT_ALIGN_LEFT);
-        label(card, 24, 136, 696, 52, kDemoSource, &mybot_lvgl_font_20, LV_TEXT_ALIGN_LEFT);
+        auto *card = panel(s_view.body, 28, 82, 744, 264, kWhite);
+        if (card) {
+            lv_obj_add_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+            lv_obj_add_flag(card, LV_OBJ_FLAG_CLICKABLE);
+            lv_obj_set_scroll_dir(card, LV_DIR_VER);
+            lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
+            lv_obj_set_style_pad_all(card, 24, 0);
+            lv_obj_set_style_pad_row(card, 16, 0);
+        }
+        s_view.caption_target =
+            label(card, 0, 0, 696, LV_SIZE_CONTENT, "", &mybot_caption_font_28, LV_TEXT_ALIGN_LEFT);
+        s_view.caption_source =
+            label(card, 0, 0, 696, LV_SIZE_CONTENT, "", &mybot_caption_font_20, LV_TEXT_ALIGN_LEFT);
+        s_view.caption_notice = label(card, 0, 0, 696, LV_SIZE_CONTENT, "", &mybot_lvgl_font_20,
+                                      LV_TEXT_ALIGN_LEFT, kMuted);
+        button(270, 362, 260, 48,
+               active() ? tr("返回实时翻译", "Back to live") : tr("返回结束页", "Back to summary"),
+               CaptionExit, kTeal);
     }
-    button(270, 354, 260, 52, tr("返回实时翻译", "Back to live"), Live, kTeal);
+}
+void caption_text(lv_obj_t *object, const char *text) {
+    if (object)
+        lv_label_set_text(object, text);
+}
+void refresh_captions() {
+    if (!s_view.captions_dirty || !s_view.caption ||
+        (s_view.page != Page::Live && s_view.page != Page::Full && s_view.page != Page::History))
+        return;
+    const auto &state = s_view.content;
+    if (!state.caption_count) {
+        const char *notice = state.caption_generation ? tr("等待字幕", "Waiting for captions")
+                                                      : tr("字幕暂不可用", "Captions unavailable");
+        caption_text(s_view.caption_target, notice);
+        caption_text(s_view.caption_source, "");
+        caption_text(s_view.caption_notice, "");
+        for (unsigned i = 0; i < kCaptionsPerPage; ++i) {
+            s_view.history_sequences[i] = 0;
+            caption_text(s_view.history_target[i], "");
+            caption_text(s_view.history_source[i], "");
+            enabled(s_view.history_buttons[i], false);
+        }
+        if (s_view.page == Page::History)
+            caption_text(s_view.caption_notice, notice);
+        enabled(s_view.history_previous, false);
+        enabled(s_view.history_next, false);
+        s_view.captions_dirty = false;
+        return;
+    }
+    if (s_view.page == Page::History) {
+        if (s_view.history_first < state.caption_first_sequence ||
+            s_view.history_first > state.caption_latest_sequence)
+            s_view.history_first = state.caption_first_sequence;
+        bool busy = false;
+        bool truncated = false;
+        for (unsigned i = 0; i < kCaptionsPerPage; ++i) {
+            const uint32_t sequence = s_view.history_first + i;
+            if (sequence > state.caption_latest_sequence) {
+                s_view.history_sequences[i] = 0;
+                caption_text(s_view.history_target[i], "");
+                caption_text(s_view.history_source[i], "");
+                enabled(s_view.history_buttons[i], false);
+            } else if (mybot_ui_copy_caption(state.caption_generation, sequence, s_view.caption) ==
+                       0) {
+                s_view.history_sequences[i] = sequence;
+                caption_text(s_view.history_target[i],
+                             s_view.caption->target_text[0]
+                                 ? s_view.caption->target_text
+                                 : tr("等待译文", "Waiting for translation"));
+                caption_text(s_view.history_source[i], s_view.caption->source_text);
+                enabled(s_view.history_buttons[i], true);
+                truncated = truncated || s_view.caption->source_truncated ||
+                            s_view.caption->target_truncated;
+            } else {
+                if (s_view.history_sequences[i] != sequence) {
+                    s_view.history_sequences[i] = 0;
+                    caption_text(s_view.history_target[i], "");
+                    caption_text(s_view.history_source[i], "");
+                    enabled(s_view.history_buttons[i], false);
+                }
+                busy = true;
+            }
+        }
+        char notice[128];
+        std::snprintf(
+            notice, sizeof(notice),
+            truncated ? tr("最近 %u 条 · 第 %u 页 · 文本过长，已截断",
+                           "Recent %u · Page %u · Long text truncated")
+                      : tr("最近 %u 条 · 第 %u 页", "Recent %u · Page %u"),
+            static_cast<unsigned>(state.caption_count),
+            static_cast<unsigned>(
+                (s_view.history_first - state.caption_first_sequence) / kCaptionsPerPage + 1));
+        caption_text(s_view.caption_notice, notice);
+        enabled(s_view.history_previous, s_view.history_first > state.caption_first_sequence);
+        enabled(s_view.history_next,
+                state.caption_latest_sequence - s_view.history_first >= kCaptionsPerPage);
+        s_view.captions_dirty = busy;
+        return;
+    }
+    const uint32_t sequence =
+        s_view.page == Page::Live ? state.caption_latest_sequence : s_view.selected_sequence;
+    const bool evicted = s_view.page == Page::Full && (sequence < state.caption_first_sequence ||
+                                                       sequence > state.caption_latest_sequence);
+    /* The copied full-page snapshot remains readable after ring eviction,
+     * including a local control redraw. Never substitute another sentence. */
+    if (evicted && (!sequence || s_view.caption->sequence != sequence)) {
+        caption_text(s_view.caption_target, tr("请返回字幕历史", "Return to caption history"));
+        caption_text(s_view.caption_source, "");
+        caption_text(s_view.caption_notice, "");
+        s_view.captions_dirty = false;
+        return;
+    }
+    if (!evicted && mybot_ui_copy_caption(state.caption_generation, sequence, s_view.caption) != 0)
+        return; /* Nonblocking read: retain the last snapshot and retry on the owned timer. */
+    s_view.selected_sequence = sequence;
+    caption_text(s_view.caption_target, s_view.caption->target_text[0]
+                                            ? s_view.caption->target_text
+                                            : tr("等待译文", "Waiting for translation"));
+    caption_text(s_view.caption_source, s_view.caption->source_text);
+    caption_text(s_view.caption_notice,
+                 s_view.caption->source_truncated || s_view.caption->target_truncated
+                     ? tr("文本过长，已截断", "Long text truncated")
+                 : s_view.caption->source_final && s_view.caption->target_final
+                     ? tr("已定稿", "Final")
+                     : tr("实时字幕", "Live captions"));
+    s_view.captions_dirty = false;
 }
 void confirmation(bool change) {
     heading(change ? tr("更改设置需重新开始", "Changing settings requires a new session")
@@ -608,6 +771,13 @@ void redraw() {
     if (!s_view.body)
         return;
     s_view.home_time = s_view.home_date = s_view.volume_label = nullptr;
+    s_view.caption_source = s_view.caption_target = s_view.caption_notice = nullptr;
+    s_view.history_previous = s_view.history_next = nullptr;
+    for (unsigned i = 0; i < kCaptionsPerPage; ++i) {
+        s_view.history_source[i] = s_view.history_target[i] = s_view.history_buttons[i] = nullptr;
+        s_view.history_sequences[i] = 0;
+    }
+    s_view.captions_dirty = true;
     s_view.volume_slider = Slider{};
     s_view.brightness_slider = Slider{};
     lv_obj_clean(s_view.body);
@@ -654,6 +824,8 @@ void redraw() {
         label(s_view.body, 80, 130, 640, 82,
               tr("服务端已确认结束", "The service has confirmed the session ended"),
               &mybot_lvgl_font_28);
+        button(240, 232, 320, 52, tr("查看本次字幕", "View captions"), History, kSoft,
+               s_view.content.caption_count != 0);
         button(72, 312, 300, 68, tr("更换使用方式", "Change scene"), Entry, kWhite);
         button(428, 312, 300, 68, tr("再来一次", "Translate again"), Setup, kTeal);
         break;
@@ -685,7 +857,16 @@ void clicked(lv_event_t *event) {
         return;
     const auto action =
         static_cast<Action>(reinterpret_cast<uintptr_t>(lv_event_get_user_data(event)));
-    if (action >= LanguageBase) {
+    if (action >= CaptionBase && action < CaptionBase + kCaptionsPerPage) {
+        const unsigned index = static_cast<unsigned>(action - CaptionBase);
+        if (s_view.page != Page::History || !s_view.history_sequences[index])
+            return;
+        s_view.selected_sequence = s_view.history_sequences[index];
+        s_view.page = Page::Full;
+        redraw();
+        return;
+    }
+    if (action >= LanguageBase && action < CaptionBase) {
         if (!idle() || s_view.page != Page::Languages || !languages_allowed())
             return;
         size_t count = 0;
@@ -793,12 +974,32 @@ void clicked(lv_event_t *event) {
             s_view.page = Page::Sound;
         break;
     case Full:
-        if (active())
+        if (active() && s_view.content.caption_count) {
+            s_view.selected_sequence = s_view.content.caption_latest_sequence;
             s_view.page = Page::Full;
+        }
         break;
     case History:
-        if (active())
+        if (active() || (idle() && s_view.content.caption_count)) {
+            if (s_view.page != Page::Full)
+                s_view.history_first = s_view.content.caption_first_sequence;
             s_view.page = Page::History;
+        }
+        break;
+    case CaptionExit:
+        s_view.page = active() ? Page::Live : Page::Complete;
+        break;
+    case HistoryPrevious:
+        if (s_view.page == Page::History &&
+            s_view.history_first > s_view.content.caption_first_sequence) {
+            const uint32_t distance = s_view.history_first - s_view.content.caption_first_sequence;
+            s_view.history_first -= distance < kCaptionsPerPage ? distance : kCaptionsPerPage;
+        }
+        break;
+    case HistoryNext:
+        if (s_view.page == Page::History &&
+            s_view.content.caption_latest_sequence - s_view.history_first >= kCaptionsPerPage)
+            s_view.history_first += kCaptionsPerPage;
         break;
     case Pause:
         if (!active() || s_view.command_pending)
@@ -855,6 +1056,11 @@ int mybot_lvgl_view_create_sized(lv_display_t *display, int width, int height) {
         mybot_lvgl_view_destroy();
         return -1;
     }
+    s_view.caption = static_cast<mybot_caption_t *>(lv_malloc(sizeof(mybot_caption_t)));
+    if (!s_view.caption) {
+        mybot_lvgl_view_destroy();
+        return -1;
+    }
     redraw();
     s_view.timer = lv_timer_create(update_clock, 1000, nullptr);
     if (!s_view.timer || s_view.failed) {
@@ -882,8 +1088,30 @@ void mybot_lvgl_view_update(const mybot_lcd_content_t *content) {
     const bool error_changed = std::strcmp(previous.error_code, content->error_code) != 0;
     const bool detail_changed =
         error_changed || std::strcmp(previous.pair_code, content->pair_code) != 0;
+    const bool captions_changed = previous.caption_generation != content->caption_generation ||
+                                  previous.caption_revision != content->caption_revision;
+    const bool captions_only =
+        captions_changed && !changed && !language_changed && !paused_changed && !detail_changed &&
+        previous.volume == content->volume && previous.indicators == content->indicators;
     const bool was_pending = s_view.command_pending || languages_pending();
     s_view.content = *content;
+    if (previous.caption_generation != content->caption_generation) {
+        s_view.history_first = content->caption_first_sequence;
+        s_view.selected_sequence = 0;
+        if (s_view.caption)
+            s_view.caption->sequence = 0;
+        caption_text(s_view.caption_target, tr("等待字幕", "Waiting for captions"));
+        caption_text(s_view.caption_source, "");
+        caption_text(s_view.caption_notice, "");
+        for (unsigned i = 0; i < kCaptionsPerPage; ++i) {
+            caption_text(s_view.history_target[i], "");
+            caption_text(s_view.history_source[i], "");
+            enabled(s_view.history_buttons[i], false);
+            s_view.history_sequences[i] = 0;
+        }
+    }
+    if (captions_changed)
+        s_view.captions_dirty = true;
     /* Unrelated presenter updates and the local retry timer are not language
      * acknowledgements. Only the requested pair or an actual failure releases it. */
     if (languages_pending() &&
@@ -894,7 +1122,8 @@ void mybot_lvgl_view_update(const mybot_lcd_content_t *content) {
          (error_changed && content->error_code[0])))
         s_view.pending_source[0] = '\0';
     /* Other controls use a local retry guard; only SDK state may show success. */
-    s_view.command_pending = false;
+    if (!captions_only)
+        s_view.command_pending = false;
     if (changed || (s_view.page == Page::Service && completed_cleanup_hint())) {
         if (content->screen == MYBOT_LCD_SCREEN_READY) {
             s_view.page =
@@ -915,7 +1144,8 @@ void mybot_lvgl_view_update(const mybot_lcd_content_t *content) {
     if (!changed && (detail_changed || s_view.start_requested) && idle_error())
         s_view.page = Page::Service;
     s_view.start_requested = false;
-    if (changed || language_changed || paused_changed || detail_changed || was_pending ||
+    if (changed || language_changed || paused_changed || detail_changed ||
+        (was_pending && !captions_only) ||
         (s_view.page == Page::Setup || s_view.page == Page::Service))
         redraw();
     else {
@@ -928,5 +1158,7 @@ void mybot_lvgl_view_destroy(void) {
         lv_timer_delete(s_view.timer);
     if (s_view.root)
         lv_obj_delete(s_view.root);
+    if (s_view.caption)
+        lv_free(s_view.caption);
     s_view = View{};
 }

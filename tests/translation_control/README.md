@@ -22,3 +22,10 @@ vendor cleanup failure retention and switching App IDs after successful finaliza
 The stop callback is also exercised after cleanup state publication: RTC failure
 replaces temporary cleanup hints but preserves storage/start errors, and audio teardown
 still runs when RTC finalization fails.
+
+The caption integration tests use the production model and JSON parser with the
+application's real RTM handlers and copied-read API. They cover sender/channel
+filtering, borrowed payload ownership, the eight-message inbox and overflow,
+session generations, pause/end behavior, both nonblocking read gates, allocation
+failures and shutdown occurring between admission and copying. No live RTM
+service is used.

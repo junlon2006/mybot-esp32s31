@@ -3,6 +3,7 @@
 #include "input/korvo_s31_keys.h"
 #include "network/wifi_control.h"
 #include <mybot/mybot_ui.h>
+#include <mybot/mybot_captions.h>
 
 #include <algorithm>
 #include <cstdio>
@@ -23,7 +24,7 @@ struct lv_obj_t {
     std::vector<lv_obj_t *> children;
     std::string text;
     unsigned flags{}, state{};
-    int x{}, y{}, width{}, height{}, value{}, event_code{};
+    int x{}, y{}, width{}, height{}, value{}, event_code{}, long_mode{};
     bool slider{};
     lv_event_cb_t callback{};
     void *user{};
@@ -47,6 +48,8 @@ struct lv_timer_t {
 extern const lv_font_t mybot_lvgl_font_20{};
 extern const lv_font_t mybot_lvgl_font_28{};
 extern const lv_font_t mybot_lvgl_font_40{};
+extern const lv_font_t mybot_caption_font_20{};
+extern const lv_font_t mybot_caption_font_28{};
 static unsigned allocations, fail_at, live;
 static uint32_t ticks;
 static bool wifi_connected;
@@ -54,6 +57,24 @@ static bool accept_ui_commands = true;
 static lv_timer_t *timer;
 static std::vector<mybot_key_event_t> events;
 static std::vector<mybot_ui_command_t> commands;
+static std::vector<mybot_caption_t> captions;
+static uint32_t caption_generation = 1;
+static bool captions_busy;
+static unsigned caption_reads;
+
+void *lv_malloc(size_t size) {
+    if (++allocations == fail_at)
+        return nullptr;
+    void *memory = std::malloc(size);
+    if (memory)
+        ++live;
+    return memory;
+}
+void lv_free(void *memory) {
+    CHECK(memory);
+    std::free(memory);
+    --live;
+}
 
 lv_obj_t *lv_obj_create(lv_obj_t *parent) {
     CHECK(parent);
@@ -97,7 +118,15 @@ void lv_obj_set_pos(lv_obj_t *o, int x, int y) {
 }
 void lv_obj_set_size(lv_obj_t *o, int width, int height) {
     o->width = width;
-    o->height = height;
+    o->height = height == LV_SIZE_CONTENT ? 28 : height;
+}
+void lv_obj_set_scroll_dir(lv_obj_t *, int) {
+}
+void lv_obj_set_flex_flow(lv_obj_t *, int) {
+}
+void lv_obj_set_style_pad_all(lv_obj_t *, int, int) {
+}
+void lv_obj_set_style_pad_row(lv_obj_t *, int, int) {
 }
 void lv_obj_set_style_bg_color(lv_obj_t *, lv_color_t, int) {
 }
@@ -152,7 +181,8 @@ void lv_obj_add_state(lv_obj_t *o, unsigned state) {
 bool lv_obj_has_state(lv_obj_t *o, unsigned state) {
     return (o->state & state) != 0;
 }
-void lv_label_set_long_mode(lv_obj_t *, int) {
+void lv_label_set_long_mode(lv_obj_t *object, int mode) {
+    object->long_mode = mode;
 }
 void lv_label_set_text(lv_obj_t *o, const char *text) {
     o->text = text;
@@ -183,6 +213,17 @@ uint32_t lv_tick_get(void) {
     return ticks;
 }
 extern "C" {
+int mybot_ui_copy_caption(uint32_t generation, uint32_t sequence, mybot_caption_t *out) {
+    ++caption_reads;
+    if (captions_busy || generation != caption_generation)
+        return -1;
+    for (const auto &caption : captions)
+        if (caption.sequence == sequence) {
+            *out = caption;
+            return 0;
+        }
+    return -1;
+}
 bool mybot_wifi_is_connected(void) {
     return wifi_connected;
 }
@@ -275,6 +316,7 @@ int main() {
     fail_at = 0;
     CHECK(mybot_lvgl_view_create(&display) == 0);
     mybot_lcd_content_t content{};
+    content.caption_generation = caption_generation;
     content.screen = MYBOT_LCD_SCREEN_READY;
     wifi_connected = true;
     content.volume = 60;
@@ -403,13 +445,59 @@ int main() {
     click(find(&display.root, tr("开始翻译  >", "Start translation  >")));
     content.screen = MYBOT_LCD_SCREEN_IN_CONVERSATION;
     mybot_lvgl_view_update(&content);
-    CHECK(find(&display.root, tr("演示字幕 · 固定示例", "Demo captions · Fixed example")));
+    CHECK(find(&display.root, tr("等待字幕", "Waiting for captions")));
     bounds(&display.root);
+    content.caption_generation = 0; // Subtitle allocation failure must leave audio UI usable.
+    mybot_lvgl_view_update(&content);
+    CHECK(find(&display.root, tr("字幕暂不可用", "Captions unavailable")));
+    CHECK(!find(&display.root, tr("等待字幕", "Waiting for captions")));
+    CHECK(find(&display.root, tr("暂停", "Pause")));
+    content.caption_generation = caption_generation;
+    mybot_lvgl_view_update(&content);
+    CHECK(find(&display.root, tr("等待字幕", "Waiting for captions")));
+    content.caption_generation = caption_generation;
+    content.caption_revision = 1;
+    content.caption_count = 1;
+    content.caption_first_sequence = content.caption_latest_sequence = 1;
+    mybot_caption_t first{};
+    first.sequence = 1;
+    std::strcpy(first.source_text, "真实原文，不是演示。");
+    std::strcpy(first.target_text, "This is a real streamed translation.");
+    captions.push_back(first);
+    const unsigned live_allocations = allocations;
+    mybot_lvgl_view_update(&content);
+    CHECK(allocations == live_allocations); // Subtitle updates preserve all widgets.
+    auto *stream_label = find(&display.root, first.target_text);
+    CHECK(stream_label && find(&display.root, first.source_text));
+    CHECK(stream_label->long_mode == LV_LABEL_LONG_DOT);
+    CHECK(find(&display.root, first.source_text)->long_mode == LV_LABEL_LONG_DOT);
+    std::strcpy(captions[0].target_text, "A short revision.");
+    ++content.caption_revision;
+    mybot_lvgl_view_update(&content);
+    CHECK(find(&display.root, "A short revision.") == stream_label);
+    captions_busy = true;
+    std::strcpy(captions[0].target_text, "Copy retried without presenter changes.");
+    ++content.caption_revision;
+    mybot_lvgl_view_update(&content);
+    CHECK(find(&display.root, "A short revision.") == stream_label);
+    captions_busy = false;
+    timer->callback(timer);
+    CHECK(find(&display.root, "Copy retried without presenter changes.") == stream_label);
+    std::strcpy(captions[0].target_text, "A short revision.");
+    captions[0].target_truncated = true;
+    ++content.caption_revision;
+    mybot_lvgl_view_update(&content);
+    CHECK(find(&display.root, tr("文本过长，已截断", "Long text truncated")));
+    captions[0].target_truncated = false;
     click(find(&display.root, tr("暂停", "Pause")));
     CHECK(commands.back().type == MYBOT_UI_SET_PAUSED && commands.back().value == 1);
     CHECK(!find(&display.root,
                 tr("继续", "Resume"))); // Only SDK acknowledgement changes pause state.
     const size_t pending_pause_commands = commands.size();
+    ++content.caption_revision;
+    const unsigned pending_allocations = allocations;
+    mybot_lvgl_view_update(&content);
+    CHECK(allocations == pending_allocations);
     click(find(&display.root, tr("暂停", "Pause")));
     CHECK(commands.size() == pending_pause_commands); // Guard repeated taps before acknowledgement.
     ticks += 2000;
@@ -422,14 +510,55 @@ int main() {
     content.paused = true;
     mybot_lvgl_view_update(&content);
     CHECK(find(&display.root, tr("继续", "Resume")));
-    click(find(&display.root, "We can start the meeting now."));
-    CHECK(find(&display.root, tr("固定演示内容，与实时音频无关",
-                                 "Fixed demo content; independent of live audio")));
+    click(find(&display.root, "A short revision."));
+    CHECK(find(&display.root, tr("完整字幕", "Full caption")));
     bounds(&display.root);
     click(find(&display.root, tr("返回实时翻译", "Back to live")));
     click(find(&display.root, tr("更多 ...", "More ...")));
     click(find(&display.root, tr("本次字幕与全文  >", "Captions and full text  >")));
-    CHECK(find(&display.root, tr("演示字幕历史", "Demo caption history")));
+    CHECK(find(&display.root, tr("本次字幕历史", "Caption history")));
+    for (uint32_t i = 2; i <= 6; ++i) {
+        mybot_caption_t record{};
+        record.sequence = i;
+        std::snprintf(record.source_text, sizeof(record.source_text), "原文 %u", i);
+        std::snprintf(record.target_text, sizeof(record.target_text), "Translation %u", i);
+        captions.push_back(record);
+    }
+    content.caption_count = content.caption_latest_sequence = 6;
+    ++content.caption_revision;
+    const unsigned history_allocations = allocations;
+    mybot_lvgl_view_update(&content);
+    CHECK(allocations == history_allocations);
+    CHECK(find(&display.root, "Translation 4") && !find(&display.root, "Translation 5"));
+    captions_busy = true;
+    click(find(&display.root, tr("下一页 >", "Next >")));
+    CHECK(!find(&display.root, "A short revision.") && !find(&display.root, "Translation 5"));
+    captions_busy = false;
+    const unsigned retry_allocations = allocations;
+    timer->callback(timer);
+    CHECK(allocations == retry_allocations);
+    CHECK(find(&display.root, "Translation 5") && find(&display.root, "Translation 6"));
+    click(find(&display.root, "Translation 5"));
+    CHECK(find(&display.root, "Translation 5"));
+    auto *full_label = find(&display.root, "Translation 5");
+    CHECK((full_label->parent->flags & LV_OBJ_FLAG_SCROLLABLE) != 0);
+    CHECK((full_label->parent->flags & LV_OBJ_FLAG_CLICKABLE) != 0);
+    mybot_caption_t seventh{};
+    seventh.sequence = 7;
+    std::strcpy(seventh.source_text, "暂停后的尾稿");
+    std::strcpy(seventh.target_text, "Tail caption while paused");
+    captions.push_back(seventh);
+    content.caption_count = content.caption_latest_sequence = 7;
+    ++content.caption_revision;
+    const unsigned full_allocations = allocations;
+    mybot_lvgl_view_update(&content);
+    CHECK(allocations == full_allocations && find(&display.root, "Translation 5") == full_label);
+    CHECK(!find(&display.root, seventh.target_text)); // Browsing never follows the latest record.
+    click(find(&display.root, tr("< 返回", "< Back")));
+    CHECK(find(&display.root, "Translation 5") && find(&display.root, seventh.target_text));
+    CHECK(!find(&display.root, "A short revision.")); // Back preserves the current history page.
+    click(find(&display.root, tr("< 上一页", "< Previous")));
+    CHECK(find(&display.root, "A short revision.") && !find(&display.root, "Translation 5"));
     click(find(&display.root, tr("返回实时翻译", "Back to live")));
     click(find(&display.root, tr("更多 ...", "More ...")));
     click(find(&display.root, tr("结束这次翻译", "End this translation")));
@@ -460,6 +589,12 @@ int main() {
     CHECK(!find(&display.root, "CLEANUP_PENDING"));
     mybot_lvgl_view_update(&content); // A repeated stale hint must not replace completion.
     CHECK(find(&display.root, tr("翻译已结束", "Translation ended")));
+    click(find(&display.root, tr("查看本次字幕", "View captions")));
+    CHECK(find(&display.root, "A short revision."));
+    click(find(&display.root, "A short revision."));
+    CHECK(find(&display.root, tr("完整字幕", "Full caption")));
+    click(find(&display.root, tr("返回结束页", "Back to summary")));
+    CHECK(find(&display.root, tr("翻译已结束", "Translation ended")));
     // A normal end without a failed stop still uses the SDK acknowledgement.
     content.error_code[0] = 0;
     mybot_lvgl_view_update(&content);
@@ -475,11 +610,82 @@ int main() {
     content.screen = MYBOT_LCD_SCREEN_READY;
     mybot_lvgl_view_update(&content);
     CHECK(find(&display.root, tr("翻译已结束", "Translation ended")));
+    // A new session generation clears the previous local history immediately.
+    ++caption_generation;
+    content.caption_generation = caption_generation;
+    content.caption_revision = 0;
+    content.caption_count = content.caption_first_sequence = content.caption_latest_sequence = 0;
+    captions.clear();
     // Changing settings, unlike a regular end, returns to setup after cleanup.
     click(find(&display.root, tr("再来一次", "Translate again")));
     click(find(&display.root, tr("开始翻译  >", "Start translation  >")));
     content.screen = MYBOT_LCD_SCREEN_IN_CONVERSATION;
     mybot_lvgl_view_update(&content);
+    CHECK(find(&display.root, tr("等待字幕", "Waiting for captions")));
+    CHECK(!find(&display.root, "Tail caption while paused"));
+    mybot_caption_t new_session{};
+    new_session.sequence = 1;
+    std::strcpy(new_session.source_text, "新一场字幕");
+    std::strcpy(new_session.target_text, "A new session caption");
+    captions.push_back(new_session);
+    content.caption_revision = 1;
+    content.caption_count = content.caption_first_sequence = content.caption_latest_sequence = 1;
+    mybot_lvgl_view_update(&content);
+    CHECK(find(&display.root, new_session.target_text));
+    // Resetting only the subtitle generation must erase old text even if reads are busy.
+    ++caption_generation;
+    content.caption_generation = caption_generation;
+    captions_busy = true;
+    mybot_lvgl_view_update(&content);
+    CHECK(!find(&display.root, new_session.target_text));
+    CHECK(find(&display.root, tr("等待字幕", "Waiting for captions")));
+    captions_busy = false;
+    timer->callback(timer);
+    CHECK(find(&display.root, new_session.target_text));
+    click(find(&display.root, content.paused ? tr("继续", "Resume") : tr("暂停", "Pause")));
+    click(find(&display.root, new_session.target_text));
+    auto *retained_full_label = find(&display.root, new_session.target_text);
+    for (uint32_t sequence = 2; sequence <= 65; ++sequence) {
+        mybot_caption_t record{};
+        record.sequence = sequence;
+        std::snprintf(record.target_text, sizeof(record.target_text), "Retained translation %u",
+                      sequence);
+        captions.push_back(record);
+    }
+    content.caption_count = MYBOT_CAPTION_HISTORY_CAPACITY;
+    content.caption_first_sequence = 2;
+    content.caption_latest_sequence = 65;
+    ++content.caption_revision;
+    const unsigned eviction_allocations = allocations, eviction_reads = caption_reads;
+    mybot_lvgl_view_update(&content);
+    CHECK(find(&display.root, new_session.target_text) == retained_full_label);
+    CHECK(!find(&display.root, "Retained translation 2"));
+    CHECK(allocations == eviction_allocations && caption_reads == eviction_reads);
+    ticks += 2000;
+    timer->callback(timer); // Retain the copied sentence across a local control redraw too.
+    CHECK(find(&display.root, new_session.target_text));
+    CHECK(caption_reads == eviction_reads);
+    click(find(&display.root, tr("< 返回", "< Back")));
+    CHECK(find(&display.root, "Retained translation 2"));
+    CHECK(!find(&display.root, new_session.target_text));
+    // If the selected record disappears before its first read, show no other sentence.
+    captions_busy = true;
+    click(find(&display.root, "Retained translation 2"));
+    mybot_caption_t newest{};
+    newest.sequence = 66;
+    std::strcpy(newest.target_text, "Retained translation 66");
+    captions.push_back(newest);
+    content.caption_first_sequence = 3;
+    content.caption_latest_sequence = 66;
+    ++content.caption_revision;
+    mybot_lvgl_view_update(&content);
+    CHECK(find(&display.root, tr("请返回字幕历史", "Return to caption history")));
+    CHECK(!find(&display.root, "Retained translation 3"));
+    captions_busy = false;
+    click(find(&display.root, tr("< 返回", "< Back")));
+    CHECK(find(&display.root, "Retained translation 3"));
+    click(find(&display.root, tr("返回实时翻译", "Back to live")));
+    CHECK(find(&display.root, "Retained translation 66"));
     click(find(&display.root, tr("更多 ...", "More ...")));
     click(find(&display.root, tr("更改语言与使用方式  >", "Change languages and scene  >")));
     click(find(&display.root, tr("结束并更换", "End and change")));
@@ -558,5 +764,5 @@ int main() {
     mybot_lvgl_view_destroy();
     CHECK(!live && !timer && display.root.children.empty());
     std::puts("PASS native simulator UI: scene previews, direct language selection, real volume, "
-              "pause, demos, lifecycle gates and allocation cleanup");
+              "pause, streamed captions/history, lifecycle gates and allocation cleanup");
 }

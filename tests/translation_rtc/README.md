@@ -18,4 +18,14 @@ finalization, and callbacks delivered during teardown before connection IDs are 
 the next session. Successful vendor finalization must stop vendor callbacks; the mock does
 not establish that behavior in the supplied binary.
 
+RTM scenarios initialize and join through the public API before invoking the production
+vendor callback entry points. They verify direct and subscribed UTF-8 JSON carried as either
+STRING or BINARY, exact length/byte copying without requiring a terminating NUL, copied
+sender/channel/custom metadata, binary bytes containing embedded NUL, unknown carrier-type
+rejection, wrong channels both at capture and dispatch, stale login/subscription generations
+after rejoin, and callback admission after shutdown. Binary payload validation and the
+Agent/session authorization policy belong to the application tests; the wrapper preserves
+bytes. Work accepted before the forwarding worker's finalization barrier may finish before
+that barrier; newly arriving callbacks are rejected once callback admission closes.
+
 This validates wrapper behavior, not the vendor binary or physical audio.

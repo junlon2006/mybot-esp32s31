@@ -540,6 +540,8 @@ static void process_rtm_event(const char *rtm_uid, rtm_event_type_e event_type,
 static void process_rtm_data(const char *rtm_uid, const void *data, size_t len,
                              rtm_message_type_e message_type, const char *custom_type,
                              uint32_t generation) {
+    if (message_type != RTM_MESSAGE_TYPE_STRING && message_type != RTM_MESSAGE_TYPE_BINARY)
+        return;
     if (!s_rtc.rtm_login_requested) {
         AOSL_LOG_DBG(
             "[RTM] data ignored: login was not requested (from=%s, message_type=%s, type=%s, "
@@ -636,8 +638,8 @@ static void process_rtm_subscribe_data(const char *channel, const char *rtm_uid,
         AOSL_LOG_WRN("[RTM] channel data ignored: stale generation=%u", generation);
         return;
     }
-    if (message_type != RTM_MESSAGE_TYPE_STRING) {
-        AOSL_LOG_DBG("[RTM] channel data ignored: expected string payload (channel=%s, type=%s)",
+    if (message_type != RTM_MESSAGE_TYPE_STRING && message_type != RTM_MESSAGE_TYPE_BINARY) {
+        AOSL_LOG_DBG("[RTM] channel data ignored: unsupported payload type (channel=%s, type=%s)",
                      channel, rtm_message_type_name(message_type));
         return;
     }

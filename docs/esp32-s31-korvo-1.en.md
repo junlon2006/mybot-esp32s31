@@ -34,7 +34,7 @@ ffmpeg converts tracked Ogg prompts to 16 kHz mono S16LE in the build directory.
 | VOL+/VOL- | Change and save volume |
 | First boot without Wi-Fi | Enter web provisioning with display/prompt guidance |
 
-After Wi-Fi and pairing, open Media translation from the home screen. Use the language and start/stop controls; empty screen taps have no action. Face-to-face and meeting modes provide settings previews; captions, full text, history and brightness are marked as demos. GUI callbacks enqueue copied commands and perform no blocking HTTPS/RTC work. Volume dragging commits only on valid release. Read errors, stale SDK epochs and invalid states discard gestures. See [the scene UI](PLATFORM_UI.md).
+After Wi-Fi and pairing, open Media translation from the home screen. Use the language and start/stop controls; empty screen taps have no action. Face-to-face and meeting modes provide settings previews; brightness remains a demo. Media captions, scrollable full text and session history receive original/translated RTM text from the current session. GUI callbacks enqueue copied commands and perform no blocking HTTPS/RTC work. Volume dragging commits only on valid release. Read errors, stale SDK epochs and invalid states discard gestures. See [the scene UI](PLATFORM_UI.md).
 
 The user confirmed normal physical-board screen output and basic bidirectional voice. The new scene UI, parameter controls and local pause/resume await hardware acceptance, including retained PLAY/SET behavior. See [validation](s31-validation.md).
 

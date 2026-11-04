@@ -24,7 +24,7 @@ ESP32-S31-Korvo-1 V1.1。媒体翻译将板载麦克风音频送往云端，并�
 - 通过 `esp-tls`、系统 CA bundle、SNI 与 hostname 校验实现 HTTPS。
 - 16 kHz 单声道 signed-16 PCM 采集与播放；随附 RTSA 固定使用 60 ms 音频包，其他包长需要
   匹配的 RTSA 构建。
-- Agora RTSA 麦克风/参考音频上行、Cloud AEC、AI QoS、RTM 频道订阅，并订阅响应指定的译音发布者。
+- Agora RTSA 麦克风/参考音频上行、Cloud AEC、可选 AI QoS（默认关闭）、RTM 频道订阅，并订阅响应指定的译音发布者。
 - 单一支持的板型使用共享有界 PCM 播放缓冲和独立 TDM writer。
 - ES8389 使用四个 16-bit Philips TDM 时隙；采集/播放独立挂载，并共享引用计数的 codec/I2S
   资源。
@@ -55,7 +55,7 @@ ESP32-S31-Korvo-1 V1.1。媒体翻译将板载麦克风音频送往云端，并�
 test "$(idf.py --preview --version)" = "ESP-IDF v6.1"
 ```
 
-使用独立构建目录和 sdkconfig 构建板型：
+所有本地编译固定使用 `build/korvo-s31`，生成配置固定为 `build/korvo-s31/sdkconfig`：
 
 ```sh
 idf.py --preview -B build/korvo-s31 \
@@ -64,19 +64,8 @@ idf.py --preview -B build/korvo-s31 \
   -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;ci/ptime60.defaults" build
 ```
 
-使用工程 builder 构建中英文固件：
-
-```sh
-python3 scripts/build_all.py --board esp32-s31-korvo-1 --language both
-```
-
-脚本将中间构建放在 `build/`，将合并镜像放在 `releases/`；固定使用随附 RTSA 的 60 ms
-音频包，并校验 target 配置、RISC-V 链接来源、RTSA 成员、本地 AOSL 所有权、flash segment
-和交付元数据。可使用 `--dry-run` 检查命令，`--no-clean` 仅用于增量构建。
-
-构建与输出根目录必须专用、互不嵌套，路径不得包含 `..` 或符号链接分量。常规运行会清理
-由脚本管理的目录；已有非空目录若没有匹配的 `.mybot-generated-root.json` 标记会被拒绝。
-安全清理要求 Python 3.11 或更高版本。直接烧录命令和板级硬件信息见
+CI 在独立 job 中构建语言变体。[交付文档](docs/RELEASING.zh-CN.md)说明打包 builder 和交付校验；
+本地开发使用上面的直接构建命令。直接烧录命令和板级硬件信息见
 [板卡说明](docs/esp32-s31-korvo-1.zh-CN.md)。
 
 固定版本 RTSA 头文件和库随工程提供于 `components/mybot_stack/agora_rtc`，无需下载或
@@ -90,10 +79,11 @@ NVS 中没有 Wi-Fi 凭据时，设备创建名为 `mybot-xxxx` 的配置 AP，�
 
 进入媒体翻译，选择输入/目标语言后使用开始/停止控件；暂停保留云会话，空白区域轻点不执行
 操作。PLAY 短按开始/停止翻译、取消待启动会话或重试清理。SET 短按请求配对，SET 长按
-3 秒请求配网，VOL+/VOL- 调整并持久化音量到 NVS。字幕、全文、历史和亮度均标为演示，
+3 秒请求配网，VOL+/VOL- 调整并持久化音量到 NVS。字幕、可滚动全文和本次历史接收实时
+RTM 原文/译文；亮度仍为演示，
 详见[翻译界面](docs/PLATFORM_UI.zh-CN.md)。
 
-使用 `idf.py --preview -B <build-dir> menuconfig` 的 `mybot` 菜单选择产品语言、
+使用 `idf.py --preview -B build/korvo-s31 menuconfig` 的 `mybot` 菜单选择产品语言、
 初始翻译语言、Cloud AEC 和 AI QoS。产品语言决定界面文字和提示音；两个构建均使用
 `https://mybot.sh3t.agoralab.co/api`。运行时保存的语言选择优先于初始翻译语言。
 
@@ -105,7 +95,7 @@ NVS 中没有 Wi-Fi 凭据时，设备创建名为 `mybot-xxxx` 的配置 AP，�
 ## 验证
 
 构建覆盖、已记录的真机结果和未支持能力统一维护在[验证记录](docs/s31-validation.md)。
-本地 CI 等价检查构建并合并中英文固件，验证链接和交付元数据；记录分别列出本地构建、
+本地开发构建中文固件；CI 覆盖中英文并验证链接和交付元数据。记录分别列出本地构建、
 远端 CI 和真机结果。CI 构建和宿主测试不能证明音质、屏幕行为、上电时序、
 Wi-Fi 恢复或长稳表现。
 
