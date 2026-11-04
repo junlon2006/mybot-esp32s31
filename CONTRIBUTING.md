@@ -10,7 +10,7 @@ Application startup and MyBot lifecycle belong in `main/`; board hardware, drive
 
 The MyBot SDK is a project-maintained `v2vt/listen` fork. Preserve its Cloud AEC MIC/reference PCM contract and 60 ms cadence. Keep AOSL, esp_codec_dev, LVGL, esp_lvgl_port and the pinned RTSA header/library unchanged, except for AOSL's component CMake wrapper and `s31_port/` adapter. The `mybot_sdk`, `aosl` and `agora_rtc` runtime components live directly under `components/mybot_stack/`. The legacy-named AOSL `esp32-s3` HAL is portable code and remains part of the immutable source input.
 
-Never commit credentials, device identifiers, Wi-Fi passwords, original RTSA archives, generated configurations or firmware. Add SPDX headers to maintained C/C++ files and format changed files with `.clang-format` using clang-format 18, matching CI (`clang-format-18` on Ubuntu). Use the same version for generated LVGL sources. Update user documentation, `CHANGELOG.md`, source provenance and license notices when applicable.
+Never commit credentials, device identifiers, Wi-Fi passwords, original RTSA archives, generated configurations or firmware. Add SPDX headers to maintained C/C++ files and format changed files with `.clang-format` using exactly clang-format 18.1.8, matching CI. Install it with `python -m pip install clang-format==18.1.8` and confirm `clang-format --version`; distro packages named `clang-format-18` can contain a different patch release. Use the same version for generated LVGL sources. Update user documentation, `CHANGELOG.md`, source provenance and license notices when applicable.
 
 ## Validation
 
