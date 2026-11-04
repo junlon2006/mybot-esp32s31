@@ -17,7 +17,7 @@ trap 'rm -r -- "$test_build_dir"' EXIT HUP INT TERM
     -I"$repo_root/components/mybot_stack/mybot_sdk/mybot/include" \
     "$test_dir/test_keys.cc" "$test_build_dir/keys.o" -o "$test_build_dir/test_keys"
 for scenario in mutex adc_new partial_adc_new channel calibrate task cleanup_retry behavior ordering \
-    touch touch_stale touch_ordering; do
+    touch touch_stale touch_ordering ui_controls ui_commands late_cancel; do
     "$test_build_dir/test_keys" "$scenario"
 done
 "${CC:-cc}" -std=c11 -Wall -Wextra -Werror ${TEST_SANITIZE_FLAGS:-} \

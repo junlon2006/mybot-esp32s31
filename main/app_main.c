@@ -95,8 +95,7 @@ static int init_network_stack(void) {
 }
 
 static void on_time_sync(struct timeval *tv) {
-    (void)tv;
-    ESP_LOGI(TAG, "system time synchronized via SNTP");
+    ESP_LOGI(TAG, "system time synchronized via SNTP epoch=%" PRId64, (int64_t)tv->tv_sec);
 }
 
 static void start_sntp_on_got_ip(void *arg, esp_event_base_t event_base, int32_t event_id,
@@ -115,7 +114,8 @@ static void start_sntp_on_got_ip(void *arg, esp_event_base_t event_base, int32_t
 }
 
 static int init_time_sync(void) {
-    esp_sntp_config_t config = ESP_NETIF_SNTP_DEFAULT_CONFIG("pool.ntp.org");
+    esp_sntp_config_t config = ESP_NETIF_SNTP_DEFAULT_CONFIG_MULTIPLE(
+        3, ESP_SNTP_SERVER_LIST("ntp.aliyun.com", "time.cloudflare.com", "pool.ntp.org"));
     config.start = false;
     config.wait_for_sync = false;
     config.sync_cb = on_time_sync;
@@ -136,6 +136,8 @@ static int init_time_sync(void) {
         return -1;
     }
     s_sntp_initialized = true;
+    ESP_LOGI(TAG, "event=time_sync source=sntp state=configured servers=%u",
+             (unsigned int)config.num_of_servers);
     return 0;
 }
 
@@ -189,6 +191,10 @@ void app_main(void) {
     snprintf(config.server_base, sizeof(config.server_base), "%s", CONFIG_MYBOT_SERVER_BASE);
     snprintf(config.firmware_ver, sizeof(config.firmware_ver), "%s", app_description->version);
     snprintf(config.hw_model, sizeof(config.hw_model), "%s", board->hw_model);
+    snprintf(config.source_language, sizeof(config.source_language), "%s",
+             CONFIG_MYBOT_SOURCE_LANGUAGE);
+    snprintf(config.target_language, sizeof(config.target_language), "%s",
+             CONFIG_MYBOT_TARGET_LANGUAGE);
 
     (void)init_time_sync();
     for (;;) {

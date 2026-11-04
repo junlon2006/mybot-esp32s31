@@ -15,20 +15,20 @@ extern "C" {
 typedef struct {
     mybot_lcd_t lcd;
     bool active;
-    uint32_t indicators;
+    char source_language[33];
+    char target_language[33];
+    char error_code[64];
+    int volume;
+    bool media_ready;
+    bool paused;
 } mybot_presenter_t;
 
 int mybot_presenter_init(mybot_presenter_t *presenter);
 void mybot_presenter_deinit(mybot_presenter_t *presenter);
 void mybot_presenter_show_screen(mybot_presenter_t *presenter, mybot_lcd_screen_t screen);
 void mybot_presenter_show_pair_code(mybot_presenter_t *presenter, const char *code);
-/** Set the voice-print registration indicator for the active conversation. */
-void mybot_presenter_set_vp_registered(mybot_presenter_t *presenter, bool registered);
-/** Update one mutually exclusive server-state indicator. */
-void mybot_presenter_update_server_indicator(mybot_presenter_t *presenter,
-                                             mybot_lcd_indicator_t indicator, bool active);
-/** Clear all server-state indicators. */
-void mybot_presenter_clear_server_indicators(mybot_presenter_t *presenter);
+void mybot_presenter_set_translation(mybot_presenter_t *presenter, const char *source,
+                                     const char *target, const char *error_code, int volume);
 void mybot_presenter_render_state(mybot_presenter_t *presenter,
                                   const mybot_state_model_t *state_model);
 

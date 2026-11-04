@@ -42,6 +42,14 @@ int mybot_http_client_get_ex(const char *url, const char *extra_headers,
 int mybot_http_client_post_ex(const char *url, const char *content_type, const char *body,
                               const char *extra_headers, mybot_http_client_response_t *resp);
 
+/** HTTP POST with an explicit positive total timeout in milliseconds.
+ *  One shared deadline covers connection, all sends and the complete response;
+ *  progress does not renew the budget. Other semantics match post_ex(), whose
+ *  default timeout remains 5000 ms. */
+int mybot_http_client_post_timeout_ex(const char *url, const char *content_type, const char *body,
+                                      const char *extra_headers, int timeout_ms,
+                                      mybot_http_client_response_t *resp);
+
 /**
  * @brief Free resources allocated in a response.
  */

@@ -10,6 +10,7 @@
 #include <limits.h>
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
 
 static bool url_unreserved(unsigned char c) {
     return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' ||
@@ -62,7 +63,11 @@ static int build_authorization_header(const char *scheme, const char *credential
 
 /* Own only the temporary header; URL/body are borrowed and raw belongs to the caller. */
 static int post_device_json(const char *url, const char *device_token, const char *body,
-                            mybot_http_client_response_t *raw) {
+                            int timeout_ms, mybot_http_client_response_t *raw,
+                            bool *request_attempted) {
+    if (request_attempted) {
+        *request_attempted = false;
+    }
     size_t header_size = MYBOT_DEVICE_CLIENT_MAX_TOKEN + 32U;
     char *headers = (char *)aosl_hal_malloc(header_size);
     if (!headers) {
@@ -70,7 +75,13 @@ static int post_device_json(const char *url, const char *device_token, const cha
     }
     int ret = build_authorization_header("Device ", device_token, headers, header_size);
     if (ret == 0) {
-        ret = mybot_http_client_post_ex(url, "application/json", body, headers, raw);
+        if (request_attempted) {
+            *request_attempted = true;
+        }
+        ret = timeout_ms > 0
+                  ? mybot_http_client_post_timeout_ex(url, "application/json", body, headers,
+                                                      timeout_ms, raw)
+                  : mybot_http_client_post_ex(url, "application/json", body, headers, raw);
     }
     aosl_hal_free(headers);
     return ret;
@@ -91,33 +102,6 @@ static int copy_optional_json_string(const mybot_json_t *object, const char *nam
     }
     memcpy(destination, value, strlen(value) + 1);
     return 0;
-}
-
-static int copy_json_account(const mybot_json_t *object, const char *name, char *destination,
-                             size_t destination_size, bool required) {
-    mybot_json_t *item = mybot_json_get_object_item(object, name);
-    if (!item) {
-        return required ? -1 : 0;
-    }
-    const char *string_value = mybot_json_get_string(item);
-    if (string_value) {
-        size_t len = strlen(string_value);
-        if (!destination || destination_size == 0 || (required && len == 0) ||
-            len >= destination_size) {
-            return -1;
-        }
-        memcpy(destination, string_value, len + 1);
-        return 0;
-    }
-
-    int64_t integer_value;
-    if (destination && destination_size > 0 && mybot_json_get_integer(item, &integer_value)) {
-        int written = snprintf(destination, destination_size, "%lld", (long long)integer_value);
-        if (written > 0 && (size_t)written < destination_size) {
-            return 0;
-        }
-    }
-    return -1;
 }
 
 static int copy_required_json_string(const mybot_json_t *object, const char *name,
@@ -164,10 +148,12 @@ static char *build_pair_code_body(const char *device_id, const char *firmware_ve
     return body;
 }
 
-static char *build_conversation_start_body(void) {
+static char *build_conversation_start_body(const char *source_language,
+                                           const char *target_language) {
     mybot_json_t *root = mybot_json_create_object();
     mybot_json_t *audio = NULL;
     mybot_json_t *features = NULL;
+    mybot_json_t *translation = NULL;
     char *body = NULL;
 
     if (!root || mybot_json_add_string(root, "trigger", "button") < 0) {
@@ -210,9 +196,19 @@ static char *build_conversation_start_body(void) {
     }
     features = NULL;
 
+    translation = mybot_json_create_object();
+    if (!translation || mybot_json_add_string(translation, "mode", "listen") < 0 ||
+        mybot_json_add_string(translation, "remote_language", source_language) < 0 ||
+        mybot_json_add_string(translation, "local_language", target_language) < 0 ||
+        mybot_json_add_item(root, "translation", translation) < 0) {
+        goto done;
+    }
+    translation = NULL;
+
     body = mybot_json_print_unformatted(root);
 
 done:
+    mybot_json_delete(translation);
     mybot_json_delete(features);
     mybot_json_delete(audio);
     mybot_json_delete(root);
@@ -232,58 +228,164 @@ static char *build_stop_conversation_body(const char *conversation_id, const cha
     return body;
 }
 
-static char *build_rtc_token_body(const char *channel, const char *local_uid) {
-    mybot_json_t *root = mybot_json_create_object();
-    if (!root || mybot_json_add_string(root, "channel", channel) < 0 ||
-        mybot_json_add_string(root, "local_uid", local_uid) < 0) {
-        mybot_json_delete(root);
-        return NULL;
-    }
-
-    char *body = mybot_json_print_unformatted(root);
-    mybot_json_delete(root);
-    return body;
+static bool json_string_is(const mybot_json_t *object, const char *name, const char *expected) {
+    const char *value = mybot_json_get_string(mybot_json_get_object_item(object, name));
+    return value && strcmp(value, expected) == 0;
 }
 
-/* ----------------------------------------------------------
- * Internal: extract nested RTC block from conversation start response
- * ---------------------------------------------------------- */
-static int parse_rtc_block(mybot_json_t *root, mybot_device_conversation_t *resp) {
-    mybot_json_t *rtc = mybot_json_get_object_item(root, "rtc");
-    if (!rtc) {
+static bool language_is_valid(const char *language) {
+    if (!language || !language[0] || strlen(language) > 32) {
+        return false;
+    }
+    for (const unsigned char *p = (const unsigned char *)language; *p; p++) {
+        if (!((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') || (*p >= '0' && *p <= '9') ||
+              *p == '-')) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool account_is_valid(const char *account) {
+    if (!account || !account[0]) {
+        return false;
+    }
+    for (const unsigned char *p = (const unsigned char *)account; *p; p++) {
+        if (*p <= ' ' || *p >= 127) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static int decimal_digits(const char *text, size_t count) {
+    int value = 0;
+    for (size_t i = 0; i < count; i++) {
+        if (text[i] < '0' || text[i] > '9') {
+            return -1;
+        }
+        value = value * 10 + text[i] - '0';
+    }
+    return value;
+}
+
+/* Parse the service's UTC ISO 8601 timestamps without depending on local TZ or timegm(). */
+static int parse_utc_expiry(const char *text, int64_t *epoch) {
+    static const int month_days[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+    if (!text || strlen(text) < 20 || text[4] != '-' || text[7] != '-' || text[10] != 'T' ||
+        text[13] != ':' || text[16] != ':') {
         return -1;
     }
+    int year = decimal_digits(text, 4), month = decimal_digits(text + 5, 2);
+    int day = decimal_digits(text + 8, 2), hour = decimal_digits(text + 11, 2);
+    int minute = decimal_digits(text + 14, 2), second = decimal_digits(text + 17, 2);
+    bool leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+    if (year < 1970 || month < 1 || month > 12 || day < 1 ||
+        day > month_days[month - 1] + (month == 2 && leap ? 1 : 0) || hour < 0 || hour > 23 ||
+        minute < 0 || minute > 59 || second < 0 || second > 59) {
+        return -1;
+    }
+    const char *suffix = text + 19;
+    if (*suffix == '.') {
+        suffix++;
+        const char *fraction = suffix;
+        while (*suffix >= '0' && *suffix <= '9') {
+            suffix++;
+        }
+        if (suffix == fraction) {
+            return -1;
+        }
+    }
+    if (strcmp(suffix, "Z") != 0 && strcmp(suffix, "+00:00") != 0) {
+        return -1;
+    }
+    int64_t days = 0;
+    for (int y = 1970; y < year; y++) {
+        days += y % 4 == 0 && (y % 100 != 0 || y % 400 == 0) ? 366 : 365;
+    }
+    for (int m = 1; m < month; m++) {
+        days += month_days[m - 1] + (m == 2 && leap ? 1 : 0);
+    }
+    *epoch = ((days + day - 1) * 24 + hour) * 3600 + minute * 60 + second;
+    return 0;
+}
 
-    /* All identity fields are required: without the app id the RTC SDK cannot
-     * be initialized, and without the agent account RTM voiceprint events
-     * cannot be correlated with this conversation.  Reject the response here
-     * instead of allowing a partially initialized session downstream. */
-    if (copy_required_json_string(rtc, "app_id", resp->rtc_app_id, sizeof(resp->rtc_app_id)) < 0 ||
+static void set_start_error(mybot_device_conversation_t *resp, const char *code) {
+    snprintf(resp->error_code, sizeof(resp->error_code), "%s", code);
+}
+
+static int reject_translation_route(mybot_device_conversation_t *resp, const char *code,
+                                    const char *reason) {
+    set_start_error(resp, code);
+    AOSL_LOG_ERR("translation route rejected: code=%s reason=%s", code, reason);
+    return -1;
+}
+
+static int parse_translation_route(const mybot_json_t *data, const char *source_language,
+                                   const char *target_language, mybot_device_conversation_t *resp) {
+    mybot_json_t *session = mybot_json_get_object_item(data, "translation_session");
+    mybot_json_t *routes = mybot_json_get_object_item(session, "routes");
+    if (!json_string_is(data, "voice_agent_type", "v2vt") ||
+        !json_string_is(data, "data_channel", "rtm") ||
+        !json_string_is(data, "status", "started") || !json_string_is(session, "mode", "listen") ||
+        !routes || routes->type != MYBOT_JSON_ARRAY || !routes->child || routes->child->next) {
+        return reject_translation_route(resp, "INVALID_TRANSLATION_ROUTE", "session_contract");
+    }
+    mybot_json_t *route = routes->child;
+    mybot_json_t *rtc = mybot_json_get_object_item(route, "rtc");
+    if (route->type != MYBOT_JSON_OBJECT || !json_string_is(route, "direction", "listen") ||
+        !json_string_is(route, "input_role", "remote_original") ||
+        !json_string_is(route, "output_role", "local_translation") ||
+        copy_required_json_string(rtc, "app_id", resp->rtc_app_id, sizeof(resp->rtc_app_id)) < 0 ||
         copy_required_json_string(rtc, "channel", resp->rtc_channel, sizeof(resp->rtc_channel)) <
-            0) {
-        return -1;
+            0 ||
+        copy_required_json_string(rtc, "uid", resp->rtc_uid, sizeof(resp->rtc_uid)) < 0 ||
+        copy_required_json_string(rtc, "token", resp->rtc_token, sizeof(resp->rtc_token)) < 0 ||
+        copy_required_json_string(route, "agent_uid", resp->rtc_agent_uid,
+                                  sizeof(resp->rtc_agent_uid)) < 0 ||
+        copy_required_json_string(route, "source_language", resp->source_language,
+                                  sizeof(resp->source_language)) < 0 ||
+        copy_required_json_string(route, "target_language", resp->target_language,
+                                  sizeof(resp->target_language)) < 0 ||
+        !account_is_valid(resp->rtc_app_id) ||
+        !mybot_http_header_value_is_safe(resp->rtc_channel, false) ||
+        !mybot_http_header_value_is_safe(resp->rtc_token, false) ||
+        !account_is_valid(resp->rtc_uid) || !account_is_valid(resp->rtc_agent_uid) ||
+        strcmp(resp->rtc_uid, resp->rtc_agent_uid) == 0 ||
+        strcmp(resp->source_language, source_language) != 0 ||
+        strcmp(resp->target_language, target_language) != 0) {
+        return reject_translation_route(resp, "INVALID_TRANSLATION_ROUTE",
+                                        "roles_credentials_or_languages");
     }
-    if (copy_optional_json_string(rtc, "token", resp->rtc_token, sizeof(resp->rtc_token)) < 0) {
-        return -1;
+    mybot_json_t *tts = mybot_json_get_object_item(route, "tts_enabled");
+    if (tts && tts->type == MYBOT_JSON_FALSE) {
+        return reject_translation_route(resp, "TRANSLATION_TTS_DISABLED", "tts_disabled");
     }
-    if (copy_json_account(rtc, "uid", resp->rtc_uid, sizeof(resp->rtc_uid), true) < 0) {
-        return -1;
+    if (!tts || tts->type != MYBOT_JSON_TRUE ||
+        copy_required_json_string(route, "audio_publisher_uid", resp->audio_publisher_uid,
+                                  sizeof(resp->audio_publisher_uid)) < 0 ||
+        !account_is_valid(resp->audio_publisher_uid) ||
+        strcmp(resp->audio_publisher_uid, resp->rtc_agent_uid) != 0) {
+        return reject_translation_route(resp, "INVALID_TRANSLATION_ROUTE", "audio_publisher");
     }
-
-    /* agent_uid is returned beside the nested rtc block by the device service
-     * and is required for RTM peer correlation. */
-    if (copy_json_account(root, "agent_uid", resp->rtc_agent_uid, sizeof(resp->rtc_agent_uid),
-                          true) < 0) {
-        return -1;
+    int64_t parent_expiry;
+    const char *route_expiry = mybot_json_get_string(mybot_json_get_object_item(rtc, "expires_at"));
+    const char *session_expiry =
+        mybot_json_get_string(mybot_json_get_object_item(data, "expires_at"));
+    if (parse_utc_expiry(route_expiry, &resp->expires_at) < 0 ||
+        parse_utc_expiry(session_expiry, &parent_expiry) < 0) {
+        return reject_translation_route(resp, "INVALID_TRANSLATION_EXPIRY", "utc_timestamp");
     }
-
-    /* Channel and UID are required to join RTC — without them the response is
-     * unusable. Token may legitimately be absent (no-auth channel). */
-    if (resp->rtc_channel[0] == '\0' || resp->rtc_uid[0] == '\0' || resp->rtc_app_id[0] == '\0' ||
-        resp->rtc_agent_uid[0] == '\0') {
-        return -1;
+    if (parent_expiry != resp->expires_at) {
+        return reject_translation_route(resp, "INVALID_TRANSLATION_EXPIRY", "expiry_mismatch");
     }
-
+    time_t now = time(NULL);
+    if (now < 1577836800) {
+        return reject_translation_route(resp, "TIME_NOT_SYNCED", "local_utc_unavailable");
+    }
+    if (resp->expires_at <= (int64_t)now) {
+        return reject_translation_route(resp, "TRANSLATION_EXPIRED", "token_expired");
+    }
     return 0;
 }
 
@@ -433,139 +535,101 @@ done:
 }
 
 int mybot_device_client_start_conversation(const char *base_url, const char *device_id,
-                                           const char *device_token, const char *body_params,
+                                           const char *device_token, const char *source_language,
+                                           const char *target_language,
                                            mybot_device_conversation_t *resp) {
-    if (!base_url || !device_id || !device_token || !resp) {
+    if (!resp) {
         return -1;
     }
     memset(resp, 0, sizeof(*resp));
-
-    char url[MYBOT_DEVICE_CLIENT_MAX_URL];
-    if (build_device_url(base_url, device_id, "/conversations/start", url, sizeof(url)) < 0) {
+    if (!base_url || !device_id || !device_token || !language_is_valid(source_language) ||
+        !language_is_valid(target_language) || strcmp(source_language, target_language) == 0) {
+        set_start_error(resp, "INVALID_TRANSLATION_LANGUAGES");
         return -1;
     }
-
-    /* Build body: use caller-provided or construct from config macros */
-    char *generated_body = NULL;
-    const char *body = body_params;
-
-    if (!body) {
-        generated_body = build_conversation_start_body();
-        body = generated_body;
-        if (!generated_body) {
-            AOSL_LOG_ERR("failed to build request body");
-            return -1;
-        }
+    char url[MYBOT_DEVICE_CLIENT_MAX_URL];
+    if (build_device_url(base_url, device_id, "/conversations/start", url, sizeof(url)) < 0 ||
+        !mybot_http_header_value_is_safe(device_token, false)) {
+        set_start_error(resp, "INVALID_DEVICE_REQUEST");
+        return -1;
     }
-
-    AOSL_LOG_NTC("POST %s request body length=%zu", url, strlen(body));
-
-    mybot_http_client_response_t raw;
-    memset(&raw, 0, sizeof(raw));
+    /* Do not create a cloud session until its credential expiry can be checked locally. */
+    if (time(NULL) < 1577836800) {
+        set_start_error(resp, "TIME_NOT_SYNCED");
+        AOSL_LOG_ERR("translation start deferred: local UTC clock not synchronized");
+        return -1;
+    }
+    char *body = build_conversation_start_body(source_language, target_language);
+    if (!body) {
+        set_start_error(resp, "OUT_OF_MEMORY");
+        return -1;
+    }
+    mybot_http_client_response_t raw = {0};
     mybot_json_t *root = NULL;
     int result = -1;
+    bool request_attempted = false;
+    /* Provisioning the translation agent can outlast the normal 5 s HTTP budget. */
+    int ret = post_device_json(url, device_token, body, 30000, &raw, &request_attempted);
+    mybot_json_free_string(body);
+    root = raw.body ? mybot_json_parse(raw.body) : NULL;
+    mybot_json_t *data = mybot_json_get_object_item(root, "data");
+    mybot_json_t *error = mybot_json_get_object_item(root, "error");
+    mybot_json_t *details = mybot_json_get_object_item(error, "details");
+    mybot_json_t *cleanup = mybot_json_get_object_item(details, "cleanup_required");
 
-    int ret = post_device_json(url, device_token, body, &raw);
-    mybot_json_free_string(generated_body);
-    if (ret < 0) {
-        AOSL_LOG_ERR("POST %s failed (http)", url);
-        goto done;
-    }
-
-    AOSL_LOG_NTC("POST %s -> status=%d response body length=%zu", url, raw.status_code,
-                 raw.body_len);
-
-    if (!http_response_ok(&raw)) {
-        int status = raw.status_code;
-        AOSL_LOG_ERR("POST %s -> HTTP error %d", url, raw.status_code);
-        result = status > 0 ? status : -1;
-        goto done;
-    }
-
-    mybot_json_t *data = parse_response_data(&raw, &root);
-    if (!data) {
-        goto done;
-    }
-
+    /* Preserve the parent's identity before any status or media validation. */
     if (copy_required_json_string(data, "conversation_id", resp->conversation_id,
                                   sizeof(resp->conversation_id)) < 0) {
-        AOSL_LOG_ERR("conversation response missing or invalid conversation_id");
-        goto done;
+        (void)copy_required_json_string(details, "conversation_id", resp->conversation_id,
+                                        sizeof(resp->conversation_id));
     }
-
-    /* Parse nested "rtc":{...} block — required to join RTC. */
-    if (parse_rtc_block(data, resp) < 0) {
-        AOSL_LOG_ERR("conversation response missing rtc block");
-        goto done;
-    }
-
-    AOSL_LOG_NTC("conversation: id=%s channel=%s uid=%s agent_uid=%s", resp->conversation_id,
-                 resp->rtc_channel, resp->rtc_uid, resp->rtc_agent_uid);
-    result = 0;
-
-done:
-    mybot_json_delete(root);
-    mybot_http_client_response_free(&raw);
-    return result;
-}
-
-int mybot_device_client_renew_rtc_token(const char *base_url, const char *device_id,
-                                        const char *device_token, const char *channel,
-                                        const char *local_uid, mybot_device_rtc_token_t *resp) {
-    if (!base_url || !device_id || !device_token || !channel || !channel[0] || !local_uid ||
-        !local_uid[0] || !resp) {
-        return -1;
-    }
-    memset(resp, 0, sizeof(*resp));
-
-    char url[MYBOT_DEVICE_CLIENT_MAX_URL];
-    if (build_device_url(base_url, device_id, "/rtc-token", url, sizeof(url)) < 0) {
-        return -1;
-    }
-
-    char *body = build_rtc_token_body(channel, local_uid);
-    if (!body) {
-        return -1;
-    }
-
-    AOSL_LOG_NTC("POST %s", url);
-
-    mybot_http_client_response_t raw;
-    memset(&raw, 0, sizeof(raw));
-    mybot_json_t *root = NULL;
-    int result = -1;
-    int ret = post_device_json(url, device_token, body, &raw);
-    mybot_json_free_string(body);
+    resp->cleanup_required =
+        resp->conversation_id[0] != '\0' || (cleanup && cleanup->type == MYBOT_JSON_TRUE);
+    (void)copy_optional_json_string(error, "code", resp->error_code, sizeof(resp->error_code));
     if (ret < 0) {
-        AOSL_LOG_ERR("POST %s failed (http)", url);
+        bool rejected = raw.status_code >= 400 || (cleanup && cleanup->type == MYBOT_JSON_FALSE);
+        resp->start_unknown = request_attempted && !resp->conversation_id[0] && !rejected;
+        if (!resp->error_code[0]) {
+            set_start_error(resp, !request_attempted    ? "OUT_OF_MEMORY"
+                                  : resp->start_unknown ? "START_RESULT_UNKNOWN"
+                                                        : "CONVERSATION_START_FAILED");
+        }
         goto done;
     }
-
-    AOSL_LOG_NTC("POST %s -> status=%d", url, raw.status_code);
-    if (!http_response_ok(&raw)) {
-        int status = raw.status_code;
-        AOSL_LOG_ERR("POST %s -> HTTP error %d", url, status);
-        result = status > 0 ? status : -1;
+    if (raw.status_code != 201) {
+        /* A definite rejection is known, unless the server explicitly requires
+         * cleanup but failed to supply a usable parent identity. */
+        bool success_without_id = raw.status_code >= 200 && raw.status_code < 300 &&
+                                  !(cleanup && cleanup->type == MYBOT_JSON_FALSE);
+        resp->start_unknown =
+            !resp->conversation_id[0] && (resp->cleanup_required || success_without_id);
+        if (!resp->error_code[0]) {
+            set_start_error(resp, "CONVERSATION_START_REJECTED");
+        }
+        result = raw.status_code >= 400 ? raw.status_code : -1;
         goto done;
     }
-
-    mybot_json_t *data = parse_response_data(&raw, &root);
-    if (!root) {
+    if (!resp->conversation_id[0]) {
+        resp->start_unknown = true;
+        set_start_error(resp, "START_RESULT_UNKNOWN");
         goto done;
     }
-
-    mybot_json_t *rtc = data ? mybot_json_get_object_item(data, "rtc") : NULL;
-    if (!rtc ||
-        copy_required_json_string(rtc, "channel", resp->rtc_channel, sizeof(resp->rtc_channel)) <
-            0 ||
-        copy_required_json_string(rtc, "uid", resp->rtc_uid, sizeof(resp->rtc_uid)) < 0 ||
-        copy_required_json_string(rtc, "token", resp->rtc_token, sizeof(resp->rtc_token)) < 0) {
-        AOSL_LOG_ERR("RTC-token response missing required rtc fields");
+    if (parse_translation_route(data, source_language, target_language, resp) < 0) {
+        if (!resp->error_code[0]) {
+            set_start_error(resp, "INVALID_TRANSLATION_ROUTE");
+        }
         goto done;
     }
+    resp->cleanup_required = false;
     result = 0;
 
 done:
+    if (result != 0) {
+        AOSL_LOG_ERR("translation start failed: transport=%d http=%d code=%s cleanup_required=%d "
+                     "start_unknown=%d response_bytes=%zu",
+                     ret, raw.status_code, resp->error_code, resp->cleanup_required,
+                     resp->start_unknown, raw.body_len);
+    }
     mybot_json_delete(root);
     mybot_http_client_response_free(&raw);
     return result;
@@ -593,18 +657,19 @@ int mybot_device_client_stop_conversation(const char *base_url, const char *devi
     mybot_http_client_response_t raw;
     memset(&raw, 0, sizeof(raw));
 
-    int ret = post_device_json(url, device_token, body, &raw);
+    int ret = post_device_json(url, device_token, body, 0, &raw, NULL);
     mybot_json_free_string(body);
 
     if (ret == 0) {
-        AOSL_LOG_NTC("POST %s -> status=%d response body length=%zu", url, raw.status_code,
-                     raw.body_len);
-        if (!http_response_ok(&raw)) {
-            AOSL_LOG_ERR("POST %s -> HTTP error %d", url, raw.status_code);
-            ret = raw.status_code > 0 ? raw.status_code : -1;
+        if (raw.status_code != 200) {
+            ret = raw.status_code >= 400 ? raw.status_code : -1;
+        } else {
+            mybot_json_t *root = NULL;
+            mybot_json_t *data = parse_response_data(&raw, &root);
+            mybot_json_t *conversation = mybot_json_get_object_item(data, "conversation");
+            ret = json_string_is(conversation, "status", "ended") ? 0 : -1;
+            mybot_json_delete(root);
         }
-    } else {
-        AOSL_LOG_ERR("POST %s failed (http)", url);
     }
 
     mybot_http_client_response_free(&raw);

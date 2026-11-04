@@ -2,7 +2,7 @@
 
 [English](esp32-s31-korvo-1.en.md) · [简体中文](esp32-s31-korvo-1.zh-CN.md)
 
-Board ID: `esp32-s31-korvo-1`. Requires ESP-IDF v6.1 with the S31 preview target and ffmpeg. The approved ESP32-S31 RTSA v1.10.1 build 1366494 payload is bundled. The port includes Wi-Fi provisioning, HTTPS pairing, RTC/RTM, ES8389 voice, PCM prompts, ADC keys and RGB/GT1151 LVGL. Video is unavailable.
+Board ID: `esp32-s31-korvo-1`. Requires ESP-IDF v6.1 with the S31 preview target and ffmpeg. The approved ESP32-S31 RTSA v1.10.1 build 1366494 payload is bundled. The application provides standalone board MIC → cloud `v2vt/listen` translation → board speaker, with Wi-Fi provisioning, HTTPS pairing, RTC/RTM, PCM prompts, ADC keys and RGB/GT1151 LVGL. The development API is `https://mybot.sh3t.agoralab.co/api`. Video is unavailable. See [translation and flashing](LISTEN_TRANSLATION.zh-CN.md).
 
 ## Build and flash
 
@@ -25,16 +25,18 @@ ffmpeg converts tracked Ogg prompts to 16 kHz mono S16LE in the build directory.
 
 | Action | Result |
 | --- | --- |
-| Tap the screen | Start a conversation; tap again to stop |
-| Short PLAY press | Start/stop through the same conversation path |
+| Media translation controls | Select languages, start, cancel setup, stop or retry cleanup |
+| Pause/resume | Pause local media while retaining the RTC parent session |
+| Volume drag | Commit once on release and display the actual output volume |
+| Short PLAY press | Start/stop translation, cancel a pending start or retry cleanup |
 | Short SET press | Request pairing again |
 | Hold SET for 3 seconds | Stop MyBot, then enter Wi-Fi provisioning |
 | VOL+/VOL- | Change and save volume |
 | First boot without Wi-Fi | Enter web provisioning with display/prompt guidance |
 
-Wait for usable Wi-Fi, pairing and the ready screen before starting. Touch uses the existing public key event path; display callbacks perform no blocking HTTPS/RTC work. Touch before readiness is ignored. Holding produces one event on release; dragging is not distinguished in this version. A finger already down at initialization/read recovery must be released and pressed again. Dispatch logs use `event=touch action=conversation_start` / `conversation_stop`.
+After Wi-Fi and pairing, open Media translation from the home screen. Use the language and start/stop controls; empty screen taps have no action. Face-to-face and meeting modes provide settings previews; captions, full text, history and brightness are marked as demos. GUI callbacks enqueue copied commands and perform no blocking HTTPS/RTC work. Volume dragging commits only on valid release. Read errors, stale SDK epochs and invalid states discard gestures. See [the scene UI](PLATFORM_UI.md).
 
-The user confirmed normal physical-board screen output and basic bidirectional voice. The new touch start/stop behavior awaits hardware acceptance: check one toggle per tap, a second tap to stop, and retained PLAY/SET behavior. See [validation](s31-validation.md).
+The user confirmed normal physical-board screen output and basic bidirectional voice. The new scene UI, parameter controls and local pause/resume await hardware acceptance, including retained PLAY/SET behavior. See [validation](s31-validation.md).
 
 ## Hardware and audio
 
@@ -42,11 +44,11 @@ The board has an ESP32-S31-WROOM-3, 16 MB Flash and 16 MB PSRAM. ES8389 and GT11
 
 Audio follows the official guide's TDM requirement: 16 kHz, four 16-bit slots, 64 BCLK/frame, BCLK3/WS4/TX5/RX6, PA7. The codec takes BCLK with `use_mclk=false` and `no_dac_ref=false`; the CPU outputs no MCLK. The adapter checks STDM registers, maps playback slots and selects a microphone slot. The public SDK contract remains 16 kHz mono signed-16 PCM and 60 ms frames. Nominal BCLK/WS are 1.024 MHz/16 kHz; these are configured values, not instrument measurements.
 
-The pinned factory BSP uses standard stereo I2S; this port deliberately follows the official TDM requirement. Basic voice interoperability does not establish detailed microphone/reference slot mapping, acoustic quality or endurance. Local AEC, beamforming, wake word, video, SD/USB application paths and low-power work remain outside this port. The current update covers touch, CI/delivery and repository cleanup only.
+The pinned factory BSP uses standard stereo I2S; this port follows the official TDM requirement. Basic voice interoperability does not establish detailed microphone/reference slot mapping, acoustic quality, translation behavior or endurance. Local AEC, beamforming, wake word, video, SD/USB application paths and low-power work remain outside this port. Media translation retains the board microphone/speaker path; route subscription, Cloud AEC, language controls, local pause and recovery need their own hardware acceptance.
 
 ## Conversation-start diagnostics
 
-`POST .../conversations/start` prints complete request/response bodies, including HTTP errors. Filter `event=http_body` by connection `id` and `direction`. Begin/end records show size and completeness; data records carry ordered offsets and bounded UTF-8 chunks. NUL-containing bodies use hex. Remove authentication and device data before sharing logs.
+All HTTPS requests print captured request/response bodies, including pairing, binding-status, translation start/stop and HTTP errors. Filter `event=http_body` by connection `id` and `direction`. Each body is emitted in full in one `phase=data` record; empty bodies emit `data=`. Begin/end records retain length and completeness, and begin records include method, redacted path, status, transport-error state and accepted/captured wire-byte counts. Partial or oversized bodies are marked explicitly. Capture is bounded to 2 KiB per request and 32 KiB per response, including headers. NUL-containing bodies use one complete hex record backed by temporary PSRAM; allocation failure marks body output unavailable. Headers are not printed. Remove authentication and device data from bodies before sharing logs. Translation start requires a usable UTC clock and has a shared 30-second HTTP budget; other requests retain 5 seconds. Three SNTP servers provide alternatives; an already verified HTTPS 2xx Date header can initialize an unset clock, with `event=time_sync source=https_date result=ok`. It does not overwrite an initialized clock or change TLS settings.
 
 ## References
 

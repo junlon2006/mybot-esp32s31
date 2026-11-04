@@ -28,8 +28,15 @@ menu "mybot"
 
     config MYBOT_SERVER_BASE
         string
-        default "https://botstation.agora.io/api" if MYBOT_LANGUAGE_EN_US
-        default "https://botstation.shengwang.cn/api"
+        default "https://mybot.sh3t.agoralab.co/api"
+
+    config MYBOT_SOURCE_LANGUAGE
+        string "Initial source language"
+        default "zh-CN"
+
+    config MYBOT_TARGET_LANGUAGE
+        string "Initial translated-output language"
+        default "en-US"
 
     choice MYBOT_AUDIO_PTIME
         prompt "Audio packet duration"
@@ -75,23 +82,6 @@ menu "mybot"
         default n
         help
             Video is intentionally unavailable in the S31 first release.
-
-    config MYBOT_LVGL_UI_LIGHT_THEME
-        bool "Use the LVGL light theme"
-        depends on MYBOT_LVGL_UI
-        default n
-        help
-            Select the light palette at build time. The default is the dark palette.
-
-    config MYBOT_LVGL_UI_ANIMATIONS
-        bool "Animate LVGL conversation status"
-        depends on MYBOT_LVGL_UI
-        default y
-        help
-            Animate small state indicators at up to 5 frames per second while
-            listening, thinking or speaking. These are state animations, not an
-            audio waveform. Overflowing provisioning text can still scroll
-            when this option is disabled.
 
     config MYBOT_DEBUG_RESOURCE_MONITOR_INTERVAL_MS
         int "Resource monitor interval (ms)"

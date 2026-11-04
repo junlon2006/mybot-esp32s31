@@ -11,14 +11,14 @@
 /* Match the SDK's existing wire limits without depending on private headers. */
 #define REQUEST_CAPACITY 2048U
 #define RESPONSE_CAPACITY (32U * 1024U)
-#define LOG_CHUNK_SIZE 256U
 #define TRACE_MEMORY_CAPS (MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)
 
 struct mybot_conversation_http_trace {
     unsigned int id;
+    size_t request_bytes;
+    size_t response_bytes;
     size_t request_size;
     size_t response_size;
-    int selected; /* 0: request line incomplete, 1: selected, -1: other request */
     bool request_overflow;
     bool response_overflow;
     bool response_no_memory;
@@ -34,6 +34,11 @@ typedef struct {
     bool chunked;
     bool valid;
 } http_headers_t;
+
+typedef struct {
+    char method[32];
+    char path[256];
+} http_request_line_t;
 
 static unsigned int s_next_id;
 
@@ -63,29 +68,58 @@ static const char *line_end(const char *data, const char *end) {
     return NULL;
 }
 
-static int select_request(const char *request, size_t size) {
+static http_request_line_t describe_request(const char *request, size_t size) {
+    http_request_line_t line = {"unknown", "unknown"};
     const char *end = line_end(request, request + size);
     if (!end) {
-        return 0;
+        return line;
     }
-    if (end - request < 5 || memcmp(request, "POST ", 5) != 0) {
-        return -1;
+    const char *method_end = memchr(request, ' ', (size_t)(end - request));
+    if (!method_end || method_end == request ||
+        (size_t)(method_end - request) >= sizeof(line.method)) {
+        return line;
     }
-    const char *path = request + 5;
+    for (const char *c = request; c < method_end; ++c) {
+        if (*c < 'A' || *c > 'Z') {
+            return line;
+        }
+    }
+    memcpy(line.method, request, (size_t)(method_end - request));
+    line.method[method_end - request] = '\0';
+    const char *path = method_end + 1;
     const char *path_end = memchr(path, ' ', (size_t)(end - path));
-    if (!path_end) {
-        return -1;
+    if (!path_end || path == path_end || *path != '/') {
+        return line;
     }
     const char *query = memchr(path, '?', (size_t)(path_end - path));
     if (query) {
         path_end = query;
     }
-    static const char suffix[] = "/conversations/start";
-    size_t suffix_size = sizeof(suffix) - 1U;
-    return (size_t)(path_end - path) >= suffix_size &&
-                   memcmp(path_end - suffix_size, suffix, suffix_size) == 0
-               ? 1
-               : -1;
+    size_t output = 0;
+    while (path < path_end && output + 1U < sizeof(line.path)) {
+        static const char devices[] = "/devices/";
+        static const char pair_codes[] = "/devices/pair-codes";
+        static const char replacement[] = "/devices/<device>";
+        if ((size_t)(path_end - path) >= sizeof(devices) - 1U &&
+            memcmp(path, devices, sizeof(devices) - 1U) == 0 &&
+            !((size_t)(path_end - path) == sizeof(pair_codes) - 1U &&
+              memcmp(path, pair_codes, sizeof(pair_codes) - 1U) == 0)) {
+            if (output + sizeof(replacement) > sizeof(line.path)) {
+                break;
+            }
+            memcpy(line.path + output, replacement, sizeof(replacement) - 1U);
+            output += sizeof(replacement) - 1U;
+            path += sizeof(devices) - 1U;
+            while (path < path_end && *path != '/') {
+                ++path;
+            }
+        } else {
+            unsigned char c = (unsigned char)*path++;
+            line.path[output++] = c > ' ' && c < 0x7fU ? (char)c : '_';
+        }
+    }
+    line.path[output] = '\0';
+    return line;
 }
 
 static bool parse_length(const char *value, const char *end, size_t *length) {
@@ -243,43 +277,38 @@ static size_t decode_chunks(char *data, size_t size, bool *complete) {
 }
 
 static void log_body(unsigned int id, const char *direction, const char *body, size_t size,
-                     bool complete, int status, const char *reason) {
+                     bool complete, int status, const char *reason,
+                     const http_request_line_t *request, size_t wire_bytes, size_t captured_bytes,
+                     bool transport_error) {
     bool binary = size > 0 && memchr(body, '\0', size) != NULL;
     ESP_LOGI(TAG,
              "event=http_body id=%u direction=%s phase=begin bytes=%zu complete=%s status=%d "
-             "reason=%s",
-             id, direction, size, complete ? "yes" : "no", status, reason);
-    for (size_t offset = 0; offset < size;) {
-        size_t length = size - offset;
-        if (length > LOG_CHUNK_SIZE) {
-            length = LOG_CHUNK_SIZE;
-            /* Keep valid UTF-8 code points together across log records. */
-            while (!binary && length > 0 &&
-                   ((unsigned char)body[offset + length] & 0xc0U) == 0x80U) {
-                --length;
-            }
-            if (length == 0) {
-                length = LOG_CHUNK_SIZE;
-            }
-        }
-        if (binary) {
+             "reason=%s method=%s path=%s wire_bytes=%zu captured_wire_bytes=%zu "
+             "transport_error=%s",
+             id, direction, size, complete ? "yes" : "no", status, reason, request->method,
+             request->path, wire_bytes, captured_bytes, transport_error ? "yes" : "no");
+    if (binary) {
+        char *encoded = heap_caps_malloc(size * 2U + 1U, TRACE_MEMORY_CAPS);
+        if (encoded) {
             static const char hex[] = "0123456789abcdef";
-            char encoded[LOG_CHUNK_SIZE * 2U + 1U];
-            for (size_t i = 0; i < length; ++i) {
-                unsigned char byte = (unsigned char)body[offset + i];
+            for (size_t i = 0; i < size; ++i) {
+                unsigned char byte = (unsigned char)body[i];
                 encoded[i * 2U] = hex[byte >> 4U];
                 encoded[i * 2U + 1U] = hex[byte & 0xfU];
             }
-            encoded[length * 2U] = '\0';
-            ESP_LOGI(
-                TAG,
-                "event=http_body id=%u direction=%s phase=data offset=%zu encoding=hex data=%s", id,
-                direction, offset, encoded);
+            encoded[size * 2U] = '\0';
+            ESP_LOGI(TAG, "event=http_body id=%u direction=%s phase=data encoding=hex data=%s", id,
+                     direction, encoded);
+            heap_caps_free(encoded);
         } else {
-            ESP_LOGI(TAG, "event=http_body id=%u direction=%s phase=data offset=%zu data=%.*s", id,
-                     direction, offset, (int)length, body + offset);
+            ESP_LOGW(TAG,
+                     "event=http_body id=%u direction=%s phase=data encoding=hex "
+                     "result=unavailable reason=no_memory",
+                     id, direction);
         }
-        offset += length;
+    } else {
+        ESP_LOGI(TAG, "event=http_body id=%u direction=%s phase=data data=%.*s", id, direction,
+                 (int)size, body ? body : "");
     }
     ESP_LOGI(TAG, "event=http_body id=%u direction=%s phase=end bytes=%zu complete=%s", id,
              direction, size, complete ? "yes" : "no");
@@ -297,23 +326,25 @@ mybot_conversation_http_trace_t *mybot_conversation_http_trace_create(void) {
 
 void mybot_conversation_http_trace_send(mybot_conversation_http_trace_t *trace, const void *data,
                                         size_t size) {
-    if (!trace || !data || size == 0 || trace->selected < 0) {
+    if (!trace || !data || size == 0) {
         return;
     }
+    trace->request_bytes += size;
     size_t available = REQUEST_CAPACITY - trace->request_size;
     size_t copied = size < available ? size : available;
     memcpy(trace->request + trace->request_size, data, copied);
     trace->request_size += copied;
     trace->request[trace->request_size] = '\0';
     trace->request_overflow |= copied != size;
-    if (!trace->selected) {
-        trace->selected = select_request(trace->request, trace->request_size);
-    }
 }
 
 void mybot_conversation_http_trace_recv(mybot_conversation_http_trace_t *trace, const void *data,
                                         size_t size) {
-    if (!trace || trace->selected != 1 || !data || size == 0 || trace->response_no_memory) {
+    if (!trace || !data || size == 0) {
+        return;
+    }
+    trace->response_bytes += size;
+    if (trace->response_no_memory) {
         return;
     }
     if (!trace->response) {
@@ -336,19 +367,27 @@ void mybot_conversation_http_trace_finish(mybot_conversation_http_trace_t *trace
     if (!trace) {
         return;
     }
-    if (trace->selected == 1) {
+    {
+        http_request_line_t line = describe_request(trace->request, trace->request_size);
         http_headers_t request = parse_headers(trace->request, trace->request_size, false);
         size_t size = request.valid ? trace->request_size - request.body_offset : 0;
-        if (request.has_length && size > request.content_length) {
+        if (!request.chunked && request.has_length && size > request.content_length) {
             size = request.content_length;
         }
-        bool complete = request.valid && request.has_length && size == request.content_length &&
-                        !trace->request_overflow;
+        bool complete = false;
+        if (request.valid && request.chunked) {
+            size = decode_chunks(trace->request + request.body_offset, size, &complete);
+        } else if (request.valid) {
+            complete = request.has_length ? size == request.content_length : size == 0;
+        }
+        complete &= !trace->request_overflow;
         const char *reason = trace->request_overflow ? "capacity"
-                             : request.valid         ? "sent"
-                                                     : "headers";
+                             : !request.valid        ? "headers"
+                             : complete              ? "sent"
+                             : transport_error       ? "transport_error"
+                                                     : "partial";
         log_body(trace->id, "request", trace->request + request.body_offset, size, complete, 0,
-                 reason);
+                 reason, &line, trace->request_bytes, trace->request_size, transport_error);
 
         http_headers_t response = {0};
         if (trace->response) {
@@ -357,7 +396,12 @@ void mybot_conversation_http_trace_finish(mybot_conversation_http_trace_t *trace
         size = response.valid ? trace->response_size - response.body_offset : 0;
         complete = false;
         char *body = trace->response ? trace->response + response.body_offset : NULL;
-        if (response.valid && response.chunked) {
+        if (response.valid &&
+            (strcmp(line.method, "HEAD") == 0 || response.status == 204 || response.status == 304 ||
+             (response.status >= 100 && response.status < 200))) {
+            size = 0;
+            complete = true;
+        } else if (response.valid && response.chunked) {
             size = decode_chunks(body, size, &complete);
         } else if (response.valid && response.has_length) {
             if (size > response.content_length) {
@@ -368,14 +412,16 @@ void mybot_conversation_http_trace_finish(mybot_conversation_http_trace_t *trace
             complete = eof && !transport_error;
         }
         complete &= !trace->response_overflow && !trace->response_no_memory;
-        reason = trace->response_no_memory  ? "no_memory"
-                 : trace->response_overflow ? "capacity"
-                 : !response.valid          ? "headers"
-                 : complete                 ? "received"
-                 : transport_error          ? "transport_error"
-                 : !eof                     ? "not_finished"
-                                            : "early_eof";
-        log_body(trace->id, "response", body, size, complete, response.status, reason);
+        reason = trace->response_no_memory   ? "no_memory"
+                 : trace->response_overflow  ? "capacity"
+                 : complete                  ? "received"
+                 : transport_error           ? "transport_error"
+                 : trace->response_size == 0 ? "no_response"
+                 : !response.valid           ? "headers"
+                 : !eof                      ? "not_finished"
+                                             : "early_eof";
+        log_body(trace->id, "response", body, size, complete, response.status, reason, &line,
+                 trace->response_bytes, trace->response_size, transport_error);
     }
     heap_caps_free(trace->response);
     heap_caps_free(trace);

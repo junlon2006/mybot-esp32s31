@@ -17,7 +17,7 @@ typedef enum {
 #define ONLINE_SHIFT 3U
 #define ONLINE_MASK ((uintptr_t)0x1U << ONLINE_SHIFT)
 #define DEVICE_SHIFT 4U
-#define DEVICE_MASK ((uintptr_t)0x7U << DEVICE_SHIFT)
+#define DEVICE_MASK ((uintptr_t)0xfU << DEVICE_SHIFT)
 
 static uintptr_t snapshot_phase(uintptr_t snapshot) {
     return (snapshot & PHASE_MASK) >> PHASE_SHIFT;
@@ -84,9 +84,6 @@ static bool set_network(mybot_state_model_t *model, bool online) {
         return false;
     }
     uintptr_t next = with_online(current, online);
-    if (snapshot_device_state(next) == MYBOT_DEVICE_STATE_IN_CONVERSATION) {
-        next = with_device_state(next, MYBOT_DEVICE_STATE_RUNTIME);
-    }
     aosl_atomic_set(&model->snapshot, (intptr_t)next);
     return true;
 }
@@ -102,7 +99,7 @@ bool mybot_state_model_network_restored(mybot_state_model_t *model) {
 bool mybot_state_model_set_device_state(mybot_state_model_t *model,
                                         mybot_device_state_t device_state) {
     if (!model || device_state < MYBOT_DEVICE_STATE_UNPROVISIONED ||
-        device_state > MYBOT_DEVICE_STATE_IN_CONVERSATION) {
+        device_state > MYBOT_DEVICE_STATE_ERROR) {
         return false;
     }
     uintptr_t current = (uintptr_t)aosl_atomic_read(&model->snapshot);
@@ -155,6 +152,16 @@ static mybot_state_t project_app_state(uintptr_t snapshot) {
             return MYBOT_STATE_READY;
         case MYBOT_DEVICE_STATE_IN_CONVERSATION:
             return MYBOT_STATE_IN_CONVERSATION;
+        case MYBOT_DEVICE_STATE_STARTING:
+            return MYBOT_STATE_TRANSLATION_STARTING;
+        case MYBOT_DEVICE_STATE_STOPPING:
+            return MYBOT_STATE_TRANSLATION_STOPPING;
+        case MYBOT_DEVICE_STATE_CLEANUP_PENDING:
+            return MYBOT_STATE_CLEANUP_PENDING;
+        case MYBOT_DEVICE_STATE_START_UNKNOWN:
+            return MYBOT_STATE_START_UNKNOWN;
+        case MYBOT_DEVICE_STATE_ERROR:
+            return MYBOT_STATE_TRANSLATION_ERROR;
         case MYBOT_DEVICE_STATE_UNPROVISIONED:
         case MYBOT_DEVICE_STATE_PAIRING:
         case MYBOT_DEVICE_STATE_AWAITING_CLAIM:

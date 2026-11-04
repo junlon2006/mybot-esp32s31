@@ -15,7 +15,9 @@ void mybot_conversation_http_trace_send(mybot_conversation_http_trace_t *trace, 
                                         size_t size);
 void mybot_conversation_http_trace_recv(mybot_conversation_http_trace_t *trace, const void *data,
                                         size_t size);
-/* Logs only POST .../conversations/start bodies, then frees the trace.
+/* Logs every HTTP request/response body, then frees the trace. Request paths omit
+ * query strings and replace the /devices/<id> segment; headers are never logged.
+ * Captures are bounded and their completeness is reported independently of I/O.
  * eof means TLS returned 0; transport_error means a TLS operation failed. */
 void mybot_conversation_http_trace_finish(mybot_conversation_http_trace_t *trace, bool eof,
                                           bool transport_error);

@@ -10,8 +10,10 @@ The source Ogg files use historical 20 ms Opus packets. That encoding is indepen
 
 ## Shared LVGL images
 
+The dedicated translation view does not compile or display these retained assets.
+
 `ui/noto_emoji` contains neutral, happy, relaxed and thinking glyphs with their original PNGs. `scripts/generate-lvgl-ui-assets.py` pads them to 64×64 and generates constant ARGB8888 pixels in `src/drivers/display/renderers/lvgl/lvgl_assets.c`; no runtime PNG decoder is required.
 
 The rasterized Noto Color Emoji glyphs retain Google's copyright and [SIL OFL 1.1](ui/noto_emoji/LICENSE.txt). Their [SOURCES.json](ui/noto_emoji/SOURCES.json) records font/package provenance, per-file hashes and conversion details. `python3 scripts/generate-lvgl-ui-assets.py --check` checks inputs against the generated arrays.
 
-The shared Chinese UI font retains its Source Han Sans license in `src/drivers/display/assets/licenses/LVGL_VIEW_FONT_LICENSE.txt`. Full dependency/asset notices are in the root `THIRD_PARTY_NOTICES.md`.
+The Chinese translation UI uses generated 20/28/40 px Noto Sans SC Regular subsets and retains SIL OFL 1.1 in `src/drivers/display/assets/licenses/LVGL_VIEW_FONT_LICENSE.txt`. Scene shapes, icons and drag controls use local LVGL objects. Full dependency/asset notices are in the root `THIRD_PARTY_NOTICES.md`.

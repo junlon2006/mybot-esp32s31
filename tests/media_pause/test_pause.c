@@ -1,0 +1,689 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+#include "mybot_media_pipeline.h"
+#include "mybot_platform_registry.h"
+
+#include <assert.h>
+#include <limits.h>
+#include <pthread.h>
+#include <stdarg.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+enum { CAPTURE_QUEUE = 1, PLAYBACK_QUEUE, SEND_QUEUE, QUEUE_COUNT };
+enum { MAX_QUEUED = 32, MAX_DEVICE_FRAMES = MYBOT_MEDIA_FRAME_SAMPLES * 8 };
+
+typedef struct {
+    aosl_mpq_func_t callback;
+    uintptr_t argc;
+    uintptr_t argv[3];
+    aosl_mpq_t queue;
+} queued_call_t;
+
+typedef struct {
+    aosl_timer_func_t callback;
+    uintptr_t argument;
+    bool active;
+    void (*fini)(void *);
+    void *context;
+} worker_t;
+
+static mybot_media_pipeline_t pipeline;
+static mybot_platform_descriptor_t platform;
+static worker_t workers[QUEUE_COUNT];
+static queued_call_t queued[MAX_QUEUED];
+static unsigned queued_count;
+static aosl_mpq_t current_queue, next_queue, fail_queue, delay_queue;
+static bool fail_pb_stop, fail_pb_start, stop_during_wait, release_producer_during_wait;
+static bool fail_destroy;
+static bool cap_active, pb_active;
+static int16_t captured_sample, played[MAX_DEVICE_FRAMES], sent[MYBOT_MEDIA_FRAME_SAMPLES * 2];
+static unsigned played_frames, sends, capture_reads, playback_writes, pb_stops, cap_stops;
+static unsigned hardware_volume_sets, waited_ms, tests;
+static int capture_frames, write_limit, hardware_volume;
+static bool tick_during_fence;
+static unsigned fence_ticks;
+static bool hold_remote_producer, producer_acquired, release_remote_producer;
+static pthread_mutex_t producer_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t producer_cond = PTHREAD_COND_INITIALIZER;
+
+void test_atomic_cmpxchg_hook(aosl_atomic_t *value, intptr_t previous, intptr_t next) {
+    if (value != &pipeline.remote_audio_busy || previous != 0 || next != 1 ||
+        !__atomic_exchange_n(&hold_remote_producer, false, __ATOMIC_SEQ_CST))
+        return;
+    assert(pthread_mutex_lock(&producer_lock) == 0);
+    producer_acquired = true;
+    assert(pthread_cond_signal(&producer_cond) == 0);
+    while (!release_remote_producer)
+        assert(pthread_cond_wait(&producer_cond, &producer_lock) == 0);
+    assert(pthread_mutex_unlock(&producer_lock) == 0);
+}
+
+void test_log(const char *format, ...) {
+    (void)format;
+}
+
+void *aosl_hal_malloc(size_t size) {
+    return malloc(size);
+}
+
+void aosl_hal_free(void *memory) {
+    free(memory);
+}
+
+const mybot_platform_descriptor_t *mybot_platform_registry_get(void) {
+    return &platform;
+}
+
+static int capture_init(void **context, int rate, int channels, int bits) {
+    assert(rate == 16000 && channels == 1 && bits == 16);
+    *context = &cap_active;
+    return 0;
+}
+
+static int capture_start(void *context) {
+    assert(context == &cap_active);
+    cap_active = true;
+    return 0;
+}
+
+static int capture_read(void *context, void *buffer, int frames) {
+    assert(context == &cap_active && cap_active);
+    assert(frames == 960);
+    capture_reads++;
+    if (capture_frames > 0) {
+        int16_t *samples = buffer;
+        for (int i = 0; i < capture_frames; ++i)
+            samples[i] = captured_sample;
+    }
+    return capture_frames;
+}
+
+static int capture_stop(void *context) {
+    assert(context == &cap_active);
+    cap_stops++;
+    cap_active = false;
+    return 0;
+}
+
+static void capture_destroy(void *context) {
+    assert(context == &cap_active && !cap_active);
+}
+
+static int playback_init(void **context, int rate, int channels, int bits) {
+    assert(rate == 16000 && channels == 1 && bits == 16);
+    *context = &pb_active;
+    return 0;
+}
+
+static int playback_start(void *context) {
+    assert(context == &pb_active);
+    if (fail_pb_start)
+        return -1;
+    assert(cap_active); /* Capture retains the shared bus clocks. */
+    pb_active = true;
+    return 0;
+}
+
+static int playback_write(void *context, const void *buffer, int frames) {
+    assert(context == &pb_active);
+    playback_writes++;
+    if (!pb_active)
+        return 0;
+    int written = frames < write_limit ? frames : write_limit;
+    assert(written >= 0 && played_frames + (unsigned)written <= MAX_DEVICE_FRAMES);
+    memcpy(played + played_frames, buffer, (size_t)written * sizeof(int16_t));
+    played_frames += (unsigned)written;
+    return written;
+}
+
+static int playback_stop(void *context) {
+    assert(context == &pb_active);
+    pb_stops++;
+    if (fail_pb_stop)
+        return -1;
+    pb_active = false;
+    played_frames = 0; /* Model the driver dropping its asynchronous PCM queue. */
+    return 0;
+}
+
+static void playback_destroy(void *context) {
+    assert(context == &pb_active && !pb_active);
+}
+
+static int volume_init(void **context) {
+    *context = &hardware_volume;
+    return 0;
+}
+
+static int volume_get(void *context, int *value) {
+    assert(context == &hardware_volume);
+    *value = hardware_volume;
+    return 0;
+}
+
+static int volume_set(void *context, int value) {
+    assert(context == &hardware_volume);
+    hardware_volume_sets++;
+    hardware_volume = value;
+    return 0;
+}
+
+static void volume_destroy(void *context) {
+    assert(context == &hardware_volume);
+}
+
+static const mybot_audio_capture_ops_t capture_ops = {capture_init, capture_start, capture_read,
+                                                      capture_stop, capture_destroy};
+static const mybot_audio_playback_ops_t playback_ops = {
+    playback_init, playback_start, playback_write, playback_stop, playback_destroy};
+static const mybot_audio_volume_ops_t volume_ops = {volume_init, volume_set, volume_get,
+                                                    volume_destroy};
+
+static int send_audio(const void *data, size_t bytes, void *context) {
+    assert(context == &pipeline);
+    assert(bytes == 960 * 2 * sizeof(int16_t));
+    memcpy(sent, data, bytes);
+    sends++;
+    return 0;
+}
+
+int mybot_announce_init(mybot_announce_t *announce) {
+    memset(announce, 0, sizeof(*announce));
+    return 0;
+}
+
+void mybot_announce_deinit(mybot_announce_t *announce) {
+    (void)announce;
+}
+
+void mybot_announce_stop(mybot_announce_t *announce) {
+    announce->generation++;
+}
+
+bool mybot_announce_is_active(mybot_announce_t *announce) {
+    (void)announce;
+    return false;
+}
+
+uint32_t mybot_announce_get_generation(mybot_announce_t *announce) {
+    return announce->generation;
+}
+
+int mybot_announce_read_pcm(mybot_announce_t *announce, int16_t *pcm, int frames,
+                            uint32_t *generation) {
+    (void)announce;
+    (void)pcm;
+    (void)frames;
+    (void)generation;
+    abort();
+}
+
+int mybot_announce_play_pair_code(mybot_announce_t *announce, const char *code) {
+    (void)announce;
+    (void)code;
+    abort();
+}
+
+aosl_mpq_t aosl_mpq_create_flags(int flags, int priority, int stack, int maximum, const char *name,
+                                 void *init, void *fini, void *context) {
+    (void)flags;
+    (void)priority;
+    (void)stack;
+    (void)maximum;
+    (void)name;
+    aosl_mpq_t queue = next_queue++;
+    assert(queue > 0 && queue < QUEUE_COUNT);
+    workers[queue].fini = (void (*)(void *))fini;
+    workers[queue].context = context;
+    current_queue = queue;
+    assert(((int (*)(void *))init)(context) == 0);
+    current_queue = AOSL_MPQ_INVALID;
+    return queue;
+}
+
+aosl_timer_t aosl_mpq_set_timer(uintptr_t interval, aosl_timer_func_t callback, void *destructor,
+                                uintptr_t argc, ...) {
+    (void)destructor;
+    assert(interval == 60 && argc == 1 && current_queue > 0);
+    va_list args;
+    va_start(args, argc);
+    workers[current_queue].argument = va_arg(args, uintptr_t);
+    va_end(args);
+    workers[current_queue].callback = callback;
+    workers[current_queue].active = true;
+    return (aosl_timer_t)current_queue;
+}
+
+int aosl_mpq_kill_timer(aosl_timer_t timer) {
+    assert(timer > 0 && timer < QUEUE_COUNT);
+    workers[timer].active = false;
+    return 0;
+}
+
+static void run_call(const queued_call_t *call) {
+    aosl_mpq_t previous = current_queue;
+    current_queue = call->queue;
+    uintptr_t args[3];
+    memcpy(args, call->argv, sizeof(args));
+    call->callback(NULL, NULL, call->argc, args);
+    current_queue = previous;
+}
+
+static queued_call_t take_call(aosl_mpq_t queue, aosl_mpq_func_t callback, uintptr_t argc,
+                               va_list args) {
+    assert(queue > 0 && queue < QUEUE_COUNT && argc <= 3);
+    queued_call_t call = {.callback = callback, .argc = argc, .queue = queue};
+    for (uintptr_t i = 0; i < argc; ++i)
+        call.argv[i] = va_arg(args, uintptr_t);
+    return call;
+}
+
+static void tick(aosl_mpq_t queue) {
+    assert(queue > 0 && queue < QUEUE_COUNT);
+    if (!workers[queue].active)
+        return;
+    uintptr_t argument = workers[queue].argument;
+    workers[queue].callback((aosl_timer_t)queue, NULL, 1, &argument);
+}
+
+int aosl_mpq_queue(aosl_mpq_t queue, aosl_mpq_t source, aosl_ref_t ref, const char *name,
+                   aosl_mpq_func_t callback, uintptr_t argc, ...) {
+    (void)source;
+    (void)ref;
+    assert(strcmp(name, "pause_fence") == 0);
+    va_list args;
+    va_start(args, argc);
+    queued_call_t call = take_call(queue, callback, argc, args);
+    va_end(args);
+    if (queue == fail_queue)
+        return -1;
+    if (tick_during_fence) {
+        tick(CAPTURE_QUEUE);
+        tick(PLAYBACK_QUEUE);
+        tick(SEND_QUEUE);
+        fence_ticks++;
+    }
+    if (queue == delay_queue) {
+        assert(queued_count < MAX_QUEUED);
+        queued[queued_count++] = call;
+    } else {
+        run_call(&call);
+    }
+    return 0;
+}
+
+int aosl_mpq_call(aosl_mpq_t queue, aosl_ref_t ref, const char *name, aosl_mpq_func_t callback,
+                  uintptr_t argc, ...) {
+    (void)ref;
+    (void)name;
+    va_list args;
+    va_start(args, argc);
+    queued_call_t call = take_call(queue, callback, argc, args);
+    va_end(args);
+    run_call(&call);
+    return 0;
+}
+
+static void run_queued(aosl_mpq_t queue) {
+    for (unsigned i = 0; i < queued_count;) {
+        if (queued[i].queue != queue) {
+            i++;
+            continue;
+        }
+        queued_call_t call = queued[i];
+        memmove(queued + i, queued + i + 1, (--queued_count - i) * sizeof(queued[0]));
+        run_call(&call);
+    }
+}
+
+int aosl_mpq_destroy_wait(aosl_mpq_t queue) {
+    if (fail_destroy)
+        return -1;
+    run_queued(queue);
+    workers[queue].fini(workers[queue].context);
+    return 0;
+}
+
+void aosl_msleep(unsigned milliseconds) {
+    waited_ms += milliseconds;
+    if (release_producer_during_wait) {
+        release_producer_during_wait = false;
+        aosl_atomic_set(&pipeline.remote_audio_busy, false);
+    }
+    if (stop_during_wait) {
+        stop_during_wait = false;
+        assert(mybot_media_pipeline_stop(&pipeline) == 0);
+    }
+}
+
+static void reset(void) {
+    memset(&platform, 0, sizeof(platform));
+    memset(workers, 0, sizeof(workers));
+    memset(sent, 0, sizeof(sent));
+    queued_count = 0;
+    current_queue = fail_queue = delay_queue = AOSL_MPQ_INVALID;
+    next_queue = CAPTURE_QUEUE;
+    fail_pb_stop = fail_pb_start = stop_during_wait = release_producer_during_wait = false;
+    fail_destroy = tick_during_fence = false;
+    hold_remote_producer = producer_acquired = release_remote_producer = false;
+    cap_active = pb_active = false;
+    played_frames = sends = capture_reads = playback_writes = pb_stops = cap_stops = 0;
+    hardware_volume_sets = waited_ms = fence_ticks = 0;
+    captured_sample = 1234;
+    hardware_volume = 45;
+    capture_frames = write_limit = MYBOT_MEDIA_FRAME_SAMPLES;
+    platform.audio_capture = &capture_ops;
+    platform.audio_playback = &playback_ops;
+    platform.audio_volume = &volume_ops;
+    mybot_media_pipeline_init(&pipeline);
+    mybot_media_pipeline_callbacks_t callbacks = {.send_audio = send_audio, .user_data = &pipeline};
+    assert(mybot_media_pipeline_start(&pipeline, &callbacks) == 0);
+    mybot_media_pipeline_set_rtc_connected(&pipeline, true);
+}
+
+static void finish(void) {
+    fail_pb_stop = fail_pb_start = fail_destroy = false;
+    assert(mybot_media_pipeline_stop(&pipeline) == 0);
+    assert(mybot_media_pipeline_destroy(&pipeline) == 0);
+    assert(queued_count == 0);
+}
+
+static void push(int16_t value) {
+    int16_t remote[MYBOT_MEDIA_FRAME_SAMPLES];
+    for (unsigned i = 0; i < MYBOT_MEDIA_FRAME_SAMPLES; ++i)
+        remote[i] = value;
+    mybot_media_pipeline_push_remote_audio(&pipeline, remote, sizeof(remote));
+}
+
+static void expect_sent(int16_t mic, int16_t reference) {
+    assert(sends > 0);
+    for (unsigned i = 0; i < MYBOT_MEDIA_FRAME_SAMPLES; ++i) {
+        assert(sent[i * 2] == mic);
+        assert(sent[i * 2 + 1] == reference);
+    }
+}
+
+static void test_unchanged_audio(void) {
+    reset();
+    tick(SEND_QUEUE);
+    assert(sends == 0);
+    push(2500);
+    tick(PLAYBACK_QUEUE);
+    assert(playback_writes == 1 && played_frames == 960 && played[0] == 2500);
+    tick(CAPTURE_QUEUE);
+    tick(SEND_QUEUE);
+    expect_sent(1234, 2500);
+    assert(!mybot_media_pipeline_is_paused(&pipeline));
+    assert(pb_stops == 0 && cap_stops == 0 && hardware_volume_sets == 0);
+    finish();
+    tests++;
+}
+
+static void test_pause_silent_cadence_and_playback_discard(void) {
+    reset();
+    write_limit = 240;
+    push(3000);
+    tick(PLAYBACK_QUEUE);
+    push(4000);
+    tick(CAPTURE_QUEUE);
+    assert(pipeline.pb_pending_frames == 720 && played_frames == 240);
+    assert(mybot_media_pipeline_set_paused(&pipeline, true) == 0);
+    assert(mybot_media_pipeline_is_paused(&pipeline));
+    assert(aosl_atomic_read(&pipeline.rtc_connected) && cap_active && !pb_active);
+    assert(played_frames == 0 && pipeline.pb_pending_frames == 0);
+    assert(mybot_ringbuf_get_data_size(pipeline.pb_ringbuf) == 0);
+    assert(mybot_ringbuf_get_data_size(pipeline.cap_ringbuf) == 0);
+    assert(mybot_ringbuf_get_data_size(pipeline.ref_ringbuf) == 0);
+    unsigned previous_writes = playback_writes;
+    for (unsigned frame = 0; frame < 4; ++frame) {
+        push(7777);
+        tick(CAPTURE_QUEUE);
+        tick(PLAYBACK_QUEUE);
+        tick(SEND_QUEUE);
+        expect_sent(0, 0);
+        assert(sends == frame + 1);
+    }
+    /* Silent packets continue even if the capture device temporarily has no data. */
+    capture_frames = 0;
+    tick(CAPTURE_QUEUE);
+    tick(SEND_QUEUE);
+    assert(sends == 5 && capture_reads == 6);
+    expect_sent(0, 0);
+    assert(playback_writes == previous_writes && cap_stops == 0);
+    assert(hardware_volume == 45 && hardware_volume_sets == 0);
+    finish();
+    tests++;
+}
+
+static void test_resume_flushes_old_audio(void) {
+    reset();
+    assert(mybot_media_pipeline_set_paused(&pipeline, true) == 0);
+    /* Model PCM published by callbacks/worker operations already in flight. */
+    int16_t old[MYBOT_MEDIA_FRAME_SAMPLES];
+    for (unsigned i = 0; i < MYBOT_MEDIA_FRAME_SAMPLES; ++i)
+        old[i] = 8888;
+    assert(mybot_ringbuf_write(pipeline.pb_ringbuf, (const char *)old, sizeof(old)) > 0);
+    assert(mybot_ringbuf_write(pipeline.cap_ringbuf, (const char *)old, sizeof(old)) > 0);
+    assert(mybot_ringbuf_write(pipeline.ref_ringbuf, (const char *)old, sizeof(old)) > 0);
+    pipeline.pb_pending_frames = 100;
+    tick_during_fence = true;
+    assert(mybot_media_pipeline_set_paused(&pipeline, false) == 0);
+    assert(fence_ticks == 3 && !mybot_media_pipeline_is_paused(&pipeline));
+    assert(pb_active && cap_active && played_frames == 0);
+    unsigned previous_writes = playback_writes;
+    tick(PLAYBACK_QUEUE);
+    tick(SEND_QUEUE);
+    assert(playback_writes == previous_writes && sends == 3);
+    push(6000);
+    tick(PLAYBACK_QUEUE);
+    tick(CAPTURE_QUEUE);
+    tick(SEND_QUEUE);
+    expect_sent(1234, 6000);
+    assert(played_frames == 960 && played[0] == 6000);
+    finish();
+    tests++;
+}
+
+static void test_repeated_pause_resume(void) {
+    reset();
+    assert(mybot_media_pipeline_set_paused(&pipeline, false) == 0 && pb_stops == 0);
+    for (unsigned iteration = 0; iteration < 20; ++iteration) {
+        assert(mybot_media_pipeline_set_paused(&pipeline, true) == 0);
+        assert(mybot_media_pipeline_set_paused(&pipeline, true) == 0);
+        push(9000);
+        tick(SEND_QUEUE);
+        expect_sent(0, 0);
+        assert(mybot_media_pipeline_set_paused(&pipeline, false) == 0);
+        assert(!mybot_media_pipeline_is_paused(&pipeline));
+        assert(mybot_media_pipeline_set_paused(&pipeline, false) == 0);
+        tick(CAPTURE_QUEUE);
+        tick(SEND_QUEUE);
+        expect_sent(1234, 0);
+    }
+    assert(hardware_volume_sets == 0 && hardware_volume == 45 && cap_stops == 0);
+    finish();
+    tests++;
+}
+
+static void test_device_failures_stay_paused(void) {
+    reset();
+    push(6500);
+    tick(PLAYBACK_QUEUE);
+    fail_pb_stop = true;
+    assert(mybot_media_pipeline_set_paused(&pipeline, true) < 0);
+    assert(mybot_media_pipeline_is_paused(&pipeline));
+    tick(SEND_QUEUE);
+    /* Failed device stop can leave actual playback in flight. Preserve its
+     * reference even while the MIC has already become silent. */
+    expect_sent(0, 6500);
+    assert(mybot_media_pipeline_set_paused(&pipeline, false) < 0);
+    assert(mybot_media_pipeline_is_paused(&pipeline));
+    fail_pb_stop = false;
+    fail_pb_start = true;
+    assert(mybot_media_pipeline_set_paused(&pipeline, false) < 0);
+    assert(mybot_media_pipeline_is_paused(&pipeline) && !pb_active && cap_active);
+    fail_pb_start = false;
+    assert(mybot_media_pipeline_set_paused(&pipeline, false) == 0);
+    assert(!mybot_media_pipeline_is_paused(&pipeline) && pb_active);
+    finish();
+    tests++;
+}
+
+static void test_worker_fence_failure_and_timeout(void) {
+    for (aosl_mpq_t queue = CAPTURE_QUEUE; queue <= SEND_QUEUE; ++queue) {
+        reset();
+        fail_queue = queue;
+        assert(mybot_media_pipeline_set_paused(&pipeline, true) < 0);
+        assert(mybot_media_pipeline_is_paused(&pipeline));
+        assert(mybot_media_pipeline_set_paused(&pipeline, false) < 0);
+        assert(mybot_media_pipeline_is_paused(&pipeline));
+        fail_queue = AOSL_MPQ_INVALID;
+        delay_queue = queue;
+        assert(mybot_media_pipeline_set_paused(&pipeline, false) < 0);
+        assert(waited_ms == 1000 && queued_count == 1);
+        assert(mybot_media_pipeline_is_paused(&pipeline) && !pb_active);
+        delay_queue = AOSL_MPQ_INVALID;
+        assert(mybot_media_pipeline_set_paused(&pipeline, false) == 0);
+        /* A superseded late callback must not drain the resumed session. */
+        push(4321);
+        tick(CAPTURE_QUEUE);
+        run_queued(queue);
+        tick(PLAYBACK_QUEUE);
+        tick(SEND_QUEUE);
+        expect_sent(1234, 4321);
+        finish();
+    }
+    tests++;
+}
+
+static void test_remote_producer_fence(void) {
+    reset();
+    aosl_atomic_set(&pipeline.remote_audio_busy, true);
+    push(3000);
+    assert(mybot_ringbuf_get_data_size(pipeline.pb_ringbuf) == 0);
+    assert(mybot_media_pipeline_set_paused(&pipeline, true) < 0 && waited_ms == 1000);
+    assert(mybot_media_pipeline_is_paused(&pipeline));
+    release_producer_during_wait = true;
+    assert(mybot_media_pipeline_set_paused(&pipeline, false) == 0);
+    assert(waited_ms == 1005 && !aosl_atomic_read(&pipeline.remote_audio_busy));
+    assert(!mybot_media_pipeline_is_paused(&pipeline));
+    finish();
+    tests++;
+}
+
+static void *remote_producer(void *context) {
+    (void)context;
+    push(3456);
+    return NULL;
+}
+
+static void test_remote_callback_racing_pause(void) {
+    reset();
+    pthread_t producer;
+    hold_remote_producer = true;
+    assert(pthread_create(&producer, NULL, remote_producer, NULL) == 0);
+    assert(pthread_mutex_lock(&producer_lock) == 0);
+    while (!producer_acquired)
+        assert(pthread_cond_wait(&producer_cond, &producer_lock) == 0);
+    assert(pthread_mutex_unlock(&producer_lock) == 0);
+    /* The callback passed the initial gate before pause but cannot publish
+     * afterwards; its second gate check runs once this thread releases it. */
+    assert(mybot_media_pipeline_set_paused(&pipeline, true) < 0);
+    assert(mybot_media_pipeline_is_paused(&pipeline) && waited_ms == 1000);
+    assert(pthread_mutex_lock(&producer_lock) == 0);
+    release_remote_producer = true;
+    assert(pthread_cond_signal(&producer_cond) == 0);
+    assert(pthread_mutex_unlock(&producer_lock) == 0);
+    assert(pthread_join(producer, NULL) == 0);
+    assert(mybot_ringbuf_get_data_size(pipeline.pb_ringbuf) == 0);
+    assert(!aosl_atomic_read(&pipeline.remote_audio_busy));
+    assert(mybot_media_pipeline_set_paused(&pipeline, false) == 0);
+    push(4567);
+    tick(PLAYBACK_QUEUE);
+    tick(CAPTURE_QUEUE);
+    tick(SEND_QUEUE);
+    expect_sent(1234, 4567);
+    finish();
+    tests++;
+}
+
+static void test_stop_and_delayed_fence_ownership(void) {
+    reset();
+    assert(mybot_media_pipeline_set_paused(&pipeline, true) == 0);
+    delay_queue = PLAYBACK_QUEUE;
+    stop_during_wait = true;
+    assert(mybot_media_pipeline_set_paused(&pipeline, false) < 0);
+    assert(!aosl_atomic_read(&pipeline.running));
+    assert(!mybot_media_pipeline_is_paused(&pipeline) && !pb_active && !cap_active);
+    assert(queued_count == 0);
+    assert(mybot_media_pipeline_set_paused(&pipeline, true) < 0);
+    assert(mybot_media_pipeline_destroy(&pipeline) == 0);
+
+    reset();
+    delay_queue = SEND_QUEUE;
+    assert(mybot_media_pipeline_set_paused(&pipeline, true) < 0 && queued_count == 1);
+    fail_destroy = true;
+    assert(mybot_media_pipeline_stop(&pipeline) < 0);
+    assert(mybot_media_pipeline_destroy(&pipeline) < 0);
+    assert(pipeline.cap_ringbuf && pipeline.pb_ringbuf && pipeline.ref_ringbuf);
+    fail_destroy = false;
+    finish();
+    tests++;
+}
+
+static void test_session_end_and_new_session(void) {
+    reset();
+    fail_pb_stop = true;
+    assert(mybot_media_pipeline_set_paused(&pipeline, true) < 0);
+    assert(mybot_media_pipeline_end_session(&pipeline) < 0);
+    assert(mybot_media_pipeline_is_paused(&pipeline));
+    fail_pb_stop = false;
+    fail_pb_start = true;
+    assert(mybot_media_pipeline_end_session(&pipeline) < 0);
+    assert(mybot_media_pipeline_is_paused(&pipeline) && !pb_active);
+    fail_pb_start = false;
+    assert(mybot_media_pipeline_end_session(&pipeline) == 0);
+    assert(!mybot_media_pipeline_is_paused(&pipeline) && pb_active);
+    assert(!aosl_atomic_read(&pipeline.rtc_connected));
+    assert(mybot_media_pipeline_set_paused(&pipeline, true) < 0);
+    mybot_media_pipeline_set_rtc_connected(&pipeline, true);
+    tick(CAPTURE_QUEUE);
+    tick(SEND_QUEUE);
+    expect_sent(1234, 0);
+    assert(hardware_volume_sets == 0 && hardware_volume == 45);
+    finish();
+    tests++;
+}
+
+static void test_invalid_arguments(void) {
+    mybot_media_pipeline_t unstarted;
+    mybot_media_pipeline_init(&unstarted);
+    assert(mybot_media_pipeline_set_paused(NULL, true) < 0);
+    assert(mybot_media_pipeline_set_paused(&unstarted, true) < 0);
+    assert(!mybot_media_pipeline_is_paused(NULL));
+    reset();
+    aosl_atomic_set(&pipeline.pause_control_busy, true);
+    assert(mybot_media_pipeline_set_paused(&pipeline, true) < 0);
+    assert(!mybot_media_pipeline_is_paused(&pipeline));
+    aosl_atomic_set(&pipeline.pause_control_busy, false);
+    finish();
+    tests++;
+}
+
+int main(void) {
+    assert(MYBOT_AUDIO_PTIME_MS == 60 && MYBOT_CLOUD_AEC == 1);
+    test_unchanged_audio();
+    test_pause_silent_cadence_and_playback_discard();
+    test_resume_flushes_old_audio();
+    test_repeated_pause_resume();
+    test_device_failures_stay_paused();
+    test_worker_fence_failure_and_timeout();
+    test_remote_producer_fence();
+    test_remote_callback_racing_pause();
+    test_stop_and_delayed_fence_ownership();
+    test_session_end_and_new_session();
+    test_invalid_arguments();
+    printf("media pause: %u tests passed (UBSan)\n", tests);
+    return 0;
+}

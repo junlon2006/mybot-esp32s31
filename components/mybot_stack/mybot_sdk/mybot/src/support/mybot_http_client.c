@@ -662,9 +662,12 @@ static int parse_response(const char *raw, size_t raw_len, int stream_closed,
  * Internal: common request logic
  * ---------------------------------------------------------- */
 static int http_request(const char *method, const char *url, const char *content_type,
-                        const char *req_body, const char *extra_headers,
+                        const char *req_body, const char *extra_headers, int timeout_ms,
                         mybot_http_client_response_t *resp) {
-    uint64_t deadline = aosl_hal_get_tick_ms() + HTTP_TIMEOUT_MS;
+    if (timeout_ms <= 0) {
+        return -1;
+    }
+    uint64_t deadline = aosl_hal_get_tick_ms() + (uint64_t)timeout_ms;
 
     mybot_url_parts_t parts;
     if (mybot_url_parse(url, &parts) < 0) {
@@ -763,15 +766,22 @@ int mybot_http_client_get_ex(const char *url, const char *extra_headers,
     if (!url || !resp) {
         return -1;
     }
-    return http_request("GET", url, NULL, NULL, extra_headers, resp);
+    return http_request("GET", url, NULL, NULL, extra_headers, HTTP_TIMEOUT_MS, resp);
 }
 
 int mybot_http_client_post_ex(const char *url, const char *content_type, const char *body,
                               const char *extra_headers, mybot_http_client_response_t *resp) {
-    if (!url || !resp) {
+    return mybot_http_client_post_timeout_ex(url, content_type, body, extra_headers,
+                                             HTTP_TIMEOUT_MS, resp);
+}
+
+int mybot_http_client_post_timeout_ex(const char *url, const char *content_type, const char *body,
+                                      const char *extra_headers, int timeout_ms,
+                                      mybot_http_client_response_t *resp) {
+    if (!url || !resp || timeout_ms <= 0) {
         return -1;
     }
-    return http_request("POST", url, content_type, body, extra_headers, resp);
+    return http_request("POST", url, content_type, body, extra_headers, timeout_ms, resp);
 }
 
 void mybot_http_client_response_free(mybot_http_client_response_t *resp) {

@@ -32,8 +32,7 @@ typedef struct {
     const pcm_asset_t *asset;
     size_t offset;
 } pcm_sound_t;
-#define ASSET(name)                                                                                \
-    { .begin = name##_start, .end = name##_end }
+#define ASSET(name) {.begin = name##_start, .end = name##_end}
 static const pcm_asset_t s_assets[MYBOT_ANNOUNCE_SOUND_COUNT] = {
     [MYBOT_ANNOUNCE_SOUND_PROMPT] = ASSET(prompt),
     [MYBOT_ANNOUNCE_SOUND_DIGIT_0] = ASSET(digit_0),

@@ -77,8 +77,7 @@ typedef struct {
     unsigned scl_speed_hz;
     int transaction_timeout_ms;
 } esp_lcd_panel_io_i2c_config_t;
-#define ESP_LCD_TOUCH_IO_I2C_GT1151_CONFIG()                                                       \
-    { .scl_speed_hz = 100000 }
+#define ESP_LCD_TOUCH_IO_I2C_GT1151_CONFIG() {.scl_speed_hz = 100000}
 typedef struct {
     uint16_t x, y;
 } esp_lcd_touch_point_data_t;
@@ -141,6 +140,7 @@ bool lv_display_flush_is_last(lv_display_t *);
 void lv_display_flush_ready(lv_display_t *);
 lv_indev_t *lv_indev_create(void);
 void lv_indev_delete(lv_indev_t *);
+void lv_indev_reset(lv_indev_t *, void *);
 void lv_indev_set_type(lv_indev_t *, int);
 void lv_indev_set_display(lv_indev_t *, lv_display_t *);
 void lv_indev_set_read_cb(lv_indev_t *, lv_indev_read_cb_t);
@@ -153,8 +153,7 @@ typedef struct {
     unsigned task_stack_caps;
     int timer_period_ms;
 } lvgl_port_cfg_t;
-#define ESP_LVGL_PORT_INIT_CONFIG()                                                                \
-    { 4, 7168, -1, 500, 0, 5 }
+#define ESP_LVGL_PORT_INIT_CONFIG() {4, 7168, -1, 500, 0, 5}
 #define LVGL_PORT_EVENT_USER 0x80
 esp_err_t lvgl_port_init(const lvgl_port_cfg_t *);
 esp_err_t lvgl_port_deinit(void);

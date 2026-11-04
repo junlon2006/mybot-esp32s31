@@ -2,6 +2,7 @@
 #include <mybot/platform/mybot_https.h>
 
 #include "network/conversation_http_trace.h"
+#include "network/http_time_sync.h"
 
 #include "esp_crt_bundle.h"
 #include "esp_heap_caps.h"
@@ -20,6 +21,7 @@ typedef struct {
     esp_tls_t *tls;
     int socket_fd;
     mybot_conversation_http_trace_t *trace;
+    mybot_http_time_sync_t time_sync;
     bool peer_closed;
     bool io_error;
 } https_connection_t;
@@ -104,6 +106,7 @@ static int https_recv(void *opaque, void *data, size_t capacity, int timeout_ms)
         return 0;
     }
     if (result > 0 && result <= INT_MAX) {
+        mybot_http_time_sync_recv(&connection->time_sync, data, (size_t)result);
         mybot_conversation_http_trace_recv(connection->trace, data, (size_t)result);
         return (int)result;
     }

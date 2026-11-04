@@ -73,6 +73,11 @@ typedef enum {
     MYBOT_LCD_SCREEN_FAILED,
     /** The application is shutting down. */
     MYBOT_LCD_SCREEN_STOPPING,
+    MYBOT_LCD_SCREEN_TRANSLATION_STARTING,
+    MYBOT_LCD_SCREEN_TRANSLATION_STOPPING,
+    MYBOT_LCD_SCREEN_CLEANUP_PENDING,
+    MYBOT_LCD_SCREEN_START_UNKNOWN,
+    MYBOT_LCD_SCREEN_TRANSLATION_ERROR,
     /** Sentinel; not a valid screen value. */
     MYBOT_LCD_SCREEN_COUNT,
 } mybot_lcd_screen_t;
@@ -98,6 +103,15 @@ typedef struct {
      *       SDK and platform LCD adapter against the same public header.
      */
     uint32_t indicators;
+    /** Source and translated-output language codes, NUL-terminated. */
+    char source_language[33];
+    char target_language[33];
+    /** Optional stable error code, NUL-terminated. */
+    char error_code[64];
+    /** Playback volume 0..100; -1 when unavailable. */
+    int volume;
+    /** Actual local media pause state; the RTC session remains connected. */
+    bool paused;
 } mybot_lcd_content_t;
 
 /**

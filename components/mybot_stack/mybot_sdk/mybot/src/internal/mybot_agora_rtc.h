@@ -53,7 +53,8 @@ typedef struct {
     void *user_data;
 } mybot_agora_rtc_callbacks_t;
 
-/** Initialize the process-wide RTSA service on rtc_mpq. */
+/** Initialize a fresh RTSA service and forwarding queue for one conversation.
+ * The previous conversation must have completed mybot_agora_rtc_fini(). */
 int mybot_agora_rtc_init(const char *app_id, const mybot_agora_rtc_callbacks_t *callbacks);
 
 /**
@@ -72,14 +73,13 @@ bool mybot_agora_rtc_rtm_uid_is_valid(const char *rtm_uid);
  * token. After RTM login succeeds, this subscribes to the RTM channel with the
  * same name and waits for subscription success before starting RTC join. */
 int mybot_agora_rtc_join(const char *channel, const char *token, const char *user_account,
-                         uint32_t video_min_bps, uint32_t video_max_bps);
+                         const char *agent_uid, const char *publisher_account);
 
-/** Leave and destroy the active connection while keeping RTSA initialized. */
-int mybot_agora_rtc_leave(void);
-
-/** Finalize the process-wide RTSA service. Call after RTC control and media workers stop.
- * Returns zero when all vendor resources were released; a negative result leaves the
- * service available for a later retry. */
+/** End the conversation, finalize RTSA and join the forwarding queue.
+ * Cancel media sends before calling. A successful global RTSA fini supersedes
+ * intermediate leave/destroy errors. Queue teardown can be retried; a failed
+ * vendor global fini is terminal until device restart and is never repeated.
+ * Returns zero only when both vendor and forwarding resources were released. */
 int mybot_agora_rtc_fini(void);
 
 /** Send one PCM payload on the active connection. */
@@ -89,9 +89,6 @@ int mybot_agora_rtc_send_audio(const void *data, size_t len);
 /** Send one platform-encoded video frame on the active connection. */
 int mybot_agora_rtc_send_video(const mybot_video_frame_t *frame);
 #endif
-
-/** Queue a renewed token for the active connection. */
-int mybot_agora_rtc_renew_token(const char *token);
 
 #ifdef __cplusplus
 }

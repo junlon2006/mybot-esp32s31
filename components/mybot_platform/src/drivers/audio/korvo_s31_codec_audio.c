@@ -723,8 +723,10 @@ static int volume_set(void *opaque, int volume) {
     }
     if (persist_volume(context, volume) < 0) {
         context->persist_dirty = true;
-        ESP_LOGW(TAG, "event=volume action=set value=%d applied=1 persisted=0 result=error "
-                      "scope=persistence");
+        ESP_LOGW(TAG,
+                 "event=volume action=set value=%d applied=1 persisted=0 result=error "
+                 "scope=persistence",
+                 volume);
         return 0;
     }
 
@@ -754,8 +756,10 @@ static void volume_destroy(void *opaque) {
         persisted = persist_volume(context, volume) == 0;
     }
     if (context->persist_dirty) {
-        ESP_LOGW(TAG, "event=volume action=detach value=%d persisted=0 result=error "
-                      "scope=persistence");
+        ESP_LOGW(TAG,
+                 "event=volume action=detach value=%d persisted=0 result=error "
+                 "scope=persistence",
+                 volume);
     } else {
         ESP_LOGI(TAG, "event=volume action=detach value=%d persisted=%d result=ok", volume,
                  persisted ? 1 : 0);

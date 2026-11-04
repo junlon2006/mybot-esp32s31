@@ -12,7 +12,6 @@ function(mybot_display_add_lvgl_sources source_var adapter_name)
     list(APPEND ${source_var}
         "${MYBOT_DISPLAY_ROOT}/adapters/lvgl/${adapter_name}"
         "${MYBOT_DISPLAY_ROOT}/renderers/lvgl/lvgl_view.cc"
-        "${MYBOT_DISPLAY_ROOT}/renderers/lvgl/lvgl_assets.c"
         "${MYBOT_DISPLAY_ROOT}/renderers/lvgl/lvgl_fonts.c")
     set(${source_var} "${${source_var}}" PARENT_SCOPE)
 endfunction()

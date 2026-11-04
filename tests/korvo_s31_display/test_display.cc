@@ -289,6 +289,10 @@ lv_indev_t *lv_indev_create() {
     input.open = input_timer.open = true;
     return &input;
 }
+void lv_indev_reset(lv_indev_t *handle, void *object) {
+    CHECK(handle == &input && input.open && port_locked && !object);
+    events.emplace_back("input_reset");
+}
 void lv_indev_delete(lv_indev_t *handle) {
     CHECK(handle == &input && input.open && port_locked);
     input = {};
@@ -390,6 +394,24 @@ int main(int argc, char **argv) {
             CHECK(lvgl_port_lock(100));
             timer.callback(&timer);
             CHECK(applied.screen == content.screen && !std::strcmp(applied.pair_code, "123456"));
+            std::strcpy(content.source_language, "en-US");
+            std::strcpy(content.target_language, "zh-CN");
+            std::strcpy(content.error_code, "stop_pending");
+            content.screen = MYBOT_LCD_SCREEN_CLEANUP_PENDING;
+            content.volume = 65;
+            content.paused = true;
+            lvgl_port_unlock();
+            CHECK(ops->render(ctx, &content) == 0);
+            CHECK(lvgl_port_lock(100));
+            timer.callback(&timer);
+            CHECK(applied.volume == 65 && applied.paused &&
+                  !std::strcmp(applied.source_language, "en-US") &&
+                  !std::strcmp(applied.target_language, "zh-CN") &&
+                  !std::strcmp(applied.error_code, "stop_pending"));
+            lvgl_port_unlock();
+            std::memset(content.source_language, 'x', sizeof(content.source_language));
+            CHECK(ops->render(ctx, &content) < 0);
+            CHECK(lvgl_port_lock(100));
             display.buffer[0] = 0x34;
             display.buffer[1] = 0x12;
             const lv_area_t area{0, 0, 799, 479};
@@ -397,6 +419,11 @@ int main(int argc, char **argv) {
             CHECK(display.buffer[0] == 0x34 && display.buffer[1] == 0x12); // no SPI swap
             CHECK(frame_callbacks == 1 && ready_calls == 1);
             lv_indev_data_t data{};
+            report_touch = true;
+            input.read(&input, &data);
+            CHECK(data.state == LV_INDEV_STATE_RELEASED); // require clean initial release
+            report_touch = false;
+            input.read(&input, &data);
             report_touch = true;
             input.read(&input, &data);
             CHECK(data.state == LV_INDEV_STATE_PRESSED && data.point.x == 350 &&
@@ -408,8 +435,13 @@ int main(int argc, char **argv) {
                 CHECK(data.state == LV_INDEV_STATE_RELEASED);
                 CHECK(touch_samples.back() == std::make_pair(false, false));
                 input.read(&input, &data);
-                CHECK(data.state == LV_INDEV_STATE_PRESSED);
+                CHECK(data.state == LV_INDEV_STATE_RELEASED); // held finger after read error
                 CHECK(touch_samples.back() == std::make_pair(true, true));
+                report_touch = false;
+                input.read(&input, &data);
+                report_touch = true;
+                input.read(&input, &data);
+                CHECK(data.state == LV_INDEV_STATE_PRESSED);
                 failure = "touch_get";
                 input.read(&input, &data);
                 CHECK(data.state == LV_INDEV_STATE_RELEASED);

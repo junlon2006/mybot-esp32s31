@@ -12,6 +12,8 @@ CONFIG_MBEDTLS_SSL_RENEGOTIATION=n
 # Six mybot MPQs consume twelve socket-backed AOSL wakeup pipe endpoints before
 # HTTPS and Agora allocate their own sockets.
 CONFIG_LWIP_MAX_SOCKETS=32
+# Keep regional and independent SNTP alternatives for networks with selective reachability.
+CONFIG_LWIP_SNTP_MAX_SERVERS=3
 
 CONFIG_ESP_TASK_WDT_TIMEOUT_S=10
 CONFIG_ESP_WIFI_IRAM_OPT=n
@@ -21,3 +23,8 @@ CONFIG_ESP_WIFI_ENTERPRISE_SUPPORT=n
 # Keep Newlib for the initial S31 binary integration; validate against the supplied RTSA.
 CONFIG_LIBC_NEWLIB=y
 CONFIG_LIBC_NEWLIB_NANO_FORMAT=n
+
+# V2VT is available in the Global deployment for every display language.
+CONFIG_MYBOT_SOURCE_LANGUAGE="zh-CN"
+CONFIG_MYBOT_TARGET_LANGUAGE="en-US"
+CONFIG_MYBOT_SERVER_BASE="https://mybot.sh3t.agoralab.co/api"
