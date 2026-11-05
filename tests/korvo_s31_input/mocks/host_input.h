@@ -54,6 +54,16 @@ int xTaskCreateWithCaps(task_function_t, const char *, uint32_t, void *, unsigne
 void vTaskDelay(TickType_t);
 int64_t esp_timer_get_time(void);
 typedef void *i2c_master_bus_handle_t;
+#define GPIO_MODE_INPUT 1
+#define GPIO_PULLUP_ENABLE 1
+#define GPIO_PULLDOWN_DISABLE 0
+#define GPIO_INTR_DISABLE 0
+typedef struct {
+    uint64_t pin_bit_mask;
+    int mode, pull_up_en, pull_down_en, intr_type;
+} gpio_config_t;
+esp_err_t gpio_config(const gpio_config_t *);
+int gpio_get_level(int pin);
 #ifdef __cplusplus
 }
 #endif

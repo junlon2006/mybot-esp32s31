@@ -17,7 +17,11 @@ idf.py --preview -B build/korvo-s31 \
 idf.py --preview -B build/korvo-s31 -p PORT flash monitor
 ```
 
-Development uses `idf.py` directly. Use the onboard USB-UART bridge; the separate power connector carries no serial data. UART0 uses TX58/RX59. Local development builds Chinese firmware in `build/korvo-s31` with its existing sdkconfig. CI builds both languages in isolated job directories. Reconfigure and inspect generated configuration after changing defaults.
+Development uses `idf.py` directly. J1 Type-C is the USB-UART bridge (UART0 TX58/RX59); J5 Type-C supplies power only. J2 Type-A connects native USB2 OTG and supplies host VBUS on the factory board. The optional [CDC diagnostic](USB_CDC_PROBE.zh-CN.md) checks enumeration/bulk echo without controlling or validating that power connection. Local development builds Chinese firmware in `build/korvo-s31` with its existing sdkconfig. CI builds both languages in isolated job directories. Reconfigure and inspect generated configuration after changing defaults.
+
+The separate, default-off [USB Host probe](USB_HOST_PROBE.zh-CN.md) enumerates a directly connected
+peripheral such as an Android phone. It is mutually exclusive with CDC and runs only USB/UART logging,
+without starting translation during that diagnostic boot.
 
 ffmpeg converts tracked Ogg prompts to 16 kHz mono S16LE in the build directory. The firmware links no S3 Opus decoder. See [delivery](RELEASING.md) for merged images and metadata. Regular `idf.py flash` preserves NVS; a merged image at **0x0** overwrites the NVS gap and requires provisioning again.
 
@@ -44,7 +48,7 @@ The board has an ESP32-S31-WROOM-3, 16 MB Flash and 16 MB PSRAM. ES8389 and GT11
 
 Audio follows the official guide's TDM requirement: 16 kHz, four 16-bit slots, 64 BCLK/frame, BCLK3/WS4/TX5/RX6, PA7. The codec takes BCLK with `use_mclk=false` and `no_dac_ref=false`; the CPU outputs no MCLK. The adapter checks STDM registers, maps playback slots and selects a microphone slot. The public SDK contract remains 16 kHz mono signed-16 PCM and 60 ms frames. Nominal BCLK/WS are 1.024 MHz/16 kHz; these are configured values, not instrument measurements.
 
-The pinned factory BSP uses standard stereo I2S; this port follows the official TDM requirement. Basic voice interoperability does not establish detailed microphone/reference slot mapping, acoustic quality, translation behavior or endurance. Local AEC, beamforming, wake word, video, SD/USB application paths and low-power work remain outside this port. Media translation retains the board microphone/speaker path; route subscription, Cloud AEC, language controls, local pause and recovery need their own hardware acceptance.
+The pinned factory BSP uses standard stereo I2S; this port follows the official TDM requirement. Basic voice interoperability does not establish detailed microphone/reference slot mapping, acoustic quality, translation behavior or endurance. Local AEC, beamforming, wake word, video, SD/USB audio application paths and low-power work remain outside this port. Native USB CDC has an optional link diagnostic, disabled by default. Media translation retains the board microphone/speaker path; route subscription, Cloud AEC, language controls, local pause and recovery need their own hardware acceptance.
 
 ## Conversation-start diagnostics
 

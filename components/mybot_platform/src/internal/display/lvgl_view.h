@@ -13,8 +13,8 @@ extern "C" {
  * The display and its active screen must outlive the view. The view owns its widgets
  * and releases them together on destroy. Update borrows
  * content only for the duration of the call; no FreeRTOS tasks are created here.
- * The simulator-derived layout requires the registered board's native 800 x 480
- * display. Its clock timer is owned and removed together with the view. */
+ * Native layouts support 480 x 480 and 800 x 480 panels, with fixed-size fonts
+ * and controls. Its clock timer is owned and removed together with the view. */
 int mybot_lvgl_view_create(lv_display_t *display);
 int mybot_lvgl_view_create_sized(lv_display_t *display, int width, int height);
 void mybot_lvgl_view_update(const mybot_lcd_content_t *content);

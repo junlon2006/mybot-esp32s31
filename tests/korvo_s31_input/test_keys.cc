@@ -1,7 +1,19 @@
 /* SPDX-License-Identifier: MIT */
 #include "host_input.h"
 #include "mybot_platform/board.h"
+#ifndef TEST_MOSAICO
+#define TEST_MOSAICO 0
+#endif
+#if TEST_MOSAICO
+#include "input/mosaico_keys.h"
+#define mybot_korvo_s31_keys_start mybot_mosaico_keys_start
+#define mybot_korvo_s31_key_ops mybot_mosaico_key_ops
+#define mybot_korvo_s31_keys_touch_sample mybot_mosaico_keys_touch_sample
+#define mybot_korvo_s31_keys_ui_event mybot_mosaico_keys_ui_event
+#define mybot_korvo_s31_keys_ui_command mybot_mosaico_keys_ui_command
+#else
 #include "input/korvo_s31_keys.h"
+#endif
 #include <mybot/mybot.h>
 #include <mybot/platform/mybot_key.h>
 
@@ -131,9 +143,32 @@ esp_err_t bsp_s31_adc_calibration_raw_to_mv(adc_unit_t unit, int raw, int *mv) {
     *mv = raw;
     return current.calibration_ok ? ESP_OK : ESP_FAIL;
 }
+#if TEST_MOSAICO
+esp_err_t gpio_config(const gpio_config_t *config) {
+    CHECK(config->pin_bit_mask == (UINT64_C(1) << 7) && config->mode == GPIO_MODE_INPUT &&
+          config->pull_up_en == GPIO_PULLUP_ENABLE &&
+          config->pull_down_en == GPIO_PULLDOWN_DISABLE);
+    return fail("gpio") ? ESP_FAIL : ESP_OK;
+}
+int gpio_get_level(int pin) {
+    CHECK(pin == 7);
+    std::unique_lock<std::mutex> guard(queue_lock);
+    queue_changed.wait(guard, [] { return stop_worker || !samples.empty(); });
+    if (stop_worker) {
+        guard.unlock();
+        pthread_exit(nullptr);
+    }
+    current = samples.front();
+    samples.pop_front();
+    time_us.fetch_add(20000);
+    return current.mv == 1340 || current.mv == 1870 ? 0 : 1;
+}
+#endif
 int xTaskCreateWithCaps(task_function_t function, const char *name, uint32_t bytes, void *arg,
                         unsigned priority, TaskHandle_t *out, unsigned caps) {
-    CHECK(adc.open && !task.open && std::string(name) == "korvo_keys" && bytes == 3072 && !arg);
+    CHECK((TEST_MOSAICO || adc.open) && !task.open &&
+          std::string(name) == (TEST_MOSAICO ? "mosaico_keys" : "korvo_keys") && bytes == 3072 &&
+          !arg);
     CHECK(priority == 4 && caps == (MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
     if (fail("task"))
         return pdFALSE;
@@ -219,7 +254,7 @@ int main(int argc, char **argv) {
     CHECK(ops->init(&ctx, emit, &events) < 0 && !ctx); // source not prepared
     if (scenario != "behavior" && scenario != "ordering" && scenario != "touch" &&
         scenario != "touch_stale" && scenario != "touch_ordering" && scenario != "ui_controls" &&
-        scenario != "ui_commands" && scenario != "late_cancel") {
+        scenario != "ui_commands" && scenario != "late_cancel" && scenario != "gpio_behavior") {
         failure = scenario == "cleanup_retry" ? "channel" : scenario;
         if (scenario == "partial_adc_new") {
             failure = "adc_new";
@@ -234,14 +269,40 @@ int main(int argc, char **argv) {
         } else
             CHECK(!adc.open);
     }
-    CHECK(mybot_korvo_s31_keys_start() == 0 && task.open && adc.open);
+    CHECK(mybot_korvo_s31_keys_start() == 0 && task.open && (TEST_MOSAICO || adc.open));
     const unsigned news = adc_news;
     CHECK(mybot_korvo_s31_keys_start() == 0 && adc_news == news && task_news == 1);
     CHECK(ops->init(&ctx, emit, &events) == 0 && ctx);
     void *other = reinterpret_cast<void *>(1);
     CHECK(ops->init(&other, emit, &events) < 0 && !other);
+    if (scenario == "gpio_behavior") {
+        feed(1340, 170);
+        CHECK(events.empty() && provisioning == 0); // held through boot is ignored
+    }
     feed(2000, 4);
-    if (scenario == "touch") {
+    if (scenario == "gpio_behavior") {
+        feed(1340, 2);
+        feed(2000, 4);
+        CHECK(events.empty()); // bounce
+        press(1340);
+        CHECK(events.size() == 1 && events.back() == MYBOT_KEY_EVENT_CONVERSATION_START);
+        state = MYBOT_STATE_IN_CONVERSATION;
+        press(1340);
+        CHECK(events.size() == 2 && events.back() == MYBOT_KEY_EVENT_CONVERSATION_STOP);
+        state = MYBOT_STATE_START_UNKNOWN;
+        press(1340);
+        CHECK(events.size() == 2);
+        feed(1340, 160);
+        CHECK(provisioning == 1);
+        feed(1340, 20);
+        feed(2000, 4);
+        CHECK(events.size() == 2 && provisioning == 1); // no click after long hold
+        ops->destroy(ctx);
+        feed(1340, 160);
+        feed(2000, 4);
+        CHECK(provisioning == 2 && events.size() == 2); // provisioning works detached
+        CHECK(ops->init(&ctx, emit, &events) == 0);
+    } else if (scenario == "touch") {
         tap();
         feed(2000, 1);
         CHECK(events.empty()); // screen started with a finger down: require a clean release
@@ -552,6 +613,7 @@ int main(int argc, char **argv) {
         queue_changed.notify_all();
     }
     worker.join();
-    CHECK(adc.open && task_news == 1); // board process-lifetime source is preserved
-    std::printf("PASS korvo_s31_keys %s\n", argv[1]);
+    CHECK((TEST_MOSAICO || adc.open) &&
+          task_news == 1); // board process-lifetime source is preserved
+    std::printf("PASS %s_keys %s\n", TEST_MOSAICO ? "mosaico" : "korvo_s31", argv[1]);
 }

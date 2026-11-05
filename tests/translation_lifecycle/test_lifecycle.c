@@ -76,6 +76,11 @@ typedef struct {
     char fail_set[20];
     char fail_get[20];
     char fail_erase[20];
+    /* Entries left for the journal after other namespaces; updates coexist
+     * with the old blob until the replacement commits. Zero means unlimited. */
+    size_t journal_entries_budget;
+    size_t journal_peak_entries;
+    unsigned journal_budget_failures;
     bool reject_submit;
     bool callback_ends_session;
     unsigned configurations;
@@ -118,12 +123,27 @@ int mybot_kv_store_get(mybot_kv_store_t *store, const char *key, void *value, si
     *length = entry->size;
     return 0;
 }
+static size_t journal_entries(size_t bytes) {
+    /* 32-byte NVS entries, two chunk headers plus the blob index. This includes
+     * the observed page split: the old 1456-byte journal occupied 49 entries. */
+    return (bytes + 31U) / 32U + 3U;
+}
 int mybot_kv_store_set(mybot_kv_store_t *store, const char *key, const void *value, size_t length) {
     fixture_t *fixture = store->ctx;
     if (strcmp(fixture->fail_set, key) == 0)
         return -1;
     slot_t *entry = slot(fixture, key, true);
     assert(entry && length <= sizeof(entry->data));
+    if (fixture->journal_entries_budget && strcmp(key, "tr_session") == 0) {
+        size_t concurrent =
+            journal_entries(length) + (entry->present ? journal_entries(entry->size) : 0);
+        if (concurrent > fixture->journal_entries_budget) {
+            ++fixture->journal_budget_failures;
+            return -1;
+        }
+        if (concurrent > fixture->journal_peak_entries)
+            fixture->journal_peak_entries = concurrent;
+    }
     memcpy(entry->data, value, length);
     entry->size = length;
     entry->present = true;
@@ -559,6 +579,9 @@ static void storage_failure_after_start(void) {
     assert(strcmp(fixture.lifecycle.error_code, "STORAGE_ERROR") == 0);
     assert(fixture.published_state == MYBOT_DEVICE_STATE_ERROR);
     assert(strcmp(fixture.published_error, "STORAGE_ERROR") == 0);
+    mybot_device_lifecycle_request_start(&fixture.lifecycle);
+    ticks(&fixture, 1);
+    assert(fixture.queued_count == 0 && fixture.starts == 0);
     dispose(&fixture);
 }
 static void storage_erase_failure_retains_id(void) {
@@ -750,6 +773,200 @@ static void corrupt_and_unreadable_journal(void) {
     assert(fixture.lifecycle.state == MYBOT_DEVICE_STATE_ERROR && stored(&fixture, "tr_session"));
     dispose(&fixture);
 }
+/* Persistent layouts are deliberately explicit: legacy recovery must not
+ * depend on the production encoder silently changing the test fixture. */
+typedef struct {
+    uint32_t version, phase;
+    char server[640], device[128], credential[512], parent[128], reason[32];
+    int64_t expires_at;
+} legacy_journal_t;
+typedef struct {
+    uint32_t version, phase;
+    int64_t expires_at;
+} compact_journal_header_t;
+_Static_assert(sizeof(legacy_journal_t) == 1456, "Legacy fixture layout changed");
+_Static_assert(sizeof(compact_journal_header_t) == 16, "Compact fixture header changed");
+
+static void legacy_journal_recovery(void) {
+    for (unsigned phase = 1; phase <= 2; ++phase) {
+        fixture_t fixture;
+        bound(&fixture);
+        legacy_journal_t legacy = {.version = 1, .phase = phase, .expires_at = host_now + 3600};
+        snprintf(legacy.server, sizeof(legacy.server), "%s", SERVER);
+        snprintf(legacy.device, sizeof(legacy.device), "%s", DEVICE);
+        snprintf(legacy.credential, sizeof(legacy.credential), "legacy-cleanup-credential");
+        snprintf(legacy.reason, sizeof(legacy.reason), "device_hangup");
+        if (phase == 2)
+            snprintf(legacy.parent, sizeof(legacy.parent), "legacy-parent");
+        assert(mybot_kv_store_set(&fixture.store, "tr_session", &legacy, sizeof(legacy)) == 0);
+        initialize(&fixture, true, "https://rebound.example.invalid/api", "REBOUND-DEVICE");
+        assert(fixture.lifecycle.journal_present && fixture.lifecycle.cleanup_needed);
+        assert(fixture.lifecycle.expires_at == legacy.expires_at);
+        assert(strcmp(fixture.lifecycle.pending_credential, legacy.credential) == 0);
+        mybot_device_lifecycle_request_start(&fixture.lifecycle);
+        ticks(&fixture, 1);
+        assert(!take(&fixture, MYBOT_DEVICE_SERVICE_START));
+        if (phase == 1) {
+            assert(fixture.lifecycle.state == MYBOT_DEVICE_STATE_START_UNKNOWN);
+            assert(fixture.queued_count == 0 && fixture.lifecycle.pending_unknown);
+        } else {
+            mybot_device_service_request_t *request = take(&fixture, MYBOT_DEVICE_SERVICE_STOP);
+            assert(request && strcmp(request->payload.stop.conversation_id, legacy.parent) == 0);
+            assert(strcmp(request->credential, legacy.credential) == 0);
+            assert(strcmp(request->server_base, SERVER) == 0);
+            assert(strcmp(request->device_id, DEVICE) == 0);
+            deliver(&fixture, request);
+            assert(!stored(&fixture, "tr_session"));
+        }
+        dispose(&fixture);
+    }
+}
+
+static void compact_journal_roundtrip(void) {
+    for (unsigned phase = 1; phase <= 2; ++phase) {
+        fixture_t fixture;
+        bound(&fixture);
+        mybot_device_service_request_t *request = starting(&fixture);
+        if (phase == 2) {
+            success_response(request, 62);
+            deliver(&fixture, request);
+        } else {
+            aosl_hal_free(request); /* Reset after dispatch, before a response. */
+        }
+        slot_t *record = slot(&fixture, "tr_session", false);
+        compact_journal_header_t header;
+        assert(record && record->size < sizeof(legacy_journal_t));
+        memcpy(&header, record->data, sizeof(header));
+        assert(header.version == 2 && header.phase == phase);
+        initialize(&fixture, true, SERVER, DEVICE);
+        assert(fixture.lifecycle.journal_present && fixture.lifecycle.cleanup_needed);
+        assert(strcmp(fixture.lifecycle.pending_credential, "original-test-credential") == 0);
+        assert(strcmp(fixture.lifecycle.pending_server_base, SERVER) == 0);
+        assert(strcmp(fixture.lifecycle.pending_device_id, DEVICE) == 0);
+        assert(strcmp(fixture.lifecycle.stop_reason, "device_hangup") == 0);
+        mybot_device_lifecycle_request_start(&fixture.lifecycle);
+        ticks(&fixture, 1);
+        assert(!take(&fixture, MYBOT_DEVICE_SERVICE_START));
+        if (phase == 1) {
+            assert(fixture.queued_count == 0 && fixture.lifecycle.pending_unknown);
+            assert(fixture.lifecycle.state == MYBOT_DEVICE_STATE_START_UNKNOWN);
+        } else {
+            request = take(&fixture, MYBOT_DEVICE_SERVICE_STOP);
+            assert(request && strcmp(request->payload.stop.conversation_id, "parent-62") == 0);
+            assert(fixture.lifecycle.expires_at == host_now + 3600);
+            deliver(&fixture, request);
+            assert(!stored(&fixture, "tr_session"));
+        }
+        dispose(&fixture);
+    }
+}
+
+static size_t encode_test_journal(unsigned char *out, uint32_t version, uint32_t phase,
+                                  const char *fields[5]) {
+    const compact_journal_header_t header = {version, phase, host_now + 3600};
+    memcpy(out, &header, sizeof(header));
+    size_t length = sizeof(header);
+    for (size_t i = 0; i < 5; ++i) {
+        size_t bytes = strlen(fields[i]) + 1;
+        assert(length + bytes <= 2048);
+        memcpy(out + length, fields[i], bytes);
+        length += bytes;
+    }
+    return length;
+}
+static void reject_journal_unchanged(const void *bytes, size_t length) {
+    fixture_t fixture;
+    bound(&fixture);
+    assert(mybot_kv_store_set(&fixture.store, "tr_session", bytes, length) == 0);
+    initialize(&fixture, true, SERVER, DEVICE);
+    assert(fixture.lifecycle.state == MYBOT_DEVICE_STATE_ERROR && fixture.lifecycle.storage_fault);
+    mybot_device_lifecycle_request_start(&fixture.lifecycle);
+    mybot_device_lifecycle_request_pair(&fixture.lifecycle);
+    ticks(&fixture, 10);
+    assert(fixture.queued_count == 0);
+    slot_t *record = slot(&fixture, "tr_session", false);
+    assert(record && record->present && record->size == length);
+    assert(memcmp(record->data, bytes, length) == 0);
+    dispose(&fixture);
+}
+static void compact_journal_rejects_malformed(void) {
+    unsigned char bytes[2048];
+    const char *fields[5] = {SERVER, DEVICE, "cleanup-credential", "cleanup-parent", "error"};
+    size_t length = encode_test_journal(bytes, 2, 2, fields);
+    /* Every truncated prefix, including the final missing NUL, is rejected. */
+    for (size_t truncated = 0; truncated < length; ++truncated)
+        reject_journal_unchanged(bytes, truncated);
+    bytes[length] = 0;
+    reject_journal_unchanged(bytes, length + 1);
+    length = encode_test_journal(bytes, 3, 2, fields);
+    reject_journal_unchanged(bytes, length);
+    length = encode_test_journal(bytes, 2, 0, fields);
+    reject_journal_unchanged(bytes, length);
+    length = encode_test_journal(bytes, 2, 3, fields);
+    reject_journal_unchanged(bytes, length);
+    for (size_t i = 0; i < 5; ++i) {
+        const char *saved = fields[i];
+        fields[i] = "";
+        length = encode_test_journal(bytes, 2, 2, fields);
+        reject_journal_unchanged(bytes, length); /* Known phase requires all five fields. */
+        fields[i] = saved;
+    }
+    const size_t capacities[5] = {640, 128, 512, 128, 32};
+    char oversized[641];
+    for (size_t i = 0; i < 5; ++i) {
+        memset(oversized, 'x', capacities[i]);
+        oversized[capacities[i]] = '\0';
+        const char *saved = fields[i];
+        fields[i] = oversized;
+        length = encode_test_journal(bytes, 2, 2, fields);
+        reject_journal_unchanged(bytes, length);
+        fields[i] = saved;
+    }
+    length = encode_test_journal(bytes, 2, 2, fields);
+    memset(bytes + length, 'x', sizeof(legacy_journal_t) + 1 - length);
+    reject_journal_unchanged(bytes, sizeof(legacy_journal_t) + 1);
+}
+
+static void compact_journal_fits_existing_nvs(void) {
+    fixture_t fixture;
+    bound(&fixture);
+    fixture.journal_entries_budget = 67; /* Observed available entries before first write. */
+    legacy_journal_t old = {0};
+    assert(journal_entries(sizeof(old)) == 49);
+    assert(mybot_kv_store_set(&fixture.store, "tr_session", &old, sizeof(old)) == 0);
+    assert(fixture.journal_entries_budget - journal_entries(sizeof(old)) == 18);
+    old.phase = 2;
+    assert(mybot_kv_store_set(&fixture.store, "tr_session", &old, sizeof(old)) < 0);
+    assert(slot(&fixture, "tr_session", false)->data[4] == 0); /* Old journal survived. */
+    assert(mybot_kv_store_erase(&fixture.store, "tr_session") == 0);
+    dispose(&fixture);
+
+    bound(&fixture);
+    fixture.journal_entries_budget = 67;
+    snprintf(fixture.lifecycle.server_base, sizeof(fixture.lifecycle.server_base),
+             "https://example.invalid/device/api");
+    /* Synthetic endpoint and device ID match the deployed lengths: 34/30. */
+    snprintf(fixture.lifecycle.device_id, sizeof(fixture.lifecycle.device_id),
+             "ESP32-0123456789ABCDEF01234567");
+    memset(fixture.lifecycle.device_token, 'k', sizeof(fixture.lifecycle.device_token) - 1);
+    fixture.lifecycle.device_token[sizeof(fixture.lifecycle.device_token) - 1] = '\0';
+    for (unsigned i = 0; i < 4; ++i) {
+        mybot_device_service_request_t *request = starting(&fixture);
+        assert(slot(&fixture, "tr_session", false)->size == 609);
+        success_response(request, 63);
+        snprintf(request->payload.start.response.conversation_id,
+                 sizeof(request->payload.start.response.conversation_id), "conv_rtc_012345678901");
+        deliver(&fixture, request);
+        assert(fixture.starts == i + 1 && !fixture.lifecycle.storage_fault);
+        assert(slot(&fixture, "tr_session", false)->size == 630);
+        request = stopping(&fixture);
+        deliver(&fixture, request);
+        assert_completed_stop(&fixture, "");
+    }
+    assert(fixture.journal_peak_entries <= 67 && fixture.journal_budget_failures == 0);
+    dispose(&fixture);
+}
+
 static void duplicate_and_stale_results(void) {
     fixture_t fixture;
     bound(&fixture);
@@ -1000,6 +1217,10 @@ int main(void) {
     language_persistence();
     direct_language_selection();
     corrupt_and_unreadable_journal();
+    legacy_journal_recovery();
+    compact_journal_roundtrip();
+    compact_journal_rejects_malformed();
+    compact_journal_fits_existing_nvs();
     duplicate_and_stale_results();
     allocation_failure();
     binding_revocation_retains_cleanup_identity();
@@ -1008,6 +1229,6 @@ int main(void) {
     unsynchronized_start_allows_retry_after_sync();
     shutdown_confirmed_stop_does_not_duplicate();
     invalid_initial_configuration();
-    puts("translation lifecycle: 31 fault/lifecycle scenarios passed (UBSan)");
+    puts("translation lifecycle: 35 fault/lifecycle scenarios passed (UBSan)");
     return 0;
 }

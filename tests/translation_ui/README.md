@@ -3,7 +3,7 @@
 
 Run `sh tests/translation_ui/run.sh`. Both display languages compile the real LVGL
 view and SDK language list against an object/event model. Tests cover the native
-800×480 bounds, initial allocation failures, repeated teardown, media translation,
+480×480 and 800×480 bounds, initial allocation failures, repeated teardown, media translation,
 face-to-face turn selection, and the remaining meeting preview.
 
 Media and face-to-face share one stored language pair. The face-to-face UI labels
@@ -38,3 +38,14 @@ touch coordinates, physical LCD colors, audio routing, cloud translation or acou
 behavior. S31 display/input tests cover their own driver boundaries. Font checks
 require all static UI glyphs at 20/28/40 px, all 6,763 common Chinese caption glyphs,
 Latin-1 and punctuation, the 28 px font fallback, and the caption font size budget.
+
+The navigation and fault cases run at native 480×480 and 800×480 in both UI
+languages. Every click and state update checks widget bounds, disjoint sibling
+touch regions, and a minimum 44×44 pixel touch target. This checks the square
+layout without shrinking fonts; physical panel rendering and touch calibration
+still require Mosaico hardware.
+
+Mosaico geometry checks use a 64 px corner radius for every visible label and
+interactive region. The top status strip must stay between x=60 and x=419;
+the home entry must be a single-line label. This guards the rounded cover glass
+that the original rectangular bounds check did not model.

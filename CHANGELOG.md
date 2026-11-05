@@ -2,6 +2,19 @@
 
 ## Unreleased — standalone S31 translation
 
+- Use 40-row Mosaico display buffers; the user confirmed that the persistent caption stripe disappeared and display output is normal.
+
+- Store compact session journals to fit atomic updates in the existing NVS partition; preserve legacy journal recovery and all existing Wi-Fi/binding data.
+
+- Expose exact NVS operation errors, storage capacity and heap diagnostics when translation persistence fails; distinguish journal allocation from write failures without logging stored values.
+
+- Respect Mosaico rounded screen corners and read CST9220 reports only when ready, preventing repeated ACK reads from cancelling touches.
+
+- Make ESP-Mosaico CoreBoard V1.2 the default and future design target, retaining the Korvo profile.
+- Port media and face-to-face translation to ES8311 stereo I2S, AI-key controls and a native 480×480 CO5300/CST9220 LVGL layout; expose a Type-C CDC log console.
+- Share the existing bounded audio lifecycle across board-specific codec backends, and validate both PCM mappings and square-screen controls in host tests. Mosaico translation hardware acceptance remains pending.
+- Add an opt-in S31 native USB CDC echo diagnostic, pinned TinyUSB dependencies and a bounded macOS binary-integrity checker; USB audio remains pending.
+- Add a separate USB Host descriptor probe for direct Android-phone/peripheral enumeration, without starting translation or accessing files.
 - Disable AI QoS by default in firmware and the SDK fallback; retain explicit opt-in support.
 - Add face-to-face translation with two RTC routes, one shared RTM subscription, explicit microphone direction selection and direction-aware captions/history.
 - Receive trusted RTM original/translated captions, merge streaming revisions and share a bounded session history across the live/full-text/history pages.

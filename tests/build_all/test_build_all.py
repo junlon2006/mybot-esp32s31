@@ -30,9 +30,10 @@ SAFE_CLEANUP = sys.version_info >= (3, 11) and builder.shutil.rmtree.avoids_syml
 class BoardCapabilityTests(unittest.TestCase):
     def test_s31_profile_declares_display_and_no_video(self) -> None:
         profiles = {profile.name: profile for profile in builder.supported_boards()}
-        profile = profiles["esp32-s31-korvo-1"]
-        self.assertTrue(profile.has_display)
-        self.assertFalse(profile.video_capable)
+        for name in ("esp-mosaico-v1.2", "esp32-s31-korvo-1"):
+            with self.subTest(board=name):
+                self.assertTrue(profiles[name].has_display)
+                self.assertFalse(profiles[name].video_capable)
 
     def test_explicit_false_overrides_legacy_source_detection(self) -> None:
         profile = """

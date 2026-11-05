@@ -15,6 +15,7 @@ set(MYBOT_BOARD_SOURCES
     "${CMAKE_CURRENT_LIST_DIR}/board.c"
     "${CMAKE_CURRENT_LIST_DIR}/korvo_s31_hardware.c"
     "${CMAKE_CURRENT_LIST_DIR}/reference/esp32_s31_adc_calibration.c"
+    "${MYBOT_PLATFORM_ROOT}/src/drivers/audio/codec_audio.c"
     "${MYBOT_PLATFORM_ROOT}/src/drivers/audio/korvo_s31_codec_audio.c"
     "${MYBOT_PLATFORM_ROOT}/src/drivers/input/korvo_s31_adc_keys.c"
     "${MYBOT_PLATFORM_ROOT}/src/drivers/input/korvo_s31_gt1151_touch.c")

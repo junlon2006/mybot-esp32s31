@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 /* Copyright (c) 2026 Project Contributors */
 #include "display/lvgl_view.h"
-#include "input/korvo_s31_keys.h"
+#include "input/board_keys.h"
 #include "network/wifi_control.h"
 #include "sdkconfig.h"
 
@@ -145,10 +145,21 @@ struct View {
     char pending_source[33]{};
     char pending_target[33]{};
     int brightness = 60;
+    int width = 800;
     char preview_source[33] = "zh-CN";
     char preview_target[33] = "en-US";
 };
 View s_view;
+
+bool compact() {
+    return s_view.width == 480;
+}
+int margin() {
+    return compact() ? 32 : 24;
+}
+int content_width() {
+    return s_view.width - 2 * margin();
+}
 
 bool idle() {
     return s_view.content.screen == MYBOT_LCD_SCREEN_READY ||
@@ -266,11 +277,16 @@ lv_obj_t *button(int x, int y, int width, int height, const char *text, Action a
 }
 void heading(const char *title, Action back = NoAction, const char *right = nullptr,
              Action right_action = NoAction) {
+    const int side = compact() ? 96 : 124;
+    const int inset = margin();
     if (back != NoAction)
-        button(24, 10, 116, 44, tr("< 返回", "< Back"), back, kSoft);
-    label(s_view.body, 150, 17, 500, 40, title, &mybot_lvgl_font_28);
+        button(inset, 10, side, 44, tr("< 返回", "< Back"), back, kSoft);
+    const int left = back != NoAction ? inset + side + 8 : inset;
+    const int edge = right ? inset + side + 8 : inset;
+    label(s_view.body, left, 17, s_view.width - left - edge, 48, title,
+          compact() ? &mybot_lvgl_font_20 : &mybot_lvgl_font_28);
     if (right)
-        button(652, 10, 124, 44, right, right_action, kSoft);
+        button(s_view.width - inset - side, 10, side, 44, right, right_action, kSoft);
 }
 const char *language_name(const char *code) {
     size_t count = 0;
@@ -357,7 +373,7 @@ void slider(int x, int y, int width, bool brightness) {
     Slider &control = brightness ? s_view.brightness_slider : s_view.volume_slider;
     control.brightness = brightness;
     control.width = width - 60;
-    control.object = panel(card, 30, 42, control.width, 36, brightness ? kPink : kMint, 0);
+    control.object = panel(card, 30, 38, control.width, 44, brightness ? kPink : kMint, 0);
     panel(control.object, 13, 13, control.width - 26, 10, kWhite, 5);
     control.fill = panel(control.object, 13, 13, 0, 10, kMuted, 5);
     control.knob = panel(control.object, 0, 5, 26, 26, kInk, 13);
@@ -410,28 +426,39 @@ void slider_event(lv_event_t *event) {
 }
 
 void utilities(int y) {
-    slider(24, y, 364, false);
-    slider(412, y, 364, true);
+    if (compact()) {
+        slider(margin(), y > 326 ? 326 : y, content_width(), false);
+    } else {
+        slider(24, y, 364, false);
+        slider(412, y, 364, true);
+    }
     update_volume();
 }
 void home() {
-    label(s_view.body, 40, 30, 350, 38, tr("你好，今天也有新发现", "Hello, Sunshine!"),
-          &mybot_lvgl_font_28, LV_TEXT_ALIGN_LEFT);
-    s_view.home_date =
-        label(s_view.body, 42, 82, 360, 30, "", &mybot_lvgl_font_20, LV_TEXT_ALIGN_LEFT, kMuted);
-    s_view.home_time =
-        label(s_view.body, 40, 122, 340, 70, "", &mybot_lvgl_font_40, LV_TEXT_ALIGN_LEFT);
-    label(s_view.body, 42, 198, 350, 32, tr("北京时间 / UTC+8", "Beijing time / UTC+8"),
-          &mybot_lvgl_font_20, LV_TEXT_ALIGN_LEFT, kMuted);
-    auto *orb = panel(s_view.body, 454, 28, 236, 236, kTeal, 118);
+    const int left = compact() ? margin() : 40;
+    label(s_view.body, left, compact() ? 12 : 30, compact() ? content_width() : 350, 38,
+          tr("你好，今天也有新发现", "Hello, Sunshine!"), &mybot_lvgl_font_28, LV_TEXT_ALIGN_LEFT);
+    s_view.home_date = label(s_view.body, left, compact() ? 58 : 82, 360, 30, "",
+                             &mybot_lvgl_font_20, LV_TEXT_ALIGN_LEFT, kMuted);
+    s_view.home_time = label(s_view.body, left, compact() ? 94 : 122, 340, compact() ? 56 : 70, "",
+                             &mybot_lvgl_font_40, LV_TEXT_ALIGN_LEFT);
+    if (!compact())
+        label(s_view.body, 42, 198, 350, 32, tr("北京时间 / UTC+8", "Beijing time / UTC+8"),
+              &mybot_lvgl_font_20, LV_TEXT_ALIGN_LEFT, kMuted);
+    auto *orb = compact() ? panel(s_view.body, margin(), 174, content_width(), 96, kTeal, 24)
+                          : panel(s_view.body, 454, 28, 236, 236, kTeal, 118);
     if (orb) {
         lv_obj_add_flag(orb, LV_OBJ_FLAG_CLICKABLE);
         lv_obj_add_event_cb(orb, clicked, LV_EVENT_CLICKED, reinterpret_cast<void *>(Entry));
-        label(orb, 18, 72, 200, 92, tr("开始\n翻译  >", "Let's\ntranslate  >"),
+        label(orb, 18, compact() ? 28 : 72, compact() ? content_width() - 36 : 200,
+              compact() ? 40 : 92,
+              compact() ? tr("开始翻译 >", "Start translation >")
+                        : tr("开始\n翻译  >", "Let's\ntranslate  >"),
               &mybot_lvgl_font_28);
     }
-    label(s_view.body, 650, 258, 140, 30, tr("电量 --", "Battery --"));
-    utilities(318);
+    if (!compact())
+        label(s_view.body, 650, 258, 140, 30, tr("电量 --", "Battery --"));
+    utilities(compact() ? 286 : 318);
 }
 void entry() {
     heading(tr("选择翻译方式", "Choose a translation scene"), Home);
@@ -442,28 +469,36 @@ void entry() {
     const Action actions[] = {Media, Face, Meeting};
     const uint32_t colors[] = {kTeal, kPurple, kYellow};
     for (unsigned i = 0; i < 3; ++i) {
-        auto *card =
-            button(24 + i * 256, 108, 240, 212, "", actions[i], colors[i], s_view.pending_mode < 0);
-        label(card, 12, 54, 216, 40, names[i], &mybot_lvgl_font_28);
-        label(card, 12, 116, 216, 60, notes[i], &mybot_lvgl_font_20);
+        auto *card = button(compact() ? margin() : 24 + i * 256, compact() ? 78 + i * 112 : 108,
+                            compact() ? content_width() : 240, compact() ? 100 : 212, "",
+                            actions[i], colors[i], s_view.pending_mode < 0);
+        label(card, 12, compact() ? 12 : 54, compact() ? content_width() - 24 : 216, 40, names[i],
+              &mybot_lvgl_font_28);
+        label(card, 12, compact() ? 58 : 116, compact() ? content_width() - 24 : 216,
+              compact() ? 30 : 60, notes[i], &mybot_lvgl_font_20);
     }
-    label(s_view.body, 24, 348, 752, 46,
-          tr("请选择适合的翻译方式", "Choose the translation scene that suits you"),
-          &mybot_lvgl_font_20, LV_TEXT_ALIGN_CENTER, kMuted);
+    if (!compact())
+        label(s_view.body, 24, 348, 752, 46,
+              tr("请选择适合的翻译方式", "Choose the translation scene that suits you"),
+              &mybot_lvgl_font_20, LV_TEXT_ALIGN_CENTER, kMuted);
 }
 void setup() {
     heading(scene_name(), Entry);
-    label(s_view.body, 28, 78, 350, 30,
+    const int column = compact() ? 184 : 330;
+    const int left = compact() ? margin() : 28;
+    const int right = s_view.width - left - column;
+    label(s_view.body, left, 78, column, 30,
           s_view.scene == Scene::Media ? tr("输入语言", "Input language")
                                        : tr("我的语言", "My language"));
-    label(s_view.body, 422, 78, 350, 30,
+    label(s_view.body, right, 78, column, 30,
           s_view.scene == Scene::Media ? tr("翻译为", "Translate to")
                                        : tr("对方语言", "Other language"));
-    button(28, 116, 330, 96, language_name(source_code()), Source, kTeal, languages_allowed());
-    label(s_view.body, 366, 144, 66, 40, s_view.scene == Scene::Media ? ">" : "<>",
-          &mybot_lvgl_font_28);
-    button(442, 116, 330, 96, language_name(target_code()), Target, kPurple, languages_allowed());
-    label(s_view.body, 40, 242, 720, 64,
+    button(left, 116, column, 96, language_name(source_code()), Source, kTeal, languages_allowed());
+    label(s_view.body, left + column, 144, right - left - column, 40,
+          s_view.scene == Scene::Media ? ">" : "<>", &mybot_lvgl_font_28);
+    button(right, 116, column, 96, language_name(target_code()), Target, kPurple,
+           languages_allowed());
+    label(s_view.body, margin(), 236, content_width(), 76,
           s_view.pending_mode >= 0 ? tr("正在切换翻译方式", "Changing translation mode")
           : s_view.scene == Scene::Media
               ? tr("板载麦克风拾音，板载扬声器播放译音",
@@ -473,7 +508,7 @@ void setup() {
                    "Connect, then select each speaker's language to take turns")
               : tr("界面预览，业务待实现", "UI preview. This scene is not available yet."),
           &mybot_lvgl_font_20, LV_TEXT_ALIGN_CENTER, kMuted);
-    button(218, 328, 364, 64,
+    button((s_view.width - 364) / 2, 328, 364, 64,
            s_view.scene != Scene::Meeting ? tr("开始翻译  >", "Start translation  >")
                                           : tr("待开放", "Coming soon"),
            Start, s_view.scene != Scene::Meeting ? kTeal : kSoft,
@@ -493,18 +528,20 @@ void languages() {
     for (unsigned i = 0; i < kLanguagesPerPage && begin + i < count; ++i) {
         const auto &item = list[begin + i];
         const bool chosen = std::strcmp(item.code, selected) == 0;
-        button(24 + (i % 2) * 384, 84 + (i / 2) * 88, 368, 72, tr(item.name_zh, item.name_en),
-               static_cast<Action>(LanguageBase + begin + i), chosen ? kTeal : kWhite,
-               std::strcmp(item.code, other) != 0 && languages_allowed());
+        constexpr int gap = 16;
+        const int column = (content_width() - gap) / 2;
+        button(margin() + (i % 2) * (column + gap), 84 + (i / 2) * 88, column, 72,
+               tr(item.name_zh, item.name_en), static_cast<Action>(LanguageBase + begin + i),
+               chosen ? kTeal : kWhite, std::strcmp(item.code, other) != 0 && languages_allowed());
     }
-    button(24, 358, 190, 48, tr("< 上一页", "< Previous"), LanguagePrevious, kSoft,
-           s_view.language_page > 0);
+    button(margin(), 358, compact() ? 142 : 190, 48, tr("< 上一页", "< Previous"), LanguagePrevious,
+           kSoft, s_view.language_page > 0);
     char text[32];
     std::snprintf(text, sizeof(text), "%u / %u", s_view.language_page + 1,
                   static_cast<unsigned>((count + kLanguagesPerPage - 1) / kLanguagesPerPage));
-    label(s_view.body, 310, 366, 180, 32, text);
-    button(586, 358, 190, 48, tr("下一页 >", "Next >"), LanguageNext, kSoft,
-           begin + kLanguagesPerPage < count);
+    label(s_view.body, (s_view.width - 120) / 2, 366, 120, 32, text);
+    button(s_view.width - margin() - (compact() ? 142 : 190), 358, compact() ? 142 : 190, 48,
+           tr("下一页 >", "Next >"), LanguageNext, kSoft, begin + kLanguagesPerPage < count);
 }
 void format_route(char *text, size_t capacity, mybot_translation_direction_t direction) {
     const bool reverse = face_session() && direction == MYBOT_TRANSLATION_DIRECTION_LISTEN;
@@ -525,27 +562,33 @@ void route_label(int y) {
                       tr("请选择发言语言", "Choose the speaking language"));
     else
         format_route(text, sizeof(text), s_view.content.input_direction);
-    label(s_view.body, 40, y, 570, 36, text, &mybot_lvgl_font_20, LV_TEXT_ALIGN_LEFT);
+    auto *route = label(s_view.body, margin(), y, compact() ? content_width() - 116 : 570,
+                        compact() ? 52 : 36, text, &mybot_lvgl_font_20, LV_TEXT_ALIGN_LEFT);
+    if (route)
+        lv_label_set_long_mode(route, LV_LABEL_LONG_DOT);
 }
 void live() {
     const bool face = face_session();
     heading(face ? tr("面对面翻译", "Face-to-face translation")
                  : tr("媒体翻译", "Media translation"),
             NoAction, tr("更多 ...", "More ..."), Menu);
-    auto *card = button(24, 82, 752, 202, "", Full, kWhite);
+    auto *card = button(margin(), compact() ? 74 : 82, content_width(), compact() ? 204 : 202, "",
+                        Full, kWhite);
+    const int text_width = content_width() - 40;
     s_view.caption_notice =
-        label(card, 20, 12, 712, 32, "", &mybot_lvgl_font_20, LV_TEXT_ALIGN_LEFT, kMuted);
-    s_view.caption_target = label(card, 20, 58, 712, 78, tr("等待字幕", "Waiting for captions"),
-                                  &mybot_caption_font_28, LV_TEXT_ALIGN_LEFT);
-    s_view.caption_source =
-        label(card, 20, 140, 712, 30, "", &mybot_caption_font_20, LV_TEXT_ALIGN_LEFT);
+        label(card, 20, 12, text_width, 32, "", &mybot_lvgl_font_20, LV_TEXT_ALIGN_LEFT, kMuted);
+    s_view.caption_target =
+        label(card, 20, 58, text_width, 78, tr("等待字幕", "Waiting for captions"),
+              &mybot_caption_font_28, LV_TEXT_ALIGN_LEFT);
+    s_view.caption_source = label(card, 20, 140, text_width, compact() ? 52 : 30, "",
+                                  &mybot_caption_font_20, LV_TEXT_ALIGN_LEFT);
     if (s_view.caption_target)
         lv_label_set_long_mode(s_view.caption_target, LV_LABEL_LONG_DOT);
     if (s_view.caption_source)
         lv_label_set_long_mode(s_view.caption_source, LV_LABEL_LONG_DOT);
-    route_label(290);
-    button(628, 284, 148, 44, s_view.content.paused ? tr("继续", "Resume") : tr("暂停", "Pause"),
-           Pause, kPurple,
+    route_label(compact() ? 282 : 290);
+    button(s_view.width - margin() - (compact() ? 108 : 148), 284, compact() ? 108 : 148, 44,
+           s_view.content.paused ? tr("继续", "Resume") : tr("暂停", "Pause"), Pause, kPurple,
            !s_view.command_pending && s_view.pending_direction < 0 &&
                (!face || s_view.content.input_direction != MYBOT_TRANSLATION_DIRECTION_NONE));
     if (face) {
@@ -554,10 +597,12 @@ void live() {
                                                             MYBOT_TRANSLATION_DIRECTION_LISTEN};
         const char *codes[] = {s_view.content.source_language, s_view.content.target_language};
         for (unsigned i = 0; i < 2; ++i) {
+            const int column = (content_width() - 24) / 2;
             auto *choice =
-                button(24 + i * 388, 338, 364, 76, "", i ? Listen : Speak,
+                button(margin() + i * (column + 24), 338, column, 76, "", i ? Listen : Speak,
                        s_view.content.input_direction == directions[i] ? kTeal : kWhite, allow);
-            label(choice, 12, 20, 340, 40, language_name(codes[i]), &mybot_lvgl_font_28);
+            label(choice, 12, 12, column - 24, 52, language_name(codes[i]),
+                  compact() ? &mybot_lvgl_font_20 : &mybot_lvgl_font_28);
         }
     } else {
         utilities(338);
@@ -565,42 +610,55 @@ void live() {
 }
 void menu() {
     heading(tr("翻译选项", "Translation options"), Live);
-    button(40, 92, 720, 64, tr("本次字幕与全文  >", "Captions and full text  >"), History, kWhite);
-    button(40, 174, 720, 64, tr("音量与亮度  >", "Volume and brightness  >"), Sound, kMint);
-    button(40, 256, 720, 64, tr("更改语言与使用方式  >", "Change languages and scene  >"), Change,
-           kPurple);
-    button(40, 338, 720, 64, tr("结束这次翻译", "End this translation"), End, kPink);
+    button(margin(), 92, content_width(), 64, tr("本次字幕与全文  >", "Captions and full text  >"),
+           History, kWhite);
+    button(margin(), 174, content_width(), 64,
+           compact() ? tr("输出音量", "Output volume")
+                     : tr("音量与亮度  >", "Volume and brightness  >"),
+           Sound, kMint);
+    button(margin(), 256, content_width(), 64,
+           tr("更改语言与使用方式  >", "Change languages and scene  >"), Change, kPurple);
+    button(margin(), 338, content_width(), 64, tr("结束这次翻译", "End this translation"), End,
+           kPink);
 }
 void captions(bool history) {
     heading(history ? tr("本次字幕历史", "Caption history") : tr("完整字幕", "Full caption"),
             history ? CaptionExit : History);
     if (history) {
-        s_view.caption_notice = label(s_view.body, 36, 64, 728, 30, "", &mybot_lvgl_font_20,
-                                      LV_TEXT_ALIGN_LEFT, kMuted);
+        s_view.caption_notice = label(s_view.body, margin() + 8, 64, content_width() - 16, 30, "",
+                                      &mybot_lvgl_font_20, LV_TEXT_ALIGN_LEFT, kMuted);
+        if (s_view.caption_notice)
+            lv_label_set_long_mode(s_view.caption_notice, LV_LABEL_LONG_DOT);
         for (unsigned i = 0; i < kCaptionsPerPage; ++i) {
-            auto *card = button(28, 102 + i * 62, 744, 58, "", static_cast<Action>(CaptionBase + i),
-                                kWhite, false, 12);
+            auto *card = button(margin(), 102 + i * 62, content_width(), 58, "",
+                                static_cast<Action>(CaptionBase + i), kWhite, false, 12);
             s_view.history_buttons[i] = card;
-            s_view.history_route[i] =
-                label(card, 16, 2, 712, 28, "", &mybot_lvgl_font_20, LV_TEXT_ALIGN_LEFT, kMuted);
-            s_view.history_target[i] =
-                label(card, 16, 29, 712, 28, "", &mybot_caption_font_20, LV_TEXT_ALIGN_LEFT);
+            s_view.history_route[i] = label(card, 16, 2, content_width() - 32, 28, "",
+                                            &mybot_lvgl_font_20, LV_TEXT_ALIGN_LEFT, kMuted);
+            s_view.history_target[i] = label(card, 16, 29, content_width() - 32, 28, "",
+                                             &mybot_caption_font_20, LV_TEXT_ALIGN_LEFT);
             if (s_view.history_target[i])
                 lv_label_set_long_mode(s_view.history_target[i], LV_LABEL_LONG_DOT);
             if (s_view.history_route[i])
                 lv_label_set_long_mode(s_view.history_route[i], LV_LABEL_LONG_DOT);
         }
         s_view.history_previous =
-            button(28, 370, 190, 44, tr("< 上一页", "< Previous"), HistoryPrevious, kSoft, false);
-        button(242, 370, 316, 44,
+            button(margin(), compact() ? 354 : 370, compact() ? 120 : 190, compact() ? 64 : 44,
+                   tr("< 上一页", "< Previous"), HistoryPrevious, kSoft, false);
+        button(compact() ? 164 : 242, compact() ? 354 : 370, compact() ? 152 : 316,
+               compact() ? 64 : 44,
                active() ? tr("返回实时翻译", "Back to live") : tr("返回结束页", "Back to summary"),
                CaptionExit, kTeal);
         s_view.history_next =
-            button(582, 370, 190, 44, tr("下一页 >", "Next >"), HistoryNext, kSoft, false);
+            button(s_view.width - margin() - (compact() ? 120 : 190), compact() ? 354 : 370,
+                   compact() ? 120 : 190, compact() ? 64 : 44, tr("下一页 >", "Next >"),
+                   HistoryNext, kSoft, false);
     } else {
-        s_view.caption_route = label(s_view.body, 40, 64, 720, 32, "", &mybot_lvgl_font_20,
-                                     LV_TEXT_ALIGN_LEFT, kMuted);
-        auto *card = panel(s_view.body, 28, 104, 744, 242, kWhite);
+        s_view.caption_route = label(s_view.body, margin() + 8, 64, content_width() - 16, 32, "",
+                                     &mybot_lvgl_font_20, LV_TEXT_ALIGN_LEFT, kMuted);
+        if (s_view.caption_route)
+            lv_label_set_long_mode(s_view.caption_route, LV_LABEL_LONG_DOT);
+        auto *card = panel(s_view.body, margin(), 104, content_width(), 242, kWhite);
         if (card) {
             lv_obj_add_flag(card, LV_OBJ_FLAG_SCROLLABLE);
             lv_obj_add_flag(card, LV_OBJ_FLAG_CLICKABLE);
@@ -609,13 +667,13 @@ void captions(bool history) {
             lv_obj_set_style_pad_all(card, 24, 0);
             lv_obj_set_style_pad_row(card, 16, 0);
         }
-        s_view.caption_target =
-            label(card, 0, 0, 696, LV_SIZE_CONTENT, "", &mybot_caption_font_28, LV_TEXT_ALIGN_LEFT);
-        s_view.caption_source =
-            label(card, 0, 0, 696, LV_SIZE_CONTENT, "", &mybot_caption_font_20, LV_TEXT_ALIGN_LEFT);
-        s_view.caption_notice = label(card, 0, 0, 696, LV_SIZE_CONTENT, "", &mybot_lvgl_font_20,
-                                      LV_TEXT_ALIGN_LEFT, kMuted);
-        button(270, 362, 260, 48,
+        s_view.caption_target = label(card, 0, 0, content_width() - 48, LV_SIZE_CONTENT, "",
+                                      &mybot_caption_font_28, LV_TEXT_ALIGN_LEFT);
+        s_view.caption_source = label(card, 0, 0, content_width() - 48, LV_SIZE_CONTENT, "",
+                                      &mybot_caption_font_20, LV_TEXT_ALIGN_LEFT);
+        s_view.caption_notice = label(card, 0, 0, content_width() - 48, LV_SIZE_CONTENT, "",
+                                      &mybot_lvgl_font_20, LV_TEXT_ALIGN_LEFT, kMuted);
+        button((s_view.width - 260) / 2, 362, 260, 48,
                active() ? tr("返回实时翻译", "Back to live") : tr("返回结束页", "Back to summary"),
                CaptionExit, kTeal);
     }
@@ -742,14 +800,15 @@ void refresh_captions() {
 void confirmation(bool change) {
     heading(change ? tr("更改设置需重新开始", "Changing settings requires a new session")
                    : tr("结束这次翻译？", "End this translation?"));
-    label(s_view.body, 60, 130, 680, 110,
+    label(s_view.body, margin() + 12, 114, content_width() - 24, 164,
           change ? tr("先结束当前连接，再更换使用方式或语言。",
                       "End the current session before changing languages or scene.")
                  : tr("确认后结束音频采集、译音播放和云端会话。",
                       "Confirm to end audio input, playback, and the cloud session."),
           &mybot_lvgl_font_28);
-    button(72, 316, 300, 68, tr("继续翻译", "Keep translating"), Live, kWhite);
-    button(428, 316, 300, 68,
+    button(margin(), 316, (content_width() - 24) / 2, 68, tr("继续翻译", "Keep translating"), Live,
+           kWhite);
+    button((s_view.width + 24) / 2, 316, (content_width() - 24) / 2, 68,
            change ? tr("结束并更换", "End and change") : tr("结束翻译", "End translation"),
            change ? ConfirmChange : ConfirmEnd, kPink);
 }
@@ -821,7 +880,8 @@ Message service_message() {
 void service() {
     const Message message = service_message();
     heading(message.title);
-    label(s_view.body, 52, 112, 696, 100, message.notice, &mybot_lvgl_font_28);
+    label(s_view.body, margin() + 12, 102, content_width() - 24, 112, message.notice,
+          &mybot_lvgl_font_28);
     const char *detail = s_view.content.error_code;
     char ssid[MYBOT_WIFI_PROVISIONING_SSID_CAPACITY]{};
     if (s_view.content.screen == MYBOT_LCD_SCREEN_PAIR_CODE)
@@ -830,23 +890,25 @@ void service() {
         (void)mybot_wifi_get_provisioning_ssid(ssid, sizeof(ssid));
         detail = ssid;
     }
-    label(s_view.body, 36, 222, 728, 72, detail,
+    label(s_view.body, margin(), 222, content_width(), 72, detail,
           s_view.content.screen == MYBOT_LCD_SCREEN_PAIR_CODE ? &mybot_lvgl_font_40
                                                               : &mybot_lvgl_font_20,
           LV_TEXT_ALIGN_CENTER, kWarning);
     if (s_view.content.screen == MYBOT_LCD_SCREEN_TRANSLATION_STARTING)
-        button(228, 330, 344, 62,
+        button((s_view.width - 344) / 2, 330, 344, 62,
                s_view.cancel_requested ? tr("正在取消...", "Cancelling...")
                                        : tr("取消连接", "Cancel connection"),
                CancelStart, kWhite, !s_view.cancel_requested);
     else if (s_view.content.screen == MYBOT_LCD_SCREEN_CLEANUP_PENDING ||
              (active() && s_view.stop_requested))
-        button(228, 330, 344, 62, tr("重试结束", "Retry stop"), RetryStop, kPink,
-               !s_view.command_pending);
+        button((s_view.width - 344) / 2, 330, 344, 62, tr("重试结束", "Retry stop"), RetryStop,
+               kPink, !s_view.command_pending);
     else if (idle_error())
-        button(228, 330, 344, 62, tr("返回设置", "Back to settings"), Setup, kTeal);
+        button((s_view.width - 344) / 2, 330, 344, 62, tr("返回设置", "Back to settings"), Setup,
+               kTeal);
     else
-        button(228, 330, 344, 62, tr("请稍候", "Please wait"), NoAction, kSoft, false);
+        button((s_view.width - 344) / 2, 330, 344, 62, tr("请稍候", "Please wait"), NoAction, kSoft,
+               false);
 }
 void redraw() {
     if (!s_view.body)
@@ -884,10 +946,13 @@ void redraw() {
         menu();
         break;
     case Page::Sound:
-        heading(tr("音量与亮度", "Volume and brightness"), Live);
+        heading(compact() ? tr("输出音量", "Output volume")
+                          : tr("音量与亮度", "Volume and brightness"),
+                Live);
         utilities(144);
-        label(s_view.body, 40, 264, 720, 52,
-              tr("亮度滑条仅供界面演示", "Brightness slider is a UI demo"));
+        if (!compact())
+            label(s_view.body, 40, 264, 720, 52,
+                  tr("亮度滑条仅供界面演示", "Brightness slider is a UI demo"));
         break;
     case Page::Full:
         captions(false);
@@ -903,13 +968,15 @@ void redraw() {
         break;
     case Page::Complete:
         heading(tr("翻译已结束", "Translation ended"));
-        label(s_view.body, 80, 130, 640, 82,
+        label(s_view.body, margin(), 112, content_width(), 100,
               tr("服务端已确认结束", "The service has confirmed the session ended"),
               &mybot_lvgl_font_28);
-        button(240, 232, 320, 52, tr("查看本次字幕", "View captions"), History, kSoft,
-               s_view.content.caption_count != 0);
-        button(72, 312, 300, 68, tr("更换使用方式", "Change scene"), Entry, kWhite);
-        button(428, 312, 300, 68, tr("再来一次", "Translate again"), Setup, kTeal);
+        button((s_view.width - 320) / 2, 232, 320, 52, tr("查看本次字幕", "View captions"), History,
+               kSoft, s_view.content.caption_count != 0);
+        button(margin(), 312, (content_width() - 24) / 2, 68, tr("更换使用方式", "Change scene"),
+               Entry, kWhite);
+        button((s_view.width + 24) / 2, 312, (content_width() - 24) / 2, 68,
+               tr("再来一次", "Translate again"), Setup, kTeal);
         break;
     case Page::Service:
         service();
@@ -921,7 +988,7 @@ void command(mybot_ui_command_type_t type, int value) {
     mybot_ui_command_t request{};
     request.type = type;
     request.value = value;
-    mybot_korvo_s31_keys_ui_command(&request);
+    mybot_board_keys_ui_command(&request);
 }
 void stop(bool change) {
     if (!active())
@@ -931,7 +998,7 @@ void stop(bool change) {
     mark_pending();
     s_view.page = Page::Service;
     redraw();
-    mybot_korvo_s31_keys_ui_event(MYBOT_KEY_EVENT_CONVERSATION_STOP);
+    mybot_board_keys_ui_event(MYBOT_KEY_EVENT_CONVERSATION_STOP);
 }
 void clicked(lv_event_t *event) {
     auto *target = lv_event_get_current_target_obj(event);
@@ -1045,7 +1112,7 @@ void clicked(lv_event_t *event) {
             return;
         mark_pending();
         s_view.start_requested = true;
-        mybot_korvo_s31_keys_ui_event(MYBOT_KEY_EVENT_CONVERSATION_START);
+        mybot_board_keys_ui_event(MYBOT_KEY_EVENT_CONVERSATION_START);
         break;
     case CancelStart:
         if (s_view.content.screen != MYBOT_LCD_SCREEN_TRANSLATION_STARTING ||
@@ -1053,7 +1120,7 @@ void clicked(lv_event_t *event) {
             return;
         s_view.cancel_requested = true;
         s_view.stop_requested = true;
-        mybot_korvo_s31_keys_ui_event(MYBOT_KEY_EVENT_CONVERSATION_STOP);
+        mybot_board_keys_ui_event(MYBOT_KEY_EVENT_CONVERSATION_STOP);
         break;
     case Menu:
         if (active())
@@ -1140,7 +1207,7 @@ void clicked(lv_event_t *event) {
             return;
         s_view.stop_requested = true;
         mark_pending();
-        mybot_korvo_s31_keys_ui_event(MYBOT_KEY_EVENT_CONVERSATION_STOP);
+        mybot_board_keys_ui_event(MYBOT_KEY_EVENT_CONVERSATION_STOP);
         break;
     default:
         return;
@@ -1150,19 +1217,26 @@ void clicked(lv_event_t *event) {
 } // namespace
 
 int mybot_lvgl_view_create_sized(lv_display_t *display, int width, int height) {
-    /* This layout is designed for the registered board's native 800 x 480 panel. */
-    if (!display || s_view.root || width != 800 || height != 480 ||
+    /* Both layouts retain native font and touch sizes; the square panel reflows
+     * scene cards and utility controls instead of shrinking the wide view. */
+    if (!display || s_view.root || (width != 800 && width != 480) || height != 480 ||
         lv_display_get_horizontal_resolution(display) != width ||
         lv_display_get_vertical_resolution(display) != height)
         return -1;
+    s_view.width = width;
     s_view.content.screen = MYBOT_LCD_SCREEN_STARTING;
     s_view.content.volume = -1;
     s_view.root = panel(lv_display_get_screen_active(display), 0, 0, width, height, kBackground, 0);
-    s_view.network =
-        label(s_view.root, 24, 14, 260, 30, "", &mybot_lvgl_font_20, LV_TEXT_ALIGN_LEFT);
-    label(s_view.root, 300, 14, 200, 30, "BotStation");
-    s_view.clock =
-        label(s_view.root, 656, 14, 120, 30, "--:--", &mybot_lvgl_font_20, LV_TEXT_ALIGN_RIGHT);
+    /* The Mosaico cover glass masks the panel corners. Keep the status strip
+     * inside the straight top edge; body controls also leave a wider margin. */
+    const int status_inset = compact() ? 60 : margin();
+    s_view.network = label(s_view.root, status_inset, compact() ? 16 : 14, compact() ? 240 : 260,
+                           30, "", &mybot_lvgl_font_20, LV_TEXT_ALIGN_LEFT);
+    if (!compact())
+        label(s_view.root, 300, 14, 200, 30, "BotStation");
+    const int clock_width = compact() ? 100 : 120;
+    s_view.clock = label(s_view.root, width - status_inset - clock_width, compact() ? 16 : 14,
+                         clock_width, 30, "--:--", &mybot_lvgl_font_20, LV_TEXT_ALIGN_RIGHT);
     s_view.body = panel(s_view.root, 0, 52, width, height - 52, kBackground, 0);
     if (!s_view.root || !s_view.network || !s_view.clock || !s_view.body || s_view.failed) {
         mybot_lvgl_view_destroy();

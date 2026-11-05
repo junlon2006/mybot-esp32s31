@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
+# Name, Type, SubType, Offset, Size, Flags
+# All diagnostic writes stay below 1 MiB; there are no writable data partitions.
+factory, app, factory, 0x10000, 0xF0000,

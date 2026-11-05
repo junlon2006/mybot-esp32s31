@@ -4,7 +4,7 @@ Run `./tests/translation_lifecycle/run.sh` from any directory. The runner compil
 lifecycle implementation with a deterministic KV store, HTTP completion queue, allocator and UTC
 clock, enables UBSan, and enforces a 30-second execution deadline.
 
-The 31 scenarios exercise cancellation before dispatch and after HTTP start, late start results
+The 35 scenarios exercise cancellation before dispatch and after HTTP start, late start results
 across disconnect/reconnect and shutdown, durable unknown outcomes, partial starts carrying cleanup
 IDs, exact original server/device/credential cleanup after endpoint changes or re-pair requests,
 1/2/4/8/16/30-second stop retry intervals, revoked credentials, expiry without renewal, stale and
@@ -25,3 +25,11 @@ Mode selection is volatile and starts at listen after reboot. Mode/language chan
 rejected as soon as a start is requested, during an active session or while cleanup remains.
 Face-to-face failures retain one parent ID and retry its cleanup; they never create a second
 parent or persist a second journal.
+
+Journal coverage includes recovery from version 1 fixed records and version 2 compact records,
+unknown and known sessions, malformed/truncated/oversized fields, unsupported versions and trailing
+bytes. Rejected records remain stored and block another cloud start. A constrained KV model reserves
+67 entries for the journal and charges a replacement before reclaiming the previous blob, including
+one extra chunk header for the page split seen on hardware. It reproduces the old 1456-byte record's
+49-entry first write and failed replacement, then verifies compact start/stop cycles with a 511-byte
+synthetic credential. This is an entry-budget model, not an emulator of the NVS filesystem.

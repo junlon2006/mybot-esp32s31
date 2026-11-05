@@ -6,7 +6,20 @@
 #include <stdio.h>
 #include <string.h>
 #define free host_free
+#include "../../components/mybot_platform/src/drivers/audio/codec_audio.c"
+#undef TAG
+#undef AUDIO_BUS_SLOTS
+#if TEST_MOSAICO
+#include "../../components/mybot_platform/src/drivers/audio/mosaico_codec_audio.c"
+#define TEST_BUS_SLOTS 2
+#define TEST_START_STEPS 5
+#define TEST_MIC_GAIN 24.0f
+#else
 #include "../../components/mybot_platform/src/drivers/audio/korvo_s31_codec_audio.c"
+#define TEST_BUS_SLOTS 4
+#define TEST_START_STEPS 11
+#define TEST_MIC_GAIN 30.0f
+#endif
 #undef free
 
 static int fail_at, steps, channels, controls, codecs, devices, buffers, pa, opens;
@@ -19,7 +32,11 @@ static int32_t stored_volume = 42;
 static bool step(void) {
     return ++steps == fail_at;
 }
+#if TEST_MOSAICO
+i2c_master_bus_handle_t mosaico_hardware_i2c_bus(void) {
+#else
 i2c_master_bus_handle_t korvo_s31_hardware_i2c_bus(void) {
+#endif
     return &mock_device;
 }
 esp_err_t gpio_set_level(gpio_num_t pin, unsigned level) {
@@ -37,6 +54,15 @@ esp_err_t i2s_new_channel(const i2s_chan_config_t *config, i2s_chan_handle_t *ou
     channels += 2;
     return ESP_OK;
 }
+#if TEST_MOSAICO
+esp_err_t i2s_channel_init_std_mode(i2s_chan_handle_t channel, const i2s_std_config_t *bus) {
+    assert(channel && bus->clk_cfg.sample_rate_hz == 16000 && bus->clk_cfg.mclk_multiple == 256);
+    assert(bus->slot_cfg.data_bit_width == 16 && bus->slot_cfg.slot_mode == 2);
+    assert(bus->gpio_cfg.mclk == 54 && bus->gpio_cfg.dout == 52 && bus->gpio_cfg.din == 40);
+    assert(bus->gpio_cfg.bclk == 37 && bus->gpio_cfg.ws == 49);
+    return step() ? ESP_FAIL : ESP_OK;
+}
+#else
 esp_err_t i2s_channel_init_tdm_mode(i2s_chan_handle_t channel, const i2s_tdm_config_t *bus) {
     assert(channel && bus->clk_cfg.sample_rate_hz == 16000);
     assert(bus->slot_cfg.total_slot == 4 && bus->slot_cfg.ws_width == 32);
@@ -44,6 +70,7 @@ esp_err_t i2s_channel_init_tdm_mode(i2s_chan_handle_t channel, const i2s_tdm_con
     assert(bus->gpio_cfg.mclk == GPIO_NUM_NC && bus->gpio_cfg.dout == 5 && bus->gpio_cfg.din == 6);
     return step() ? ESP_FAIL : ESP_OK;
 }
+#endif
 esp_err_t i2s_channel_enable(i2s_chan_handle_t channel) {
     if (step())
         return ESP_FAIL;
@@ -77,19 +104,19 @@ esp_err_t i2s_del_channel(i2s_chan_handle_t channel) {
 }
 esp_err_t i2s_channel_read(i2s_chan_handle_t channel, void *destination, size_t size, size_t *bytes,
                            uint32_t timeout) {
-    assert(channel == (void *)2 && rx && tx && timeout == 50 && size % 8 == 0);
+    assert(channel == (void *)2 && rx && tx && timeout == 50 && size % (TEST_BUS_SLOTS * 2) == 0);
     atomic_store(&read_entered, true);
     while (atomic_load(&hold_read))
         host_real_delay(1);
     int16_t *pcm = destination;
     for (size_t i = 0; i < size / sizeof(int16_t); ++i)
-        pcm[i] = i % 4 == 0 ? 123 : 999;
+        pcm[i] = i % TEST_BUS_SLOTS == 0 ? 123 : 999;
     *bytes = size;
     return ESP_OK;
 }
 esp_err_t i2s_channel_write(i2s_chan_handle_t channel, const void *source, size_t size,
                             size_t *bytes, uint32_t timeout) {
-    assert(channel == (void *)1 && tx && timeout == 50 && size % 8 == 0);
+    assert(channel == (void *)1 && tx && timeout == 50 && size % (TEST_BUS_SLOTS * 2) == 0);
     const int16_t *pcm = source;
     for (size_t i = 0; i < size / sizeof(int16_t); ++i)
         assert(pcm[i] == 123);
@@ -97,7 +124,7 @@ esp_err_t i2s_channel_write(i2s_chan_handle_t channel, const void *source, size_
     return ESP_ERR_TIMEOUT; /* A timeout may still have completed full frames. */
 }
 const audio_codec_ctrl_if_t *audio_codec_new_i2c_ctrl(audio_codec_i2c_cfg_t *config) {
-    assert(config->port == 0 && config->addr == 0x20 && config->bus_handle);
+    assert(config->port == 0 && config->addr == (TEST_MOSAICO ? 0x32 : 0x20) && config->bus_handle);
     if (step())
         return NULL;
     ++controls;
@@ -108,6 +135,16 @@ int audio_codec_delete_ctrl_if(const audio_codec_ctrl_if_t *iface) {
     --controls;
     return ESP_OK;
 }
+#if TEST_MOSAICO
+const audio_codec_if_t *es8311_codec_new(es8311_codec_cfg_t *config) {
+    assert(config->codec_mode == ESP_CODEC_DEV_WORK_MODE_BOTH && config->use_mclk);
+    assert(config->pa_pin == GPIO_NUM_NC && config->no_dac_ref && config->mclk_div == 256);
+    if (step())
+        return NULL;
+    ++codecs;
+    return &mock_codec;
+}
+#else
 const audio_codec_if_t *es8389_codec_new(es8389_codec_cfg_t *config) {
     assert(config->codec_mode == ESP_CODEC_DEV_WORK_MODE_BOTH && !config->use_mclk);
     assert(config->pa_pin == GPIO_NUM_NC && !config->no_dac_ref);
@@ -116,6 +153,7 @@ const audio_codec_if_t *es8389_codec_new(es8389_codec_cfg_t *config) {
     ++codecs;
     return &mock_codec;
 }
+#endif
 int audio_codec_delete_codec_if(const audio_codec_if_t *iface) {
     assert(iface == &mock_codec && codecs == 1);
     --codecs;
@@ -134,7 +172,7 @@ void esp_codec_dev_delete(esp_codec_dev_handle_t device) {
 }
 int esp_codec_dev_open(esp_codec_dev_handle_t device, esp_codec_dev_sample_info_t *format) {
     assert(device == &mock_device && format->sample_rate == 16000 && format->bits_per_sample == 16);
-    assert(format->channel == 4 && opens == 0);
+    assert(format->channel == TEST_BUS_SLOTS && opens == 0);
     ++opens;
     return step() ? ESP_FAIL : ESP_OK;
 }
@@ -147,6 +185,7 @@ int esp_codec_dev_close(esp_codec_dev_handle_t device) {
     --opens;
     return ESP_OK;
 }
+#if !TEST_MOSAICO
 int esp_codec_dev_read_reg(esp_codec_dev_handle_t device, int reg, int *value) {
     assert(device == &mock_device);
     switch (reg) {
@@ -171,8 +210,9 @@ int esp_codec_dev_read_reg(esp_codec_dev_handle_t device, int reg, int *value) {
     }
     return step() ? ESP_FAIL : ESP_OK;
 }
+#endif
 int esp_codec_dev_set_in_gain(esp_codec_dev_handle_t device, float gain) {
-    assert(device == &mock_device && gain == 30.0f);
+    assert(device == &mock_device && gain == TEST_MIC_GAIN);
     return step() ? ESP_FAIL : ESP_OK;
 }
 int esp_codec_dev_set_out_vol(esp_codec_dev_handle_t device, int volume) {
@@ -269,7 +309,7 @@ int main(void) {
         assert(capture_init(&context, 16000, 1, 16) < 0);
         reset();
     }
-    for (int failure = 1; failure <= 11; ++failure) {
+    for (int failure = 1; failure <= TEST_START_STEPS; ++failure) {
         void *capture = NULL;
         assert(capture_init(&capture, 16000, 1, 16) == 0);
         host_expect_psram(capture);
@@ -365,14 +405,17 @@ int main(void) {
     stream_destroy(other);
     reset();
     assert(capture_init(&capture, 16000, 1, 16) == 0);
+#if !TEST_MOSAICO
     bad_tdm = true;
     assert(capture_start(capture) < 0);
     bad_tdm = false;
+#endif
     assert(capture_start(capture) == 0);
     fail_close = true;
     assert(stream_stop(capture) < 0 && opens == 1);
     assert(stream_stop(capture) == 0);
     stream_destroy(capture);
     reset();
-    puts("S31 audio lifecycle fault injection and PCM conversion passed");
+    puts(TEST_MOSAICO ? "Mosaico ES8311 lifecycle fault injection and PCM conversion passed"
+                      : "Korvo ES8389 lifecycle fault injection and PCM conversion passed");
 }

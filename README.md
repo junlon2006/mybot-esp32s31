@@ -6,16 +6,16 @@
 **[English](README.md) | [简体中文](README.zh-CN.md)**
 
 `mybot-esp32s31` is an ESP-IDF firmware project for standalone V2VT translation on the
-ESP32-S31-Korvo-1 V1.1 board. The media scene sends board microphone audio to the cloud and plays
+**ESP-Mosaico CoreBoard V1.2**, the target for future development. The media scene sends board microphone audio to the cloud and plays
 translated speech through the board speaker, initially Chinese to English. Face-to-face supports
 alternating Chinese/English speech, with language buttons selecting the microphone route. The project maintains
 the MyBot translation SDK fork and its board, network, audio, display and lifecycle integration.
 The development API is `https://mybot.sh3t.agoralab.co/api`.
 
-The development baseline is **ESP-IDF v6.1**. The only supported board profile is
-`esp32-s31-korvo-1`; Flash, Octal PSRAM, the partition table, and hardware drivers are selected
+The development baseline is **ESP-IDF v6.1**. The default board profile is
+`esp-mosaico-v1.2`; the earlier `esp32-s31-korvo-1` profile remains available. Flash, Octal PSRAM, the partition table, and hardware drivers are selected
 with `MYBOT_BOARD`. See the
-[board guide](docs/esp32-s31-korvo-1.en.md) for hardware details, controls, build commands,
+[board guide](docs/esp-mosaico-v1.2.zh-CN.md) for hardware details, controls, build commands,
 and current limitations.
 
 > Project-maintained code is Apache-2.0 unless a file says otherwise. Bundled dependencies and
@@ -31,29 +31,25 @@ and current limitations.
   package; other packet durations require a matching RTSA build.
 - Agora RTSA microphone/reference uplink with Cloud AEC and optional AI QoS (disabled by default),
   RTM channel subscription, and subscription to the returned translated-audio publisher.
-- A shared bounded PCM playback buffer and independent TDM writer on the supported board.
-- ES8389 audio with four 16-bit Philips TDM slots, independent capture/playback attachment,
-  and reference-counted codec/I2S ownership.
-- Automatic LVGL on the 800 x 480 RGB565 display with GT1151 touch.
+- A shared bounded PCM playback buffer with independent capture/playback and reference-counted codec ownership.
+- ES8311 standard I2S stereo with MCLK256; the Mosaico adapter converts to/from SDK mono PCM.
+- A native 480×480 LVGL layout for Mosaico CO5300 QSPI / CST9220 touch; the earlier Korvo keeps its 800×480 layout.
 - Native media and face-to-face controls for languages, start/stop, local pause and actual volume;
-  PLAY also starts/stops translation. Face-to-face shares one parent session, two RTC connections
+  The AI key also starts/stops translation. Face-to-face shares one parent session, two RTC connections
   and one RTM channel subscription. Meeting remains a settings preview.
 - Localized pairing and Wi-Fi provisioning prompts, with the actual hotspot name shown during
   provisioning.
 
 ## Supported Boards
 
-The only supported profile is `esp32-s31-korvo-1`.
+The default `esp-mosaico-v1.2` profile targets 16 MB NOR Flash, 16 MB Octal PSRAM,
+ES8311 audio and a 480×480 CO5300 / CST9220 display. It uses `partitions/v2/16m.csv`;
+the 128 MB NAND is unused. The earlier `esp32-s31-korvo-1` profile is retained. Video stays disabled.
 
-It targets the ESP32-S31-WROOM-3 with 16 MB Flash and 16 MB Octal PSRAM, an ES8389 codec, an
-800 x 480 RGB565 panel, GT1151 touch, and GPIO42 ADC keys. The firmware uses
-`partitions/v2/16m.csv`. Video is intentionally unavailable.
-
-The user has confirmed the inherited basic bidirectional audio and normal screen output on the
-physical board. Translation route subscription, language controls, Cloud AEC and recovery still
-require their own hardware results. See the
-[board guide](docs/esp32-s31-korvo-1.en.md) for controls and the
-[validation record](docs/s31-validation.md) for the scope of each result.
+The user confirmed microphone and speaker operation in the standalone Mosaico UAC test.
+The user also confirmed normal caption display with 40-row partial buffers; device logs confirm
+touch navigation and start requests. The 16 kHz audio quality, Cloud AEC and endurance need separate results.
+See the [board guide](docs/esp-mosaico-v1.2.zh-CN.md) and [validation record](docs/s31-validation.md).
 
 ## Build
 
@@ -70,7 +66,8 @@ Use `build/korvo-s31` and `build/korvo-s31/sdkconfig` for all local firmware bui
 
 ```sh
 idf.py --preview -B build/korvo-s31 \
-  -DMYBOT_BOARD=esp32-s31-korvo-1 \
+  -DMYBOT_BOARD=esp-mosaico-v1.2 \
+  -DMYBOT_MOSAICO_UAC_TEST=OFF \
   -DSDKCONFIG=build/korvo-s31/sdkconfig \
   -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;ci/ptime60.defaults" build
 ```
@@ -78,7 +75,7 @@ idf.py --preview -B build/korvo-s31 \
 CI builds language variants in isolated jobs. The [release guide](docs/RELEASING.md) describes
 the packaging builder and delivery checks; local development uses the direct command above.
 The direct flash command and board-specific hardware details are in the
-[board guide](docs/esp32-s31-korvo-1.en.md).
+[board guide](docs/esp-mosaico-v1.2.zh-CN.md).
 
 The pinned RTSA header and library are bundled under `components/mybot_stack/agora_rtc`, so no
 download or import step is required. `ffmpeg` converts the tracked Ogg prompts to 16 kHz mono
@@ -92,11 +89,14 @@ station has a usable IP address. A provisioning request stops MyBot first and re
 reconnection.
 
 Open Media translation, select input/output languages and use its start/stop controls. Pause
-retains the cloud session; empty screen taps have no action. A short PLAY press starts/stops
-translation, cancels a pending start or retries cleanup. SET requests pairing, a 3-second SET hold
-requests provisioning, and VOL+/VOL- change and persist volume in NVS. Live captions, scrollable
-full text and session history share RTM original/translated text; brightness remains a demo.
+retains the cloud session; empty screen taps have no action. A short Mosaico AI-key press starts/stops
+translation, cancels a pending start or retries cleanup. Hold AI for 3 seconds to provision Wi-Fi.
+On-screen volume is saved in NVS. Live captions, scrollable full text and session history share RTM text.
 See the [translation UI](docs/PLATFORM_UI.md).
+
+Mosaico translation firmware exposes a native Type-C CDC log console. USB audio routing is deferred.
+The passed [standalone UAC diagnostic](diagnostics/mosaico_uac/README.zh-CN.md) is preserved for future meeting work.
+Korvo-only [CDC](docs/USB_CDC_PROBE.zh-CN.md) and [Host](docs/USB_HOST_PROBE.zh-CN.md) probes remain opt-in.
 
 Use `idf.py --preview -B build/korvo-s31 menuconfig` under `mybot` to select the product language,
 initial translation languages, Cloud AEC and AI QoS. The product language selects UI text and
@@ -119,7 +119,7 @@ quality, panel behavior, power sequencing, Wi-Fi recovery, or long-duration resu
 
 ## Documentation
 
-- [Board guide](docs/esp32-s31-korvo-1.en.md)
+- [Board guide](docs/esp-mosaico-v1.2.zh-CN.md)
 - [Translation and flashing](docs/LISTEN_TRANSLATION.zh-CN.md)
 - [Validation record](docs/s31-validation.md)
 - [Validation index](docs/VALIDATION.md)

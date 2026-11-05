@@ -6,14 +6,14 @@
 **[English](README.md) | [简体中文](README.zh-CN.md)**
 
 `mybot-esp32s31` 是基于 ESP-IDF 的独立 V2VT 翻译固件，运行于
-ESP32-S31-Korvo-1 V1.1。媒体翻译将板载麦克风音频送往云端，并通过板载喇叭播放译音，
+**ESP-Mosaico CoreBoard V1.2**，后续设计以此为目标板。媒体翻译将板载麦克风音频送往云端，并通过板载喇叭播放译音，
 默认中文译英文。面对面场景支持中文与英文轮流交流，点击语言按钮切换麦克风方向。
 工程维护 MyBot 翻译 SDK 分支及板级、网络、音频、显示和生命周期集成。
 开发 API 为 `https://mybot.sh3t.agoralab.co/api`。
 
-当前开发基线为 **ESP-IDF v6.1**。唯一支持的 Board profile 为 `esp32-s31-korvo-1`，通过
+当前开发基线为 **ESP-IDF v6.1**。默认 Board profile 为 `esp-mosaico-v1.2`，旧 `esp32-s31-korvo-1` profile 保留，通过
 `MYBOT_BOARD` 选择 Flash、Octal PSRAM、分区表和硬件驱动。具体硬件配置、输入操作、构建
-命令和限制见[板卡说明](docs/esp32-s31-korvo-1.zh-CN.md)。
+命令和限制见[板卡说明](docs/esp-mosaico-v1.2.zh-CN.md)。
 
 > 除非文件另有声明，本工程自维护代码使用 Apache-2.0。仓库内依赖和媒体资源有各自的
 > 许可条款；重新分发源码或固件前请阅读[许可证与依赖](#许可证与依赖)。
@@ -26,25 +26,22 @@ ESP32-S31-Korvo-1 V1.1。媒体翻译将板载麦克风音频送往云端，并�
 - 16 kHz 单声道 signed-16 PCM 采集与播放；随附 RTSA 固定使用 60 ms 音频包，其他包长需要
   匹配的 RTSA 构建。
 - Agora RTSA 麦克风/参考音频上行、Cloud AEC、可选 AI QoS（默认关闭）、RTM 频道订阅，并订阅响应指定的译音发布者。
-- 单一支持的板型使用共享有界 PCM 播放缓冲和独立 TDM writer。
-- ES8389 使用四个 16-bit Philips TDM 时隙；采集/播放独立挂载，并共享引用计数的 codec/I2S
-  资源。
-- 800 x 480 RGB565 显示板自动启用 LVGL，支持 GT1151 触摸。
-- 原生媒体与面对面界面支持语言选择、启停、本地暂停和实际音量；PLAY 同样支持启停。
+- 共享有界 PCM 播放缓冲；采集/播放独立挂载，共享引用计数的 codec/I2S 资源。
+- Mosaico 使用 ES8311 标准 I2S stereo 和 MCLK256；板级完成 SDK mono PCM 转换。
+- Mosaico 480×480 CO5300 QSPI 屏和 CST9220 触摸使用方屏 LVGL 布局；旧 Korvo 保留 800×480 布局。
+- 原生媒体与面对面界面支持语言选择、启停、本地暂停和实际音量；AI 键同样支持启停。
   面对面共用一个父会话、两个 RTC 连接和一个 RTM 频道订阅；会议场景提供设置预览。
 - 提供中英文配对码与 Wi-Fi 配网提示，并在配网页面显示实际热点名称。
 
 ## 支持的板卡
 
-唯一支持的 profile 为 `esp32-s31-korvo-1`。
+默认目标为 `esp-mosaico-v1.2`：16 MB NOR Flash、16 MB Octal PSRAM、ES8311、
+480×480 CO5300 屏和 CST9220 触摸。沿用 `partitions/v2/16m.csv`；128 MB NAND 暂不使用。
+旧 `esp32-s31-korvo-1` profile 保留。两者都不启用视频。
 
-目标模组为 ESP32-S31-WROOM-3，配置 16 MB Flash、16 MB Octal PSRAM、ES8389 codec、
-800 x 480 RGB565 面板、GT1151 触摸和 GPIO42 ADC 按键。固件使用
-`partitions/v2/16m.csv`，当前不提供视频能力。
-
-用户已在真机确认继承的基础双向音频和屏幕正常显示；翻译路由订阅、语言操作、Cloud AEC
-和恢复仍需各自的真机结果。操作方式见[板卡说明](docs/esp32-s31-korvo-1.zh-CN.md)，各结果的验证范围见
-[验证记录](docs/s31-validation.md)。
+用户已确认 Mosaico 独立 UAC 测试的麦克风和喇叭正常，并确认 40 行刷新版本的字幕
+显示正常；触摸导航和启动操作有实机日志。16 kHz 译音质量、Cloud AEC 和长稳仍需验证。操作见[板卡说明](docs/esp-mosaico-v1.2.zh-CN.md)，
+范围见[验证记录](docs/s31-validation.md)。
 
 ## 构建
 
@@ -60,14 +57,15 @@ test "$(idf.py --preview --version)" = "ESP-IDF v6.1"
 
 ```sh
 idf.py --preview -B build/korvo-s31 \
-  -DMYBOT_BOARD=esp32-s31-korvo-1 \
+  -DMYBOT_BOARD=esp-mosaico-v1.2 \
+  -DMYBOT_MOSAICO_UAC_TEST=OFF \
   -DSDKCONFIG=build/korvo-s31/sdkconfig \
   -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;ci/ptime60.defaults" build
 ```
 
 CI 在独立 job 中构建语言变体。[交付文档](docs/RELEASING.zh-CN.md)说明打包 builder 和交付校验；
 本地开发使用上面的直接构建命令。直接烧录命令和板级硬件信息见
-[板卡说明](docs/esp32-s31-korvo-1.zh-CN.md)。
+[板卡说明](docs/esp-mosaico-v1.2.zh-CN.md)。
 
 固定版本 RTSA 头文件和库随工程提供于 `components/mybot_stack/agora_rtc`，无需下载或
 手动导入。`ffmpeg` 在构建目录将已有 Ogg 提示音转换为 16 kHz mono S16LE。
@@ -79,10 +77,13 @@ NVS 中没有 Wi-Fi 凭据时，设备创建名为 `mybot-xxxx` 的配置 AP，�
 停止 MyBot，联网后重新启动。
 
 进入媒体翻译，选择输入/目标语言后使用开始/停止控件；暂停保留云会话，空白区域轻点不执行
-操作。PLAY 短按开始/停止翻译、取消待启动会话或重试清理。SET 短按请求配对，SET 长按
-3 秒请求配网，VOL+/VOL- 调整并持久化音量到 NVS。字幕、可滚动全文和本次历史接收实时
-RTM 原文/译文；亮度仍为演示，
+操作。Mosaico 的 AI 键短按开始/停止翻译、取消待启动或重试清理，长按 3 秒请求配网。
+屏幕内可调整音量并保存到 NVS。字幕、可滚动全文和本次历史接收实时 RTM 原文/译文；
 详见[翻译界面](docs/PLATFORM_UI.zh-CN.md)。
+
+Mosaico 翻译固件通过 Type-C 提供 CDC 日志串口，USB 声卡不在本次固件中启用。
+已通过的 [UAC 最小测试](diagnostics/mosaico_uac/README.zh-CN.md)独立保留，后续用于会议翻译。
+Korvo 专用 [CDC](docs/USB_CDC_PROBE.zh-CN.md) / [Host](docs/USB_HOST_PROBE.zh-CN.md) 探针默认关闭。
 
 使用 `idf.py --preview -B build/korvo-s31 menuconfig` 的 `mybot` 菜单选择产品语言、
 初始翻译语言、Cloud AEC 和 AI QoS。产品语言决定界面文字和提示音；两个构建均使用
@@ -102,7 +103,7 @@ Wi-Fi 恢复或长稳表现。
 
 ## 文档
 
-- [板卡说明](docs/esp32-s31-korvo-1.zh-CN.md)
+- [板卡说明](docs/esp-mosaico-v1.2.zh-CN.md)
 - [独立听译与烧录](docs/LISTEN_TRANSLATION.zh-CN.md)
 - [验证记录](docs/s31-validation.md)
 - [验证索引](docs/VALIDATION.md)

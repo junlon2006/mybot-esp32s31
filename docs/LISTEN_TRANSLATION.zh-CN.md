@@ -6,7 +6,7 @@
 
 - 开发服务：`https://mybot.sh3t.agoralab.co/api`。设备须在该部署绑定 V2VT Bot。面对面还要求部署开放双向模式，且两个 Agent 的字幕均发送到共同 RTM 频道。旧服务的设备凭证不会跨服务复用。
 - 默认中文 `zh-CN` → 英语 `en-US`。就绪时点击“输入语言”或“目标语言”，在列表中直接选择，排除同语种；提交期间锁定语言选择，实际回读后解锁。选择写入 NVS，已有保存的选择优先于固件默认值。默认值也可通过 menuconfig 的 `MYBOT_SOURCE_LANGUAGE` / `MYBOT_TARGET_LANGUAGE` 修改。
-- 点击“开始翻译”或短按 PLAY 开始；通过结束控件或再次短按 PLAY 停止。连接中可以取消。活动会话中锁定模式与语言，停止确认完成后再更换；已提交开始请求时也不能改变模式或语言。
+- 点击“开始翻译”或短按 Mosaico 的 AI 键（Korvo 为 PLAY）开始；通过结束控件或再次短按该键停止。连接中可以取消。活动会话中锁定模式与语言，停止确认完成后再更换；已提交开始请求时也不能改变模式或语言。
 - 首页进入场景选择后，媒体翻译和面对面接真实音频与 RTM 字幕；会议互译提供设置预览。点击实时字幕查看可滚动全文，更多菜单及完成页可查看本次历史；最多保留最近 64 句，每侧最多 1,023 个 UTF-8 字节，重启后不保留。首期字形覆盖面向中文与英文，详情见[翻译界面](PLATFORM_UI.zh-CN.md)。
 - 实时页可暂停/继续本地音频，RTC 父会话保持，暂停期间继续上行静音帧。恢复会清除旧 PCM，音量保持；暂停不是结束云端会话。
 - 停止失败时关闭本地音频并继续清理，不能创建替代会话；断网重连/重启后先清理旧父会话。若显示启动结果未知，应在服务端核实后处理，不能通过重复启动创建会话。
@@ -30,10 +30,13 @@
 ```sh
 . /Users/shangjinlong/esp/esp-idf/export.sh
 idf.py --preview -B build/korvo-s31 \
-  -DMYBOT_BOARD=esp32-s31-korvo-1 \
+  -DMYBOT_BOARD=esp-mosaico-v1.2 \
+  -DMYBOT_MOSAICO_UAC_TEST=OFF \
   -DSDKCONFIG=build/korvo-s31/sdkconfig \
   -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;ci/ptime60.defaults" build
-idf.py --preview -B build/korvo-s31 -p PORT flash monitor
+idf.py --preview -B build/korvo-s31 -p DOWNLOAD_PORT flash
+# Mosaico 启动后使用运行时 CDC 端口查看日志
+idf.py --preview -B build/korvo-s31 -p /dev/cu.usbmodemMOSAICO_V121 monitor
 ```
 
 保留现有 G.722、16 kHz mono S16、60 ms RTSA 配置和 cloud AEC。AI QoS 默认关闭（`CONFIG_MYBOT_AI_QOS=n`），可在 menuconfig 中显式开启；关闭时启动请求发送 `ai_qos=false` 且不附带快发倍率。已有 sdkconfig 中的显式配置优先于默认值。云 AEC 上行是 MIC/播放参考交错，RTSA 的 PCM channel 数仍为 1，不能改成普通立体声。先检查最终 sdkconfig 的服务器、语种和 AI QoS 设置，再烧录。
@@ -48,5 +51,6 @@ idf.py --preview -B build/korvo-s31 -p PORT flash monitor
 
 - `TIME_NOT_SYNCED`：设备 UTC 尚未就绪，启动请求没有发送，不会创建云会话。固件依次尝试 `ntp.aliyun.com`、`time.cloudflare.com`、`pool.ntp.org`；已通过现有 TLS 验证的配对/绑定等 2xx 响应也可用合法的 GMT `Date` 响应头引导初始时间，日志为 `event=time_sync source=https_date result=ok`。这一途径只设置尚未初始化的时钟，正常时钟继续交给 SNTP。收到时间同步成功日志后再开始，路由有效期仍必须通过校验；过期与时间格式错误分别报告。
 - 翻译启动使用连接、发送和接收共享的 30 秒总预算，其余请求保持 5 秒。总预算不随分片进展重置，也不自动重发启动。日志 `event=translation action=start phase=result` 会输出服务结果、错误码、父 ID 是否已知及清理标记，便于区分云端启动成功后本地拒绝和 HTTP 没有返回。
+- `STORAGE_ERROR`：会话恢复记录无法保存，设备会停止本地启动并清理已知云会话。查看 `mybot_kv` 的具体 NVS 错误和可用条目；`translation_storage` 区分分配失败和写入失败。会话记录按实际字符串长度保存，避免固定字段填充占满 NVS；仍兼容读取旧格式，更新时保留 NVS 原子覆写与失败保护。
 - `START_RESULT_UNKNOWN` / “启动结果未知”：请求可能已发送，但没有拿到父会话 ID。此状态写入 NVS，普通 `idf.py ... flash` 和重启都会保留，不能直接重复创建会话。
 - 仅在控制台已确认该设备全部会话结束后，可从 `0x0` 烧录本次合并镜像 `build/korvo-s31/mybot_esp32s31-merged.bin` 恢复。该镜像的 `0x9000..0xcfff` 为擦除值，会清除 NVS 中的未知会话记录、Wi-Fi、绑定、语言和音量设置，需要重新配网、配对。烧录前请核对该镜像及相邻 `.sha256` / `.flash.txt`；正常升级继续使用上面的分段 `idf.py flash`。
