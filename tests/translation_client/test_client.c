@@ -430,6 +430,8 @@ static void test_start_failures(void) {
          "\"cleanup_required\":true,\"conversation_id\":\"cleanup-1\"}}}",
          true, false, "cleanup-1"},
         {403, 0, "{\"error\":{\"code\":\"CONVOAI_SERVICE_NOT_ENABLED\"}}", false, false, ""},
+        {401, -1, NULL, false, false, ""},
+        {409, -1, "{}", false, false, ""},
         {502, 0, "{\"error\":{\"details\":{\"cleanup_required\":false}}}", false, false, ""},
         {502, 0, "{\"error\":{\"details\":{\"cleanup_required\":true}}}", true, true, ""},
         {0, -1, NULL, false, true, ""},
@@ -438,7 +440,7 @@ static void test_start_failures(void) {
         {201, 0, "{\"data\":{}}", false, true, ""},
         {200, 0, valid_response, true, false, "parent-1"},
         {202, 0, "{}", false, true, ""},
-        {500, 0, "not JSON", false, false, ""},
+        {500, 0, "not JSON", false, true, ""},
         {502, -1, "{\"error\":{\"details\":{\"cleanup_required\":false}}}", false, false, ""},
     };
     for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
@@ -449,6 +451,49 @@ static void test_start_failures(void) {
         assert(session.start_unknown == cases[i].unknown);
         assert(strcmp(session.conversation_id, cases[i].parent) == 0);
         assert(session.error_code[0]);
+    }
+}
+
+static void test_gateway_start_results(void) {
+    static const int statuses[] = {502, 503, 504};
+    static const char *const ambiguous_bodies[] = {
+        NULL,
+        "",
+        "<html><body>upstream unavailable</body></html>",
+        "{}",
+        "{\"error\":{\"details\":{\"cleanup_required\":\"false\"}}}",
+        "{\"error\":{\"details\":{\"cleanup_required\":null}}}",
+        "{\"error\":{\"details\":{\"conversation_id\":\"\"}}}",
+        "{\"error\":{\"details\":{\"conversation_id\":123}}}",
+        "{\"error\":{\"details\":{\"cleanup_required\":false",
+    };
+    for (size_t status = 0; status < sizeof(statuses) / sizeof(statuses[0]); ++status) {
+        for (int transport = 0; transport >= -1; --transport) {
+            for (size_t body = 0; body < sizeof(ambiguous_bodies) / sizeof(ambiguous_bodies[0]);
+                 ++body) {
+                respond(statuses[status], transport, ambiguous_bodies[body]);
+                mybot_device_conversation_t session;
+                assert(start(&session) != 0);
+                assert(http_calls == 1 && session.start_unknown);
+                assert(!session.cleanup_required && !session.conversation_id[0]);
+                assert(strcmp(session.error_code, "START_RESULT_UNKNOWN") == 0);
+            }
+            respond(statuses[status], transport,
+                    "{\"error\":{\"code\":\"CONVERSATION_START_FAILED\",\"details\":{"
+                    "\"cleanup_required\":false}}}");
+            mybot_device_conversation_t session;
+            assert(start(&session) != 0);
+            assert(!session.start_unknown && !session.cleanup_required);
+            assert(strcmp(session.error_code, "CONVERSATION_START_FAILED") == 0);
+
+            /* The parent must still be stopped even if cleanup_required says false. */
+            respond(statuses[status], transport,
+                    "{\"error\":{\"details\":{\"conversation_id\":\"known-parent\","
+                    "\"cleanup_required\":false}}}");
+            assert(start(&session) != 0);
+            assert(!session.start_unknown && session.cleanup_required);
+            assert(strcmp(session.conversation_id, "known-parent") == 0);
+        }
     }
 }
 
@@ -636,6 +681,7 @@ int main(void) {
     test_invalid_routes();
     test_tts_and_expiry();
     test_start_failures();
+    test_gateway_start_results();
     test_local_failures();
     test_allocation_failures();
     test_stop();

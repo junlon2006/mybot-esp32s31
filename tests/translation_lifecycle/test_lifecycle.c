@@ -431,23 +431,27 @@ static void disconnected_late_start(void) {
     dispose(&fixture);
 }
 static void unknown_start_persists(void) {
-    fixture_t fixture;
-    bound(&fixture);
-    mybot_device_service_request_t *request = starting(&fixture);
-    request->result = -1;
-    request->payload.start.response.start_unknown = true;
-    deliver(&fixture, request);
-    assert(fixture.lifecycle.state == MYBOT_DEVICE_STATE_START_UNKNOWN);
-    mybot_device_lifecycle_request_start(&fixture.lifecycle);
-    mybot_device_lifecycle_request_pair(&fixture.lifecycle);
-    ticks(&fixture, 100);
-    assert(fixture.queued_count == 0 && stored(&fixture, "tr_session"));
-    initialize(&fixture, true, SERVER, DEVICE);
-    assert(fixture.lifecycle.state == MYBOT_DEVICE_STATE_START_UNKNOWN);
-    mybot_device_lifecycle_request_start(&fixture.lifecycle);
-    ticks(&fixture, 100);
-    assert(fixture.queued_count == 0);
-    dispose(&fixture);
+    const int results[] = {-1, 502, 503, 504};
+    for (size_t i = 0; i < ARRAY_COUNT(results); ++i) {
+        fixture_t fixture;
+        bound(&fixture);
+        mybot_device_service_request_t *request = starting(&fixture);
+        request->result = results[i];
+        request->payload.start.response.start_unknown = true;
+        deliver(&fixture, request);
+        assert(fixture.lifecycle.state == MYBOT_DEVICE_STATE_START_UNKNOWN);
+        assert(fixture.starts == 0 && fixture.lifecycle.pending_unknown);
+        mybot_device_lifecycle_request_start(&fixture.lifecycle);
+        mybot_device_lifecycle_request_pair(&fixture.lifecycle);
+        ticks(&fixture, 100);
+        assert(fixture.queued_count == 0 && stored(&fixture, "tr_session"));
+        initialize(&fixture, true, SERVER, DEVICE);
+        assert(fixture.lifecycle.state == MYBOT_DEVICE_STATE_START_UNKNOWN);
+        mybot_device_lifecycle_request_start(&fixture.lifecycle);
+        ticks(&fixture, 100);
+        assert(fixture.queued_count == 0 && stored(&fixture, "tr_session"));
+        dispose(&fixture);
+    }
 }
 static void unknown_crash_before_response(void) {
     fixture_t fixture;

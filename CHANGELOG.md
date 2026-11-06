@@ -2,6 +2,8 @@
 
 ## Unreleased — standalone S31 translation
 
+- Preserve an unknown start result after ambiguous gateway/server failures, preventing duplicate cloud sessions until recovery.
+
 - Preserve NVS on initialization failures instead of automatically erasing credentials and pending session journals.
 
 - Move audited media, HTTP and RTC-forwarding task stacks to PSRAM through the S31 adapter, reducing duplex internal-stack demand by about 120 KiB. Log task allocation failures and prevent unsafe RTSA initialization retries after a vendor failure.

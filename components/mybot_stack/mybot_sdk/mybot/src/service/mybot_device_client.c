@@ -635,8 +635,9 @@ int mybot_device_client_start_conversation(const char *base_url, const char *dev
     resp->cleanup_required =
         resp->conversation_id[0] != '\0' || (cleanup && cleanup->type == MYBOT_JSON_TRUE);
     (void)copy_optional_json_string(error, "code", resp->error_code, sizeof(resp->error_code));
+    bool cleanup_not_required = cleanup && cleanup->type == MYBOT_JSON_FALSE;
     if (ret < 0) {
-        bool rejected = raw.status_code >= 400 || (cleanup && cleanup->type == MYBOT_JSON_FALSE);
+        bool rejected = (raw.status_code >= 400 && raw.status_code < 500) || cleanup_not_required;
         resp->start_unknown = request_attempted && !resp->conversation_id[0] && !rejected;
         if (!resp->error_code[0]) {
             set_start_error(resp, !request_attempted    ? "OUT_OF_MEMORY"
@@ -646,14 +647,17 @@ int mybot_device_client_start_conversation(const char *base_url, const char *dev
         goto done;
     }
     if (raw.status_code != 201) {
-        /* A definite rejection is known, unless the server explicitly requires
-         * cleanup but failed to supply a usable parent identity. */
-        bool success_without_id = raw.status_code >= 200 && raw.status_code < 300 &&
-                                  !(cleanup && cleanup->type == MYBOT_JSON_FALSE);
-        resp->start_unknown =
-            !resp->conversation_id[0] && (resp->cleanup_required || success_without_id);
+        /* A gateway/server failure can follow a successful cloud start. Only an
+         * explicit cleanup_required=false can rule that out without a parent ID. */
+        bool success_without_id =
+            raw.status_code >= 200 && raw.status_code < 300 && !cleanup_not_required;
+        bool server_error =
+            raw.status_code >= 500 && raw.status_code < 600 && !cleanup_not_required;
+        resp->start_unknown = !resp->conversation_id[0] &&
+                              (resp->cleanup_required || success_without_id || server_error);
         if (!resp->error_code[0]) {
-            set_start_error(resp, "CONVERSATION_START_REJECTED");
+            set_start_error(resp, resp->start_unknown ? "START_RESULT_UNKNOWN"
+                                                      : "CONVERSATION_START_REJECTED");
         }
         result = raw.status_code >= 400 ? raw.status_code : -1;
         goto done;

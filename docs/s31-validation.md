@@ -821,3 +821,14 @@ unchanged retained bytes under UBSan. CI runs this targeted test. Formatting/SPD
 whitespace checks pass. Chinese incremental build and final S31 checks pass in the fixed
 build directory: application 3654352 bytes, SHA-256 `0c8502571d9385677438ee42eabfbabce87568428d0f1dd57584326263db6527`.
 No device was flashed; real corrupt-partition recovery is not emulated by the host test.
+
+## Review fix 03: retain ambiguous gateway starts
+
+An HTTP 5xx without a usable parent session now preserves the unknown-start journal unless
+the server explicitly returns the boolean cleanup_required=false. A known parent still
+requires cleanup. Partial transport failures follow the same rule; 4xx rejection semantics
+are unchanged. Client UBSan tests pass 467/459 cases with features enabled/disabled,
+including 502/503/504 malformed/empty responses. Lifecycle tests pass 36 groups, including
+durable unknown results and blocked duplicate starts after reboot. Formatting and whitespace
+checks pass. The Chinese incremental build and final S31 checks pass in build/korvo-s31.
+No device was flashed; gateway failure injection remains a host result.
