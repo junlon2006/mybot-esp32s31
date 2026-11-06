@@ -11,11 +11,13 @@
 
 typedef struct {
     aosl_mpq_func_t function;
-    uintptr_t arguments[2];
+    uintptr_t argc;
+    uintptr_t arguments[4];
 } notification_t;
 static notification_t notifications[32];
 static unsigned notification_count, language_sets, volume_sets, pause_sets, renders, tests;
 static unsigned conversation_starts, session_ends, rtc_finalizations, mode_sets;
+static unsigned conversation_stops;
 static bool fail_queue, fail_volume, fail_pause, fail_end_session, fail_mode, paused;
 static int hardware_volume, rtc_fini_result;
 static mybot_lcd_content_t displayed;
@@ -24,6 +26,7 @@ static const mybot_audio_capture_ops_t usb_ops = {0};
 static const mybot_audio_playback_ops_t usb_playback_ops = {0};
 static bool fail_capture_source;
 static unsigned capture_switches;
+static bool stop_during_caption_wait;
 
 const mybot_platform_descriptor_t *mybot_platform_registry_get(void) {
     return &platform;
@@ -64,6 +67,15 @@ int mybot_agora_rtc_send_audio(mybot_translation_direction_t direction, const vo
 void mybot_device_lifecycle_notify_conversation_ended(mybot_device_lifecycle_t *lifecycle) {
     lifecycle->stop_request = true;
 }
+void mybot_device_lifecycle_notify_credentials_expiring(mybot_device_lifecycle_t *lifecycle) {
+    lifecycle->stop_request = true;
+}
+void mybot_media_pipeline_push_remote_audio(mybot_media_pipeline_t *pipeline, const void *data,
+                                            size_t length) {
+    (void)pipeline;
+    (void)data;
+    (void)length;
+}
 
 void *aosl_hal_malloc(size_t size) {
     return malloc(size);
@@ -76,23 +88,31 @@ void test_log(const char *format, ...) {
     (void)format;
 }
 void aosl_msleep(unsigned milliseconds) {
-    (void)milliseconds;
+    if (stop_during_caption_wait) {
+        assert(milliseconds == 1 && runtime.caption_inbox_gate);
+        stop_during_caption_wait = false;
+        on_key_event(MYBOT_KEY_EVENT_CONVERSATION_STOP, &runtime);
+        runtime.caption_inbox_gate = 0;
+        return;
+    }
     assert(!"a noncontended UI command must never wait");
 }
 int aosl_mpq_queue(aosl_mpq_t target, aosl_mpq_t source, aosl_ref_t reference, const char *name,
                    aosl_mpq_func_t callback, uintptr_t argc, ...) {
     assert(target == runtime.control_mpq && source == AOSL_MPQ_INVALID);
-    assert(reference == AOSL_REF_INVALID && strcmp(name, "handle_ui_command") == 0);
-    assert(argc == 2);
+    assert(reference == AOSL_REF_INVALID);
+    assert((strcmp(name, "handle_ui_command") == 0 && argc == 2) ||
+           (strcmp(name, "handle_key_event") == 0 && argc == 4));
     if (fail_queue)
         return -1;
     assert(notification_count < sizeof(notifications) / sizeof(notifications[0]));
     notification_t *notification = &notifications[notification_count++];
     notification->function = callback;
+    notification->argc = argc;
     va_list arguments;
     va_start(arguments, argc);
-    notification->arguments[0] = va_arg(arguments, uintptr_t);
-    notification->arguments[1] = va_arg(arguments, uintptr_t);
+    for (uintptr_t i = 0; i < argc; ++i)
+        notification->arguments[i] = va_arg(arguments, uintptr_t);
     va_end(arguments);
     return 0;
 }
@@ -160,10 +180,39 @@ int mybot_agora_rtc_fini(void) {
     rtc_finalizations++;
     return rtc_fini_result;
 }
+int mybot_media_pipeline_flush_session(mybot_media_pipeline_t *pipeline) {
+    assert(pipeline == &runtime.media);
+    return 0;
+}
+int mybot_agora_rtc_init(const char *app_id, const mybot_agora_rtc_callbacks_t *callbacks) {
+    (void)app_id;
+    assert(callbacks->user_data == &runtime);
+    return 0;
+}
+int mybot_agora_rtc_join(const mybot_device_translation_route_t *routes, size_t count) {
+    assert(routes && count == 1);
+    return 0;
+}
 void mybot_device_lifecycle_request_start(mybot_device_lifecycle_t *lifecycle) {
     assert(lifecycle == &runtime.lifecycle);
     conversation_starts++;
     lifecycle->conversation_requested = true;
+}
+void mybot_device_lifecycle_request_stop(mybot_device_lifecycle_t *lifecycle) {
+    assert(lifecycle == &runtime.lifecycle);
+    conversation_stops++;
+    lifecycle->stop_request = true;
+}
+void mybot_device_lifecycle_request_pair(mybot_device_lifecycle_t *lifecycle) {
+    assert(lifecycle == &runtime.lifecycle);
+}
+int mybot_device_lifecycle_cycle_language(mybot_device_lifecycle_t *lifecycle, bool source) {
+    (void)source;
+    assert(lifecycle == &runtime.lifecycle);
+    return 0;
+}
+int mybot_media_pipeline_adjust_volume(mybot_media_pipeline_t *pipeline, int delta) {
+    return mybot_media_pipeline_set_volume(pipeline, hardware_volume + delta);
 }
 int mybot_lcd_show_content(mybot_lcd_t *lcd, const mybot_lcd_content_t *content) {
     assert(lcd == &runtime.presenter.lcd);
@@ -179,10 +228,11 @@ static void reset(void) {
     memset(&platform, 0, sizeof(platform));
     fail_capture_source = false;
     capture_switches = 0;
+    stop_during_caption_wait = false;
     memset(notifications, 0, sizeof(notifications));
     memset(&displayed, 0, sizeof(displayed));
     notification_count = language_sets = volume_sets = pause_sets = renders = 0;
-    conversation_starts = session_ends = rtc_finalizations = mode_sets = 0;
+    conversation_starts = conversation_stops = session_ends = rtc_finalizations = mode_sets = 0;
     fail_queue = fail_volume = fail_pause = fail_end_session = fail_mode = paused = false;
     hardware_volume = 40;
     rtc_fini_result = 0;
@@ -201,7 +251,7 @@ static void reset(void) {
 static void dispatch(unsigned index) {
     assert(index < notification_count);
     notification_t notification = notifications[index];
-    notification.function(NULL, NULL, 2, notification.arguments);
+    notification.function(NULL, NULL, notification.argc, notification.arguments);
 }
 static mybot_ui_command_t volume(int value) {
     mybot_ui_command_t result = {.type = MYBOT_UI_SET_VOLUME, .value = value};
@@ -682,7 +732,108 @@ static void test_unused_usb_capture_released_after_failed_start(void) {
     tests++;
 }
 
+static void test_key_queue_lifetime_and_valid_stop(void) {
+    reset();
+    active();
+    s_lifecycle_gate = 1;
+    on_key_event(MYBOT_KEY_EVENT_CONVERSATION_STOP, &runtime);
+    assert(!runtime.media_cancel_requested && !notification_count);
+    s_lifecycle_gate = 0;
+    runtime.ui_gate = 1;
+    on_key_event(MYBOT_KEY_EVENT_CONVERSATION_STOP, &runtime);
+    assert(!runtime.media_cancel_requested && !notification_count);
+    runtime.ui_gate = 0;
+    runtime.control_mpq = AOSL_MPQ_INVALID;
+    on_key_event(MYBOT_KEY_EVENT_CONVERSATION_STOP, &runtime);
+    assert(!runtime.media_cancel_requested && !notification_count);
+    runtime.control_mpq = 123;
+    runtime.running = false;
+    on_key_event(MYBOT_KEY_EVENT_CONVERSATION_STOP, &runtime);
+    assert(!runtime.media_cancel_requested && !notification_count);
+    runtime.running = true;
+    on_key_event(MYBOT_KEY_EVENT_CONVERSATION_STOP, &runtime);
+    assert(runtime.media_cancel_requested && notification_count == 1 && !conversation_stops);
+    dispatch(0);
+    assert(conversation_stops == 1 && runtime.lifecycle.stop_request);
+
+    reset();
+    on_key_event(MYBOT_KEY_EVENT_CONVERSATION_STOP, &runtime);
+    assert(!runtime.media_cancel_requested && !notification_count);
+    on_key_event(MYBOT_KEY_EVENT_VOLUME_UP, &runtime);
+    assert(hardware_volume == 40 && notification_count == 1);
+    dispatch(0);
+    assert(hardware_volume == 50);
+    tests++;
+}
+
+static void test_stale_key_stop_cannot_stop_next_session(void) {
+    reset();
+    control_start_conversation(&runtime);
+    active();
+    on_key_event(MYBOT_KEY_EVENT_CONVERSATION_STOP, &runtime);
+    assert(notification_count == 1 && runtime.media_cancel_requested);
+    uintptr_t old_attempt = notifications[0].arguments[3];
+    dev_on_conversation_stop(&runtime);
+    assert(mybot_state_model_set_device_state(&runtime.state_model, MYBOT_DEVICE_STATE_RUNTIME));
+    control_start_conversation(&runtime);
+    active();
+    assert((uintptr_t)runtime.conversation_generation != old_attempt);
+    assert(!runtime.media_cancel_requested && conversation_starts == 2);
+    dispatch(0);
+    assert(!conversation_stops && !runtime.media_cancel_requested);
+    on_key_event(MYBOT_KEY_EVENT_CONVERSATION_STOP, &runtime);
+    assert(runtime.media_cancel_requested);
+    dispatch(1);
+    assert(conversation_stops == 1);
+    tests++;
+}
+
+static void test_key_runtime_generation_and_exit(void) {
+    reset();
+    on_key_event(MYBOT_KEY_EVENT_VOLUME_UP, &runtime);
+    runtime.ui_generation++;
+    dispatch(0);
+    assert(hardware_volume == 40 && !volume_sets);
+    s_lifecycle_gate = 1;
+    on_key_event(MYBOT_KEY_EVENT_EXIT, &runtime);
+    assert(!mybot_is_running() && notification_count == 1 && s_exit_generation == 1);
+    s_lifecycle_gate = 0;
+
+    reset();
+    active();
+    fail_queue = true;
+    on_key_event(MYBOT_KEY_EVENT_CONVERSATION_STOP, &runtime);
+    assert(runtime.media_cancel_requested && !mybot_is_running() && !notification_count);
+    assert(!s_lifecycle_gate && !runtime.ui_gate);
+    tests++;
+}
+
+static void test_stop_during_start_still_stops_active_session(void) {
+    reset();
+    control_start_conversation(&runtime);
+    uintptr_t attempt = (uintptr_t)runtime.conversation_generation;
+    assert(mybot_state_model_set_device_state(&runtime.state_model, MYBOT_DEVICE_STATE_STARTING));
+    mybot_device_conversation_t conversation = {.mode = MYBOT_TRANSLATION_LISTEN, .route_count = 1};
+    strcpy(conversation.routes[0].rtc_agent_uid, "listen-agent");
+    /* Admit STOP after the cloud result's cancellation check but before its
+     * local RTC setup, using the existing caption fence as the interleaving. */
+    runtime.caption_inbox_gate = 1;
+    stop_during_caption_wait = true;
+    dev_on_conversation_start(&conversation, &runtime);
+    assert(!stop_during_caption_wait && runtime.media_cancel_requested);
+    assert(notification_count == 1 && notifications[0].arguments[3] == attempt);
+    assert((uintptr_t)runtime.conversation_generation == attempt);
+    active();
+    dispatch(0);
+    assert(conversation_stops == 1 && runtime.lifecycle.stop_request);
+    tests++;
+}
+
 int main(void) {
+    test_key_queue_lifetime_and_valid_stop();
+    test_stale_key_stop_cannot_stop_next_session();
+    test_key_runtime_generation_and_exit();
+    test_stop_during_start_still_stops_active_session();
     test_unused_usb_capture_released_after_failed_start();
     test_usb_selection_and_start_preflight();
     test_mode_readback_and_repeated_failure();

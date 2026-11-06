@@ -288,6 +288,7 @@ static void rtc_on_caption_channel(const char *channel, const char *sender, cons
 }
 
 static void refresh_translation_view(mybot_runtime_t *runtime);
+static void lock_ui_commands(mybot_runtime_t *runtime);
 
 static int usb_media_send_audio(const void *data, size_t len, void *user_data);
 static void media_error(void *user_data);
@@ -361,7 +362,12 @@ static void control_start_conversation(mybot_runtime_t *runtime) {
             if (strcmp(runtime->lifecycle.error_code, "MEDIA_NOT_READY") == 0)
                 runtime->lifecycle.error_code[0] = '\0';
         }
+        /* One generation spans the whole start attempt, including RTC join.
+         * Key STOP admission shares this short fence with the cancellation reset. */
+        lock_ui_commands(runtime);
+        aosl_atomic_inc(&runtime->conversation_generation);
         aosl_atomic_set(&runtime->media_cancel_requested, false);
+        aosl_atomic_set(&runtime->ui_gate, 0);
         if (runtime->lifecycle.audio_source == MYBOT_AUDIO_SOURCE_USB &&
             start_usb_media(runtime) < 0) {
             snprintf(runtime->lifecycle.error_code, sizeof(runtime->lifecycle.error_code),
@@ -762,7 +768,6 @@ static void dev_on_conversation_start(const mybot_device_conversation_t *params,
         return;
     }
     close_caption_inbox(runtime, false);
-    aosl_atomic_inc(&runtime->conversation_generation);
     caption_lock(&runtime->caption_model_gate);
     mybot_captions_reset(runtime->captions,
                          (uint32_t)aosl_atomic_read(&runtime->conversation_generation));
@@ -855,7 +860,9 @@ static void dev_on_conversation_stop(void *user_data) {
         runtime->lifecycle.error_code[0] = '\0';
     close_caption_inbox(runtime, true);
     refresh_caption_metadata(runtime);
+    lock_ui_commands(runtime);
     aosl_atomic_inc(&runtime->conversation_generation);
+    aosl_atomic_set(&runtime->ui_gate, 0);
     caption_lock(&runtime->caption_inbox_gate);
     runtime->rtc_channel[0] = '\0';
     memset(runtime->rtc_agent_uid, 0, sizeof(runtime->rtc_agent_uid));
@@ -1166,12 +1173,13 @@ static void handle_key_event(const aosl_ts_t *queued_ts, aosl_refobj_t robj, uin
                              uintptr_t argv[]) {
     (void)queued_ts;
     (void)robj;
-    if (argc != 2) {
+    if (argc != 4) {
         return;
     }
 
     mybot_runtime_t *runtime = (mybot_runtime_t *)argv[0];
-    if (!runtime_is_running(runtime)) {
+    if (!runtime_is_running(runtime) || argv[2] != runtime->ui_generation ||
+        argv[3] != (uintptr_t)aosl_atomic_read(&runtime->conversation_generation)) {
         return;
     }
     mybot_key_event_t event = (mybot_key_event_t)argv[1];
@@ -1206,21 +1214,42 @@ static void handle_key_event(const aosl_ts_t *queued_ts, aosl_refobj_t robj, uin
 
 static void on_key_event(mybot_key_event_t event, void *user_data) {
     mybot_runtime_t *runtime = user_data;
-    if (event == MYBOT_KEY_EVENT_CONVERSATION_STOP) {
-        aosl_atomic_set(&runtime->media_cancel_requested, true);
-    }
     if (event == MYBOT_KEY_EVENT_EXIT) {
         runtime_publish_exit(runtime);
         return;
     }
-    if (!runtime_is_running(runtime)) {
+    /* Match UI submission: never publish into a queue that start/stop owns. */
+    if (aosl_atomic_cmpxchg(&s_lifecycle_gate, 0, 1) != 0)
         return;
+    if (!runtime_is_running(runtime) || aosl_mpq_invalid(runtime->control_mpq)) {
+        lifecycle_unlock();
+        return;
+    }
+    if (aosl_atomic_cmpxchg(&runtime->ui_gate, 0, 1) != 0) {
+        lifecycle_unlock();
+        return;
+    }
+    uintptr_t ui_generation = runtime->ui_generation;
+    uintptr_t conversation_generation =
+        (uintptr_t)aosl_atomic_read(&runtime->conversation_generation);
+    if (event == MYBOT_KEY_EVENT_CONVERSATION_STOP) {
+        mybot_state_t state = runtime_get_state(runtime);
+        if (state != MYBOT_STATE_IN_CONVERSATION && state != MYBOT_STATE_TRANSLATION_STARTING &&
+            state != MYBOT_STATE_CLEANUP_PENDING && state != MYBOT_STATE_TRANSLATION_STOPPING) {
+            aosl_atomic_set(&runtime->ui_gate, 0);
+            lifecycle_unlock();
+            return;
+        }
+        aosl_atomic_set(&runtime->media_cancel_requested, true);
     }
 
     if (aosl_mpq_queue(runtime->control_mpq, AOSL_MPQ_INVALID, AOSL_REF_INVALID, "handle_key_event",
-                       handle_key_event, 2, (uintptr_t)runtime, (uintptr_t)event) < 0) {
+                       handle_key_event, 4, (uintptr_t)runtime, (uintptr_t)event, ui_generation,
+                       conversation_generation) < 0) {
         fail_control_queue(runtime, "key");
     }
+    aosl_atomic_set(&runtime->ui_gate, 0);
+    lifecycle_unlock();
 }
 
 static void control_tick_timer(aosl_timer_t id, const aosl_ts_t *now, uintptr_t argc,

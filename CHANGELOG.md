@@ -2,6 +2,8 @@
 
 ## Unreleased — standalone S31 translation
 
+- Discard stale AI/PLAY button releases after a session or SDK attachment changes, preventing accidental restarts.
+
 - Preserve the selected language pair when switching between media, face-to-face and USB meeting scenes.
 
 - Keep application ownership until physical/USB media, HTTP and RTC teardown completes; repeated stop retries retained resources before allowing restart.

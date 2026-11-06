@@ -871,3 +871,24 @@ initial configuration, and language changes still wait for acknowledged readback
 The Chinese/English UI suites pass on both screen layouts, along with font checks,
 formatting/SPDX and whitespace checks. Chinese incremental firmware build and final
 S31 checks pass in build/korvo-s31. No device was flashed.
+
+## Review fix 07: reject stale physical key gestures
+
+Physical AI/PLAY gestures capture their action and SDK attachment epoch on press.
+Release dispatch validates that original gesture instead of selecting a new action
+from the release-time state. A gesture invalidated by a session-state transition or
+detach cannot become a start for a later session. Long-press provisioning remains
+owned by the board.
+
+Queued key events also carry the existing runtime and conversation generations.
+The conversation generation now spans an entire start attempt, so a valid STOP
+during STARTING still applies after RTC joins. Queue admission shares a short fence
+with attempt cancellation reset; stale STOP callbacks cannot mute a later session.
+
+Both-board input tests pass 31 scenarios, including the original ACTIVE-to-READY
+failure reproduced before the fix, stale held gestures, detach/reattach and long
+provisioning. UBSan control tests pass 20 UI scenarios plus the existing lifecycle,
+caption and route suites. One case injects STOP after the RTC-start cancellation
+precheck to verify that a starting attempt can still be stopped. Formatting/SPDX,
+whitespace, Chinese incremental build and final S31 checks pass. No device was flashed;
+physical key timing remains a separate hardware check.
