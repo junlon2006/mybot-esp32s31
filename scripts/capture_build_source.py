@@ -40,7 +40,8 @@ def source_input(name: str) -> bool:
 
 def snapshot(project_root: Path, build_dir: Path) -> dict:
     def git(*args: str) -> bytes:
-        return subprocess.run(["git", *args], cwd=project_root, check=True, capture_output=True).stdout
+        return subprocess.run(["git", *args], cwd=project_root, check=True,
+                              stdout=subprocess.PIPE).stdout
 
     revision = git("rev-parse", "HEAD").decode().strip()
     tracked = {name.decode("utf-8") for name in git("ls-files", "-z").split(b"\0") if name}

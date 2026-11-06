@@ -5,8 +5,10 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -57,6 +59,77 @@ class BuildSourceTests(unittest.TestCase):
         (self.build / "app.elf").write_bytes(b"ELF-" + payload)
         (self.build / "app.bin").write_bytes(b"BIN-" + payload)
         return capture.finalize(self.project, self.build)
+
+    def test_ci_workspace_trust_recovers_container_ownership_without_trusting_other_repos(self) -> None:
+        env = dict(os.environ, GIT_CONFIG_GLOBAL=str(self.build / "global.gitconfig"),
+                   GIT_CONFIG_NOSYSTEM="1", GIT_TEST_ASSUME_DIFFERENT_OWNER="1", LC_ALL="C",
+                   GITHUB_WORKSPACE=str(self.project))
+        command = [sys.executable, str(ROOT / "scripts/capture_build_source.py"), "capture",
+                   "--project-root", str(self.project), "--build-dir", str(self.build)]
+        unsafe = subprocess.run(["git", "rev-parse", "--verify", "HEAD"], cwd=self.project,
+                                env=env, capture_output=True, text=True)
+        if unsafe.returncode == 0:
+            self.skipTest("installed Git does not support forced ownership checks")
+        self.assertEqual(unsafe.returncode, 128)
+        self.assertIn("dubious ownership", unsafe.stderr)
+        failed = subprocess.run(command, env=env, capture_output=True, text=True)
+        self.assertNotEqual(failed.returncode, 0)
+        self.assertIn("dubious ownership", failed.stderr)
+        self.assertFalse((self.build / capture.SNAPSHOT).exists())
+        self.assertFalse((self.build / capture.GENERATED_C).exists())
+
+        workflow = (ROOT / ".github/workflows/ci.yml").read_text()
+        step = workflow.split("      - name: Allow Git access to checked-out workspace\n", 1)[1]
+        body = step.split("        run: |\n", 1)[1].split("      - ", 1)[0]
+        body = "\n".join(line.removeprefix("          ") for line in body.splitlines())
+        subprocess.run(["bash", "-e", "-c", body], cwd=self.project, env=env,
+                       check=True, capture_output=True, text=True)
+        configured = subprocess.run(["git", "config", "--global", "--get-all", "safe.directory"],
+                                    env=env, check=True, capture_output=True, text=True)
+        self.assertEqual(configured.stdout.splitlines(), [str(self.project)])
+
+        for dirty in (False, True):
+            with self.subTest(dirty=dirty):
+                if dirty:
+                    (self.project / "main/app.c").write_text("changed source\n")
+                subprocess.run(command, env=env, check=True, capture_output=True, text=True)
+                value = json.loads((self.build / capture.SNAPSHOT).read_text())
+                for name in ("app.elf", "app.bin"):
+                    (self.build / name).write_bytes(capture.marker(value))
+                finalize = command.copy()
+                finalize[2] = "finalize"
+                subprocess.run(finalize, env=env, check=True, capture_output=True, text=True)
+                built = capture.verify(self.build)
+                self.assertEqual(built["snapshot"]["source"]["revision"], self.revision_a)
+                self.assertEqual(built["snapshot"]["source"]["dirty"], dirty)
+
+        unrelated = self.build / "unrelated"
+        unrelated.mkdir()
+        initialize_env = env.copy()
+        initialize_env.pop("GIT_TEST_ASSUME_DIFFERENT_OWNER")
+        subprocess.run(["git", "init", "--quiet", str(unrelated)], env=initialize_env, check=True)
+        refused = subprocess.run(["git", "-C", str(unrelated), "status", "--porcelain"],
+                                 env=env, capture_output=True, text=True)
+        self.assertEqual(refused.returncode, 128)
+        self.assertIn("dubious ownership", refused.stderr)
+
+    def test_missing_repository_keeps_git_diagnostic_and_does_not_create_snapshot(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="mybot-no-git-") as temporary:
+            root = Path(temporary).resolve()
+            build = root / "build"
+            build.mkdir()
+            (build / "sdkconfig").write_text('CONFIG_IDF_TARGET="esp32s31"\n')
+            env = dict(os.environ, GIT_CONFIG_GLOBAL=str(build / "global.gitconfig"),
+                       GIT_CONFIG_NOSYSTEM="1", LC_ALL="C")
+            failed = subprocess.run(
+                [sys.executable, str(ROOT / "scripts/capture_build_source.py"), "capture",
+                 "--project-root", str(root), "--build-dir", str(build)],
+                env=env, capture_output=True, text=True)
+            self.assertNotEqual(failed.returncode, 0)
+            self.assertIn("not a git repository", failed.stderr)
+            self.assertIn("build provenance:", failed.stderr)
+            self.assertFalse((build / capture.SNAPSHOT).exists())
+            self.assertFalse((build / capture.GENERATED_C).exists())
 
     def test_existing_a_keeps_a_after_checkout_b_and_failed_b_capture(self) -> None:
         built = self.complete_build()

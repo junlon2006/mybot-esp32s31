@@ -1114,3 +1114,19 @@ Hash inventories confirm all eight mosaico-uac-passed and nine meeting-listen-pa
 backup files are unchanged. No device was flashed. The subsequent GCC fixture
 correction changes test setup only; these matrix results remain firmware-source
 evidence rather than hardware acceptance of the review fixes.
+
+## CI follow-up: container Git workspace access (2026-11-06)
+
+The remote Mosaico Chinese job stopped before compilation when provenance capture
+could not read HEAD (Git exit 128). Its log omitted Git stderr, so the original
+diagnostic is unavailable. A forced ownership check with Git 2.50.1 reproduces
+that exit; trusting the exact checkout path restores access. The IDF container job
+now sets safe.directory to GITHUB_WORKSPACE after checkout and verifies HEAD in
+the same shell environment used for builds. The provenance helper streams Git
+stderr and still rejects failed metadata queries without creating a snapshot.
+
+All 89 builder/delivery/provenance tests pass with Python 3.11 and Git 2.50.1,
+without skips. Tests execute the workflow's trust commands, exercise capture and
+finalize with clean and dirty inputs, preserve missing-repository diagnostics and
+confirm that other repositories remain untrusted. Whitespace checks pass. This
+fix changes CI and provenance tooling; another remote CI run is still required.

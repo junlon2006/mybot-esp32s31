@@ -605,6 +605,18 @@ class S31DeliveryTests(unittest.TestCase):
 
 
 class WorkflowDeliveryTests(unittest.TestCase):
+    def test_ci_trusts_only_checked_out_workspace_before_idf_runs(self) -> None:
+        workflow = (ROOT / ".github/workflows/ci.yml").read_text()
+        build_job = workflow.split("  idf-build:", 1)[1]
+        trusted = build_job.index("      - name: Allow Git access to checked-out workspace\n")
+        self.assertLess(build_job.index("      - uses: actions/checkout@v4\n"), trusted)
+        self.assertLess(trusted, build_job.index("      - name: Verify toolchain\n"))
+        self.assertLess(trusted, build_job.index("      - name: Build translation firmware without video\n"))
+        body = build_job[trusted:].split("        run: |\n", 1)[1].split("      - ", 1)[0]
+        self.assertIn('git config --global --add safe.directory "$GITHUB_WORKSPACE"', body)
+        self.assertIn('git -C "$GITHUB_WORKSPACE" rev-parse --verify HEAD', body)
+        self.assertNotIn("*", body)
+
     def test_ci_builds_both_boards_and_languages_with_isolated_outputs(self) -> None:
         workflow = (ROOT / ".github/workflows/ci.yml").read_text()
         build_job = workflow.split("  idf-build:", 1)[1]

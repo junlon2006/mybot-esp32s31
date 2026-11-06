@@ -161,6 +161,10 @@ jobs:
             defaults: ci/ptime60.defaults;ci/en-us.defaults
     steps:
       - uses: actions/checkout@v4
+      - name: Allow Git access to checked-out workspace
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git -C "$GITHUB_WORKSPACE" rev-parse --verify HEAD
       - name: Install prompt conversion prerequisite
         run: apt-get update && apt-get install -y ffmpeg
       - name: Verify bundled S31 RTSA fingerprints
