@@ -992,3 +992,19 @@ updates host validation only. Threaded mocks do not prove ISR/task race freedom,
 and no successful TSan result is recorded. The optional macOS ASan control run
 failed before main in libpthread/dyld initialization and did not execute application
 tests. Remote CI and real USB scheduling remain separate results.
+
+## Review fix 15: enforce OTA image headroom
+
+Local and CI delivery checks now require at least 307,200 bytes (300 KiB) free in
+every writable OTA application slot. Capacity comes from the built binary partition
+table, with its integrity/layout checked and flash records cross-checked against
+the delivered application offset. Current checkout CSV files are not consulted.
+Metadata and CLI output record the image size, per-slot capacity/free bytes and
+required minimum. The existing Chinese artifact passes under IDF Python 3.10:
+3,671,632 application bytes and 457,136 free bytes in each 4,128,768-byte OTA slot.
+
+All 85 builder/delivery tests pass with Python 3.11, including 11 new grouped
+capacity/layout regressions. Exactly 307,200 free bytes passes; 307,199 in the
+smaller OTA slot fails. Malformed tables, mismatched flash records and overflows
+are rejected. Whitespace checks pass. Firmware source is unchanged by this host
+delivery-policy fix; no device was flashed.

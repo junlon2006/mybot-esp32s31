@@ -13,6 +13,7 @@ import json
 from pathlib import Path
 import re
 import shlex
+import struct
 import sys
 
 from capture_build_source import verify as verify_build_provenance
@@ -29,6 +30,110 @@ RTSA_FILES = {
 }
 AOSL_SYMBOLS = ("aosl_malloc_impl", "aosl_mpq_create", "aosl_hal_thread_create", "aosl_hal_os_version")
 USB_WRAPPED_SYMBOLS = ("dcd_edpt_xfer", "dcd_event_handler", "usbd_edpt_xfer_fifo")
+FLASH_SIZE_BYTES = 16 * 1024 * 1024
+MIN_OTA_FREE_BYTES = 300 * 1024
+
+
+def parse_partition_table(data: bytes, table_offset: int) -> list[dict]:
+    """Read IDF's 32-byte entries from the built table, including its MD5 record."""
+    if not data or len(data) % 32 or len(data) > 0xC00:
+        raise RuntimeError("invalid partition table length")
+    if table_offset % 0x1000 or table_offset < 0 or table_offset + 0x1000 > FLASH_SIZE_BYTES:
+        raise RuntimeError("invalid partition table flash offset")
+    entries = []
+    checksum_seen = False
+    terminated = False
+    for position in range(0, len(data), 32):
+        record = data[position:position + 32]
+        if record == b"\xff" * 32:
+            if data[position:] != b"\xff" * (len(data) - position):
+                raise RuntimeError("non-padding data after partition table terminator")
+            terminated = True
+            break
+        if record[:2] == b"\xeb\xeb":
+            if checksum_seen or record[:16] != b"\xeb\xeb" + b"\xff" * 14:
+                raise RuntimeError("invalid partition table MD5 record")
+            if record[16:] != hashlib.md5(data[:position]).digest():
+                raise RuntimeError("partition table MD5 checksum mismatch")
+            checksum_seen = True
+            continue
+        if checksum_seen:
+            raise RuntimeError("partition entry after MD5 record")
+        magic, kind, subtype, offset, size, raw_name, flags = struct.unpack("<2sBBII16sI", record)
+        if magic != b"\xaa\x50":
+            raise RuntimeError("invalid partition entry magic")
+        try:
+            name = raw_name.split(b"\0", 1)[0].decode("utf-8")
+        except UnicodeDecodeError as error:
+            raise RuntimeError("invalid partition label") from error
+        if not name or not name.isprintable():
+            raise RuntimeError("invalid partition label")
+        alignment = 0x10000 if kind == 0 else 0x1000
+        if (not size or offset % alignment or (kind == 0 and size % 0x1000) or
+                offset + size > FLASH_SIZE_BYTES):
+            raise RuntimeError(f"invalid partition bounds or alignment: {name}")
+        if offset < table_offset + 0x1000 and not (kind in (2, 3) and subtype == 0):
+            raise RuntimeError(f"partition overlaps reserved boot/table region: {name}")
+        if flags & ~3:
+            raise RuntimeError(f"unsupported partition flags: {name}")
+        entries.append({"name": name, "type": kind, "subtype": subtype,
+                        "offset": offset, "size": size, "flags": flags})
+    if not terminated or not entries:
+        raise RuntimeError("partition table is empty or missing its terminator")
+    names = [entry["name"] for entry in entries]
+    if len(set(names)) != len(names):
+        raise RuntimeError("duplicate partition labels")
+    previous_end = 0
+    ota_subtypes = set()
+    for entry in sorted(entries, key=lambda item: item["offset"]):
+        if entry["offset"] < previous_end:
+            raise RuntimeError(f"overlapping partitions: {entry['name']}")
+        previous_end = entry["offset"] + entry["size"]
+        if entry["type"] == 0 and 0x10 <= entry["subtype"] <= 0x1F:
+            if entry["subtype"] in ota_subtypes:
+                raise RuntimeError("duplicate OTA partition subtype")
+            ota_subtypes.add(entry["subtype"])
+            if entry["flags"] & 2:
+                raise RuntimeError(f"OTA partition must be writable: {entry['name']}")
+    return entries
+
+
+def verify_ota_capacity(build_dir: Path, description: dict, flash: dict, segments: list[dict]) -> dict:
+    records = {}
+    for role in ("partition-table", "app"):
+        record = flash.get(role)
+        if not isinstance(record, dict):
+            raise RuntimeError(f"missing {role} flash record")
+        try:
+            offset, name = int(record["offset"], 0), record["file"]
+        except (KeyError, TypeError, ValueError) as error:
+            raise RuntimeError(f"invalid {role} flash record") from error
+        if not any(int(segment["offset"], 0) == offset and segment["file"] == name for segment in segments):
+            raise RuntimeError(f"{role} flash record does not match flash_files")
+        records[role] = (offset, name)
+    table_offset, table_name = records["partition-table"]
+    app_offset, app_name = records["app"]
+    if app_name != description["app_bin"]:
+        raise RuntimeError("app flash record does not name the built application")
+    entries = parse_partition_table(build_file(build_dir, table_name).read_bytes(), table_offset)
+    flashed = next((entry for entry in entries if entry["offset"] == app_offset), None)
+    if not flashed or flashed["type"] != 0:
+        raise RuntimeError("flashed application offset must match an application partition start")
+    app_size = build_file(build_dir, app_name).stat().st_size
+    if app_size > flashed["size"]:
+        raise RuntimeError("application exceeds its flashed partition")
+    slots = [{"name": entry["name"], "offset": hex(entry["offset"]), "size": entry["size"],
+              "free_bytes": entry["size"] - app_size} for entry in entries
+             if entry["type"] == 0 and 0x10 <= entry["subtype"] <= 0x1F]
+    if not slots:
+        raise RuntimeError("partition table must contain writable OTA application slots")
+    for slot in slots:
+        if slot["free_bytes"] < MIN_OTA_FREE_BYTES:
+            raise RuntimeError(f"OTA partition {slot['name']} has {slot['free_bytes']} free bytes; "
+                               f"requires at least {MIN_OTA_FREE_BYTES}")
+    return {"minimum_required_free_bytes": MIN_OTA_FREE_BYTES, "image_size_bytes": app_size,
+            "flashed_partition": flashed["name"], "minimum_free_bytes": min(slot["free_bytes"] for slot in slots),
+            "slots": slots}
 
 
 def sha256(path: Path) -> str:
@@ -148,12 +253,13 @@ def verify_build(build_dir: Path, language: str) -> dict:
         start = int(offset, 0)
         source = build_file(build_dir, name)
         size = source.stat().st_size
-        if start < previous_end or size == 0 or start + size > 16 * 1024 * 1024:
+        if start < previous_end or size == 0 or start + size > FLASH_SIZE_BYTES:
             raise RuntimeError("invalid, overlapping or oversized flash segment")
         previous_end = start + size
         segments.append({"offset": hex(start), "file": name, "size": size, "sha256": sha256(source)})
     if not segments or description["app_bin"] not in {segment["file"] for segment in segments}:
         raise RuntimeError("flash files must include the application")
+    ota_capacity = verify_ota_capacity(build_dir, description, flash, segments)
     provenance = verify_build_provenance(build_dir)
     return {
         "schema_version": 1,
@@ -174,6 +280,7 @@ def verify_build(build_dir: Path, language: str) -> dict:
         "segments": segments,
         "source": provenance["snapshot"]["source"],
         "build_provenance": provenance,
+        "ota_capacity": ota_capacity,
     }
 
 
@@ -252,7 +359,9 @@ def main() -> int:
         else verify_build(args.build_dir, args.language)
     )
     print(f'Validated {metadata["board"]} {args.language}: RISC-V, local AOSL, video off, '
-          f'{len(metadata["segments"])} flash segments')
+          f'{len(metadata["segments"])} flash segments; '
+          f'OTA free min={metadata["ota_capacity"]["minimum_free_bytes"]} bytes '
+          f'(required={MIN_OTA_FREE_BYTES})')
     return 0
 
 

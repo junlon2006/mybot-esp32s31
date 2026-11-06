@@ -11,6 +11,7 @@ import json
 from pathlib import Path
 import re
 import shlex
+import struct
 import sys
 import tempfile
 import unittest
@@ -57,13 +58,27 @@ class S31DeliveryTests(unittest.TestCase):
         (self.build / "mybot_esp32s31.map").write_text(self.map_text)
         (self.build / "bootloader").mkdir()
         (self.build / "bootloader/bootloader.bin").write_bytes(b"bootloader-data")
+        (self.build / "partition_table").mkdir()
+        self.partitions = [
+            ("nvs", 1, 2, 0x9000, 0x4000, 0),
+            ("otadata", 1, 0, 0xD000, 0x2000, 0),
+            ("phy_init", 1, 1, 0xF000, 0x1000, 0),
+            ("ota_0", 0, 0x10, 0x20000, 0x3F0000, 0),
+            ("ota_1", 0, 0x11, 0x410000, 0x3F0000, 0),
+            ("assets", 1, 0x82, 0x800000, 0x800000, 0),
+        ]
+        self.write_partition_table()
         (self.build / "mybot_esp32s31.bin").write_bytes(b"application-data")
         self.flash = {
             "extra_esptool_args": {
                 "chip": "esp32s31", "before": "default-reset", "after": "hard-reset", "stub": False,
             },
             "flash_settings": {"flash_mode": "dio", "flash_size": "16MB", "flash_freq": "80m"},
-            "flash_files": {"0x2000": "bootloader/bootloader.bin", "0x20000": "mybot_esp32s31.bin"},
+            "flash_files": {"0x2000": "bootloader/bootloader.bin",
+                            "0x8000": "partition_table/partition-table.bin",
+                            "0x20000": "mybot_esp32s31.bin"},
+            "partition-table": {"offset": "0x8000", "file": "partition_table/partition-table.bin"},
+            "app": {"offset": "0x20000", "file": "mybot_esp32s31.bin"},
         }
         self.write_flash()
         self.source_marker = b""
@@ -74,6 +89,22 @@ class S31DeliveryTests(unittest.TestCase):
 
     def write_flash(self) -> None:
         (self.build / "flasher_args.json").write_text(json.dumps(self.flash))
+
+    def write_partition_table(self, checksum=True) -> None:
+        data = b"".join(struct.pack("<2sBBII16sI", b"\xaa\x50", kind, subtype, offset, size,
+                                    name.encode(), flags)
+                        for name, kind, subtype, offset, size, flags in self.partitions)
+        if checksum:
+            data += b"\xeb\xeb" + b"\xff" * 14 + hashlib.md5(data).digest()
+        data += b"\xff" * (0xC00 - len(data))
+        (self.build / "partition_table/partition-table.bin").write_bytes(data)
+
+    def resize_application(self, size: int) -> None:
+        marker_size = len(self.source_marker)
+        self.assertGreater(size, marker_size)
+        (self.build / self.description["app_bin"]).write_bytes(b"A" * (size - marker_size))
+        self.refresh_provenance()
+        self.assertEqual((self.build / self.description["app_bin"]).stat().st_size, size)
 
     def refresh_provenance(self) -> None:
         snapshot = {
@@ -236,7 +267,7 @@ class S31DeliveryTests(unittest.TestCase):
         self.assertEqual(metadata, manifest)
         self.assertEqual(manifest["image"]["flash_offset"], "0x0")
         self.assertEqual(manifest["image"]["sha256"], hashlib.sha256(self.merged.read_bytes()).hexdigest())
-        self.assertEqual([s["offset"] for s in manifest["segments"]], ["0x2000", "0x20000"])
+        self.assertEqual([s["offset"] for s in manifest["segments"]], ["0x2000", "0x8000", "0x20000"])
         self.assertEqual(manifest["project_version"], "0.1.0")
         self.assertEqual(manifest["idf_version"], "v6.1")
         self.assertFalse(manifest["video_enabled"])
@@ -268,6 +299,163 @@ class S31DeliveryTests(unittest.TestCase):
             metadata = checker.package(self.build, self.merged, "zh-CN")
         self.assertEqual(metadata["source"]["revision"], "a" * 40)
         self.assertFalse(metadata["source"]["dirty"])
+
+    def test_capacity_uses_every_built_ota_slot_and_accepts_exact_300kib_margin(self) -> None:
+        name, kind, subtype, offset, _, flags = self.partitions[4]
+        smaller_slot = 0x3E0000
+        self.partitions[4] = (name, kind, subtype, offset, smaller_slot, flags)
+        self.write_partition_table()
+        self.resize_application(smaller_slot - 300 * 1024)
+        metadata = checker.verify_build(self.build, "zh-CN")
+        capacity = metadata["ota_capacity"]
+        self.assertEqual(capacity["minimum_required_free_bytes"], 307200)
+        self.assertEqual(capacity["minimum_free_bytes"], 307200)
+        self.assertEqual(capacity["flashed_partition"], "ota_0")
+        self.assertEqual([slot["name"] for slot in capacity["slots"]], ["ota_0", "ota_1"])
+        self.assertGreater(capacity["slots"][0]["free_bytes"], 307200)
+        self.resize_application(smaller_slot - 300 * 1024 + 1)
+        with self.assertRaisesRegex(RuntimeError, "ota_1 has 307199 free bytes"):
+            checker.verify_build(self.build, "zh-CN")
+
+    def test_application_that_only_fits_active_slot_still_rejects_inactive_overflow(self) -> None:
+        name, kind, subtype, offset, _, flags = self.partitions[4]
+        self.partitions[4] = (name, kind, subtype, offset, 0x200000, flags)
+        self.write_partition_table()
+        self.resize_application(0x210000)
+        with self.assertRaisesRegex(RuntimeError, "OTA partition ota_1 has -65536 free bytes"):
+            checker.verify_build(self.build, "zh-CN")
+
+    def test_application_overflow_or_zero_margin_is_rejected(self) -> None:
+        self.resize_application(0x3F0001)
+        with self.assertRaisesRegex(RuntimeError, "application exceeds its flashed partition"):
+            checker.verify_build(self.build, "zh-CN")
+        self.resize_application(0x3F0000)
+        with self.assertRaisesRegex(RuntimeError, "ota_0 has 0 free bytes"):
+            checker.verify_build(self.build, "zh-CN")
+
+    def test_partition_capacity_uses_flash_records_and_binary_not_csv_or_fixed_filename(self) -> None:
+        original_read = Path.read_text
+
+        def forbid_csv(path, *args, **kwargs):
+            self.assertNotEqual(path.suffix, ".csv", "delivery must use the built binary table")
+            return original_read(path, *args, **kwargs)
+
+        table = self.build / "partition_table/partition-table.bin"
+        table.rename(self.build / "compiled-layout.bin")
+        self.flash["flash_files"]["0x8000"] = "compiled-layout.bin"
+        self.flash["partition-table"]["file"] = "compiled-layout.bin"
+        self.write_flash()
+        self.refresh_provenance()
+        with mock.patch.object(Path, "read_text", forbid_csv):
+            metadata = checker.verify_build(self.build, "zh-CN")
+        self.assertEqual([slot["size"] for slot in metadata["ota_capacity"]["slots"]],
+                         [0x3F0000, 0x3F0000])
+
+    def test_app_flash_offset_must_be_partition_start_and_application_type(self) -> None:
+        for offset in (0x21000, 0x9000):
+            with self.subTest(offset=hex(offset)):
+                self.flash["flash_files"].pop(self.flash["app"]["offset"])
+                self.flash["app"]["offset"] = hex(offset)
+                self.flash["flash_files"][hex(offset)] = self.description["app_bin"]
+                self.write_flash()
+                with self.assertRaisesRegex(RuntimeError, "must match an application partition start"):
+                    checker.verify_build(self.build, "zh-CN")
+
+    def test_missing_or_inconsistent_app_and_partition_flash_records_are_rejected(self) -> None:
+        for role in ("app", "partition-table"):
+            original = self.flash[role]
+            for value in (None, {"offset": "bad", "file": original["file"]},
+                          {"offset": hex(int(original["offset"], 0) + 0x1000), "file": original["file"]},
+                          {"offset": original["offset"], "file": "another.bin"}):
+                with self.subTest(role=role, value=value):
+                    if value is None:
+                        self.flash.pop(role)
+                    else:
+                        self.flash[role] = value
+                    self.write_flash()
+                    with self.assertRaisesRegex(RuntimeError, "flash record"):
+                        checker.verify_build(self.build, "zh-CN")
+                    self.flash[role] = original
+
+    def test_malformed_partition_binary_and_checksum_are_rejected(self) -> None:
+        path = self.build / "partition_table/partition-table.bin"
+        original = path.read_bytes()
+        md5_offset = len(self.partitions) * 32
+        corrupted_md5 = bytearray(original)
+        corrupted_md5[md5_offset + 16] ^= 1
+        bad_md5_header = bytearray(original)
+        bad_md5_header[md5_offset + 2] = 0
+        after_end = bytearray(original)
+        after_end[md5_offset + 64] = 0
+        bad_label = bytearray(original)
+        bad_label[12] = 0xFF
+        variants = (
+            b"", original[:-1], original + b"\xff" * 32, original[:md5_offset],
+            b"\x00\x00" + original[2:], bytes(corrupted_md5), bytes(bad_md5_header),
+            original[:md5_offset + 32] + original[md5_offset:md5_offset + 32] +
+            b"\xff" * (0xC00 - md5_offset - 64),
+            original[:md5_offset + 32] + original[:32] + b"\xff" * (0xC00 - md5_offset - 64),
+            bytes(after_end), bytes(bad_label), b"\xff" * 0xC00,
+        )
+        for table in variants:
+            with self.subTest(length=len(table), first=table[:8]):
+                with self.assertRaisesRegex(RuntimeError, "partition|Partition"):
+                    checker.parse_partition_table(table, 0x8000)
+                path.write_bytes(table)
+                with self.assertRaises(RuntimeError):
+                    checker.verify_build(self.build, "zh-CN")
+
+    def test_malformed_partition_bounds_overlap_flags_and_duplicate_slots_are_rejected(self) -> None:
+        original = list(self.partitions)
+        variants = (
+            (4, ("ota_1", 0, 0x11, 0x410000, 0, 0)),
+            (4, ("ota_1", 0, 0x11, 0x410001, 0x3F0000, 0)),
+            (4, ("ota_1", 0, 0x11, 0x410000, 0x3F0001, 0)),
+            (4, ("ota_1", 0, 0x11, 0xFF0000, 0x20000, 0)),
+            (4, ("ota_1", 0, 0x11, 0x410000, 0xFFFFF000, 0)),
+            (4, ("ota_1", 0, 0x11, 0x400000, 0x3F0000, 0)),
+            (4, ("ota_1", 0, 0x10, 0x410000, 0x3F0000, 0)),
+            (4, ("ota_0", 0, 0x11, 0x410000, 0x3F0000, 0)),
+            (4, ("ota_1", 0, 0x11, 0x410000, 0x3F0000, 2)),
+            (4, ("ota_1", 0, 0x11, 0x410000, 0x3F0000, 4)),
+            (0, ("nvs", 1, 2, 0x8000, 0x4000, 0)),
+        )
+        for index, entry in variants:
+            with self.subTest(entry=entry):
+                self.partitions = list(original)
+                self.partitions[index] = entry
+                self.write_partition_table()
+                with self.assertRaisesRegex(RuntimeError, "partition|OTA"):
+                    checker.parse_partition_table(
+                        (self.build / "partition_table/partition-table.bin").read_bytes(), 0x8000)
+                with self.assertRaises(RuntimeError):
+                    checker.verify_build(self.build, "zh-CN")
+
+    def test_partition_table_flash_offset_bounds_and_alignment_are_rejected(self) -> None:
+        table = (self.build / "partition_table/partition-table.bin").read_bytes()
+        for offset in (-0x1000, 0x8001, 16 * 1024 * 1024):
+            with self.subTest(offset=offset):
+                with self.assertRaisesRegex(RuntimeError, "invalid partition table flash offset"):
+                    checker.parse_partition_table(table, offset)
+
+    def test_factory_test_and_tee_apps_are_not_normal_ota_slots(self) -> None:
+        name, kind, _, offset, size, flags = self.partitions[4]
+        for subtype in (0x00, 0x20, 0x30, 0x31):
+            with self.subTest(subtype=subtype):
+                self.partitions[4] = (name, kind, subtype, offset, size, flags)
+                self.write_partition_table()
+                self.refresh_provenance()
+                metadata = checker.verify_build(self.build, "zh-CN")
+                self.assertEqual([slot["name"] for slot in metadata["ota_capacity"]["slots"]], ["ota_0"])
+        self.partitions[3] = ("factory", 0, 0x00, 0x20000, 0x3F0000, 0)
+        self.write_partition_table()
+        with self.assertRaisesRegex(RuntimeError, "contain writable OTA application slots"):
+            checker.verify_build(self.build, "zh-CN")
+
+    def test_standard_table_without_optional_md5_is_accepted(self) -> None:
+        self.write_partition_table(checksum=False)
+        self.refresh_provenance()
+        self.assertEqual(len(checker.verify_build(self.build, "zh-CN")["ota_capacity"]["slots"]), 2)
 
     def test_video_and_wrong_language_are_rejected_before_packaging(self) -> None:
         for config, language in ((self.config + 'CONFIG_MYBOT_ENABLE_VIDEO=y\n', "zh-CN"), (self.config, "en-US")):

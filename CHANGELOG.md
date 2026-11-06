@@ -2,6 +2,8 @@
 
 ## Unreleased — standalone S31 translation
 
+- Enforce at least 300 KiB application-image headroom against the built OTA partition capacities during local and CI delivery checks.
+
 - Enable fail-fast UBSan by default for USB audio host tests and explicitly in CI, and document concurrency validation limits.
 
 - Check Mosaico's eFuse board revision before pin setup and use the pinned BSP's VCC soft-start sequence.
