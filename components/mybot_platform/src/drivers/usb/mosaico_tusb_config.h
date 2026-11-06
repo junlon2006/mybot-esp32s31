@@ -1,14 +1,10 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 #pragma once
 
-/* A single configuration must reach TinyUSB, esp_tinyusb, UAC and the board.
- * AS_PART prevents the UAC package from injecting another tusb_config.h. */
+/* The pinned UAC headers provide the format/descriptor definitions; the project
+ * owns runtime state. One configuration reaches both USB layers and the board. */
 #include "tusb_config.h"
 #include "tusb_config_uac.h"
-
-/* UAC 1.3.1 still compiles a legacy tusb_init() branch even when the caller
- * skips it. Define S31 port 0 for that API; esp_tinyusb remains the owner. */
-#define CFG_TUSB_RHPORT0_MODE (OPT_MODE_DEVICE | OPT_MODE_HIGH_SPEED)
 
 #if !CONFIG_USB_DEVICE_UAC_AS_PART || !CONFIG_IDF_TARGET_ESP32S31
 #error "Mosaico USB requires S31 and UAC composite mode"

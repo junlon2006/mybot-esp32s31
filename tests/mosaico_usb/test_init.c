@@ -38,10 +38,9 @@ esp_err_t mybot_mosaico_usb_descriptors_configure(tinyusb_config_t *config) {
     return fails("descriptors") ? ESP_FAIL : ESP_OK;
 }
 
-esp_err_t mosaico_usb_audio_prepare(void) {
+void mosaico_usb_audio_prepare(void) {
     assert(calls[DESCRIPTORS] == 1 && !calls[CONTROLLER] && !mosaico_usb_audio_initialized());
     ++calls[AUDIO];
-    return fails("audio") ? ESP_FAIL : ESP_OK;
 }
 
 esp_err_t tinyusb_driver_install(const tinyusb_config_t *config) {

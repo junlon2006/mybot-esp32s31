@@ -2,6 +2,8 @@
 
 ## Unreleased — standalone S31 translation
 
+- Keep UAC clock/volume/mute state locally and use the pinned UAC package only for descriptors/configuration, removing its unused audio tasks and buffers.
+
 - Simplify the automation builder to registered S31 profiles, default to Mosaico, and remove unused video/S3 fallbacks.
 
 - Remove the unused emoji arrays, PNG inputs and generator while retaining the fonts used by the translation UI.

@@ -6,8 +6,10 @@ the first finding; CI explicitly uses the same flags. `TEST_SANITIZE_FLAGS` can
 select another supported sanitizer for a separate host run. The real project USB
 adapter and filters run against mocked TinyUSB, DCD and locks.
 
-Tests cover preparation failure caching, endpoint accounting and unchanged non-audio
-forwarding; owned OUT queues, bounded capture, channel mute/gain, alternate-interface
+Tests cover static preparation without package runtime dependencies, endpoint accounting and
+unchanged non-audio forwarding; fixed 48 kHz clock controls, channel mute/volume readback,
+short/full/oversized RANGE probes and rejection of invalid control requests; owned OUT queues,
+bounded capture, channel mute/gain, alternate-interface
 changes and concurrent stop/close/destroy; host-paced USB IN packets, independent
 playback lifecycle, short-utterance prebuffering, overflow/underflow and closed-host
 sample discard. Interpolation and decimation checks verify numerical passband/image

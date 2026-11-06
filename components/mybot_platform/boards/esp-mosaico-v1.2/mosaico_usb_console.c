@@ -35,11 +35,8 @@ esp_err_t mosaico_usb_console_init(void) {
     result = mybot_mosaico_usb_descriptors_configure(&config);
     if (result != ESP_OK)
         return result;
-    /* The host can select an audio interface as soon as the stack is exposed.
-     * Prepare UAC workers first; the pinned component has no teardown API. */
-    result = mosaico_usb_audio_prepare();
-    if (result != ESP_OK)
-        return result;
+    /* Publish the static audio state before the host can open an interface. */
+    mosaico_usb_audio_prepare();
     result = tinyusb_driver_install(&config);
     if (result != ESP_OK)
         return result;

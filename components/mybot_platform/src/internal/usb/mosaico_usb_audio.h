@@ -13,9 +13,9 @@ extern "C" {
 
 /* PC playback feeds an optional capture device. Only translated PCM written to
  * the optional playback device may reach USB microphone; otherwise it is silent.
- * Call once before the board installs TinyUSB. usb_device_uac 1.3.1 has no delete
- * API, so a failed attempt is retained until reboot and must not be retried. */
-esp_err_t mosaico_usb_audio_prepare(void);
+ * Call before the board installs TinyUSB. Preparation marks the static state
+ * ready without creating tasks, allocating buffers or resetting host controls. */
+void mosaico_usb_audio_prepare(void);
 
 /* Optional meeting LISTEN source. SDK worker consumes 16 kHz mono S16 at its
  * existing 60 ms cadence. start requires an open host playback interface.

@@ -12,6 +12,6 @@ trap 'rm -r -- "$test_build_dir"' EXIT HUP INT TERM
     -I"$repo_root/components/mybot_stack/mybot_sdk/mybot/include" \
     "$test_dir/test_init.c" "$board_dir/mosaico_usb_console.c" \
     -o "$test_build_dir/test_init"
-for scenario in descriptors audio controller cdc_class cdc_uninstall console timer_create timer_start normal; do
+for scenario in descriptors controller cdc_class cdc_uninstall console timer_create timer_start normal; do
     "$test_build_dir/test_init" "$scenario"
 done

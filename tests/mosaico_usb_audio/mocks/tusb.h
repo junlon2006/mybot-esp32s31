@@ -28,6 +28,12 @@ bool tud_audio_n_fb_set(uint8_t function, uint32_t value);
 static inline uint32_t tu_htole32(uint32_t value) {
     return value;
 }
+static inline uint16_t tu_htole16(uint16_t value) {
+    return value;
+}
+static inline void tu_unaligned_write16(void *destination, uint16_t value) {
+    memcpy(destination, &value, sizeof(value));
+}
 static inline void tu_unaligned_write32(void *destination, uint32_t value) {
     memcpy(destination, &value, sizeof(value));
 }
@@ -42,7 +48,12 @@ static inline uint16_t tu_le16toh(uint16_t value) {
 uint16_t tud_audio_n_available(uint8_t function);
 uint16_t tud_audio_n_read(uint8_t function, void *buffer, uint16_t length);
 bool tud_audio_n_clear_ep_out_ff(uint8_t function);
+bool tud_audio_buffer_and_schedule_control_xfer(uint8_t port, const tusb_control_request_t *request,
+                                                void *data, uint16_t length);
 #define AUDIO_CS_REQ_CUR 1
+#define AUDIO_CS_REQ_RANGE 2
+#define AUDIO_CS_CTRL_SAM_FREQ 1
+#define AUDIO_CS_CTRL_CLK_VALID 2
 #define AUDIO_FU_CTRL_MUTE 1
 #define AUDIO_FU_CTRL_VOLUME 2
 

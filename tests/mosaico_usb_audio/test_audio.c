@@ -4,7 +4,6 @@
 #include "usb/mosaico_usb_resampler.h"
 #include "device/dcd.h"
 #include "esp_log.h"
-#include "usb_device_uac.h"
 #include "freertos/FreeRTOS.h"
 
 #include <assert.h>
@@ -13,9 +12,7 @@
 #include <stdio.h>
 #include <string.h>
 
-static uac_device_config_t config;
-static esp_err_t init_result;
-static unsigned init_calls, transfer_calls, event_calls, log_calls, set_calls, close_calls;
+static unsigned transfer_calls, event_calls, log_calls;
 static bool mounted, suspended, transfer_result = true;
 static tusb_speed_t speed = TUSB_SPEED_HIGH;
 static uint32_t feedback_value;
@@ -57,14 +54,6 @@ void test_capture_unlock(portMUX_TYPE *lock) {
     assert(pthread_mutex_unlock(&barrier_lock) == 0);
 }
 
-esp_err_t uac_device_init(uac_device_config_t *value) {
-    assert(value && value->skip_tinyusb_init && value->spk_itf_num == 1 && value->mic_itf_num == 2);
-    assert(!value->output_cb && !value->input_cb && !value->set_mute_cb && !value->set_volume_cb);
-    assert(!mounted && !suspended);
-    ++init_calls;
-    config = *value;
-    return init_result;
-}
 bool tud_mounted(void) {
     return mounted;
 }
@@ -120,27 +109,18 @@ void __real_dcd_event_handler(const dcd_event_t *event, bool in_isr) {
     last_event = event;
     last_isr = in_isr;
 }
-static unsigned control_sets, control_gets;
-bool mosaico_uac_upstream_set_req(uint8_t port, tusb_control_request_t const *request,
-                                  uint8_t *data) {
-    assert(port == 0 && request && data);
-    ++control_sets;
-    return true;
-}
-bool mosaico_uac_upstream_get_req(uint8_t port, tusb_control_request_t const *request) {
-    assert(port == 0 && request);
+static unsigned control_gets;
+static uint8_t control_reply[14];
+static uint16_t control_length, control_wire_length;
+static bool control_result = true;
+bool tud_audio_buffer_and_schedule_control_xfer(uint8_t port, const tusb_control_request_t *request,
+                                                void *data, uint16_t length) {
+    assert(port == 0 && request && data && length <= sizeof(control_reply));
     ++control_gets;
-    return true;
-}
-bool mosaico_uac_upstream_set_itf(uint8_t port, tusb_control_request_t const *request) {
-    assert(port == 0 && request);
-    ++set_calls;
-    return true;
-}
-bool mosaico_uac_upstream_close_itf(uint8_t port, tusb_control_request_t const *request) {
-    assert(port == 0 && request);
-    ++close_calls;
-    return true;
+    memcpy(control_reply, data, length);
+    control_length = length;
+    control_wire_length = length < request->wLength ? length : request->wLength;
+    return control_result;
 }
 void test_usb_log(const char *tag, const char *format, ...) {
     assert(!strcmp(tag, "mosaico_uac"));
@@ -188,8 +168,8 @@ static void silent(const int16_t *samples, unsigned frames) {
 }
 static void control(unsigned channel, unsigned selector, int value);
 static void test_transport(void) {
-    assert(mosaico_usb_audio_prepare() == ESP_OK && init_calls == 1);
-    assert(mosaico_usb_audio_prepare() == ESP_OK && init_calls == 1);
+    mosaico_usb_audio_prepare();
+    mosaico_usb_audio_prepare();
     mosaico_usb_audio_stats_t stats = mosaico_usb_audio_stats();
     assert(stats.prepared && !stats.ready && !stats.mounted);
     /* No periodic package microphone producer remains. Nominal silence is
@@ -308,7 +288,7 @@ static void test_capture(void) {
     assert(ops->init(&capture, 16000, 1, 16) == 0 && capture);
     assert(ops->init(&duplicate, 16000, 1, 16) < 0 && !duplicate);
     assert(ops->start(capture) < 0);
-    assert(mosaico_usb_audio_prepare() == ESP_OK);
+    mosaico_usb_audio_prepare();
     assert(ops->start(capture) < 0);
     mounted = true;
     assert(ops->start(capture) < 0);
@@ -361,13 +341,13 @@ static void test_capture(void) {
     control(0, AUDIO_FU_CTRL_MUTE, 0);
     control(0, AUDIO_FU_CTRL_VOLUME, 0);
     control(2, AUDIO_FU_CTRL_VOLUME, 0);
-    unsigned previous_sets = control_sets, previous_gets = control_gets;
+    unsigned previous_gets = control_gets;
     tusb_control_request_t bad = {
         .bRequest = AUDIO_CS_REQ_CUR, .wIndex = 0x0200, .wValue = 0x01ff, .wLength = 1};
     uint8_t value[2] = {0};
     assert(!tud_audio_set_req_entity_cb(0, &bad, value));
     assert(!tud_audio_get_req_entity_cb(0, &bad));
-    assert(control_sets == previous_sets && control_gets == previous_gets);
+    assert(control_gets == previous_gets);
     bad.wValue = 0x0200;
     assert(!tud_audio_set_req_entity_cb(0, &bad, value)); /* Bad volume length. */
     bad.wLength = 2;
@@ -381,7 +361,7 @@ static void test_capture(void) {
     assert(mosaico_usb_audio_stats().queued_frames == 960);
     assert(mosaico_usb_audio_stats().capture_dropped_frames > 0);
     interface(false);
-    assert(set_calls == 1 && close_calls == 1);
+    assert(!mosaico_usb_audio_stats().speaker_open);
     assert(ops->read(capture, output + 1, 960) == 960);
     silent(output + 1, 960);
     interface(true);
@@ -422,7 +402,7 @@ static void *read_worker(void *context) {
 }
 static void test_concurrency(void) {
     const mybot_audio_capture_ops_t *ops = mosaico_usb_audio_capture_ops();
-    assert(mosaico_usb_audio_prepare() == ESP_OK);
+    mosaico_usb_audio_prepare();
     mounted = true;
     interface(true);
     void *capture;
@@ -523,7 +503,7 @@ static void test_playback(void) {
     assert(ops->init(&playback, 16000, 1, 16) == 0);
     assert(ops->init(&duplicate, 16000, 1, 16) < 0 && !duplicate);
     assert(ops->start(playback) < 0);
-    assert(mosaico_usb_audio_prepare() == ESP_OK);
+    mosaico_usb_audio_prepare();
     mounted = true;
     /* USB microphone may be opened by the call app after translation starts. */
     assert(ops->start(playback) == 0);
@@ -607,7 +587,7 @@ static void *write_worker(void *context) {
 }
 static void test_playback_concurrency(void) {
     const mybot_audio_playback_ops_t *ops = mosaico_usb_audio_playback_ops();
-    assert(mosaico_usb_audio_prepare() == ESP_OK);
+    mosaico_usb_audio_prepare();
     mounted = true;
     void *playback;
     assert(ops->init(&playback, 16000, 1, 16) == 0);
@@ -644,7 +624,7 @@ static void test_playback_concurrency(void) {
 }
 static void test_playback_drift(void) {
     const mybot_audio_playback_ops_t *ops = mosaico_usb_audio_playback_ops();
-    assert(mosaico_usb_audio_prepare() == ESP_OK);
+    mosaico_usb_audio_prepare();
     mounted = true;
     microphone_interface(true);
     void *playback;
@@ -707,18 +687,134 @@ static void test_interpolator(void) {
         assert(interpolated_output[i] >= 32760); /* Unity gain and saturated overshoot. */
     printf("PASS USB polyphase interpolator chunk identity, 1k=%.5f image15k=%.6f\n", pass, image);
 }
+
+static tusb_control_request_t entity_request(unsigned entity, unsigned channel, unsigned selector,
+                                             unsigned request, unsigned length) {
+    return (tusb_control_request_t){.bRequest = request,
+                                    .wIndex = entity << 8,
+                                    .wValue = (selector << 8) | channel,
+                                    .wLength = length};
+}
+
+static void get_control(tusb_control_request_t request, const uint8_t *expected, unsigned length) {
+    assert(tud_audio_get_req_entity_cb(0, &request));
+    assert(control_length == length && !memcmp(control_reply, expected, length));
+    assert(control_wire_length == (length < request.wLength ? length : request.wLength));
+}
+
+static void test_controls(void) {
+    mosaico_usb_audio_prepare();
+    const uint8_t sample_rate[] = {0x80, 0xbb, 0, 0};
+    const uint8_t rate_range[] = {1, 0, 0x80, 0xbb, 0, 0, 0x80, 0xbb, 0, 0, 0, 0, 0, 0};
+    const uint8_t volume_range[] = {1, 0, 0, 0xce, 0, 0, 0, 1};
+    const uint8_t one[] = {1}, zero[] = {0, 0};
+    tusb_control_request_t rate = entity_request(4, 0, AUDIO_CS_CTRL_SAM_FREQ, AUDIO_CS_REQ_CUR, 4);
+    get_control(rate, sample_rate, sizeof(sample_rate));
+    tusb_control_request_t range =
+        entity_request(4, 0, AUDIO_CS_CTRL_SAM_FREQ, AUDIO_CS_REQ_RANGE, 2);
+    for (unsigned i = 0; i < 3; ++i) {
+        range.wLength = i == 0 ? 2 : i == 1 ? sizeof(rate_range) : 64;
+        get_control(range, rate_range, sizeof(rate_range));
+    }
+    get_control(entity_request(4, 0, AUDIO_CS_CTRL_CLK_VALID, AUDIO_CS_REQ_CUR, 1), one, 1);
+    uint8_t clock_data[] = {0x80, 0xbb, 0, 0};
+    assert(tud_audio_set_req_entity_cb(0, &rate, clock_data));
+    clock_data[0] = 0x44;
+    clock_data[1] = 0xac; /* 44.1 kHz is not advertised or accepted. */
+    assert(!tud_audio_set_req_entity_cb(0, &rate, clock_data));
+    rate.wLength = 3;
+    assert(!tud_audio_set_req_entity_cb(0, &rate, clock_data));
+    get_control(entity_request(4, 0, AUDIO_CS_CTRL_SAM_FREQ, AUDIO_CS_REQ_CUR, 4), sample_rate, 4);
+
+    const int volumes[] = {-25 * 256, -6 * 256 - 128, -50 * 256};
+    for (unsigned channel = 0; channel < 3; ++channel) {
+        get_control(entity_request(2, channel, AUDIO_FU_CTRL_MUTE, AUDIO_CS_REQ_CUR, 1), zero, 1);
+        get_control(entity_request(2, channel, AUDIO_FU_CTRL_VOLUME, AUDIO_CS_REQ_CUR, 2), zero, 2);
+        for (unsigned i = 0; i < 3; ++i)
+            get_control(entity_request(2, channel, AUDIO_FU_CTRL_VOLUME, AUDIO_CS_REQ_RANGE,
+                                       i == 0   ? 2
+                                       : i == 1 ? 8
+                                                : 64),
+                        volume_range, sizeof(volume_range));
+        control(channel, AUDIO_FU_CTRL_MUTE, 1);
+        get_control(entity_request(2, channel, AUDIO_FU_CTRL_MUTE, AUDIO_CS_REQ_CUR, 1), one, 1);
+        control(channel, AUDIO_FU_CTRL_MUTE, 0);
+        control(channel, AUDIO_FU_CTRL_VOLUME, volumes[channel]);
+        uint8_t expected[] = {(uint8_t)volumes[channel], (uint8_t)(volumes[channel] >> 8)};
+        get_control(entity_request(2, channel, AUDIO_FU_CTRL_VOLUME, AUDIO_CS_REQ_CUR, 2), expected,
+                    2);
+    }
+    assert(mosaico_usb_audio_stats().volume == 50 && !mosaico_usb_audio_stats().muted);
+    mosaico_usb_audio_prepare(); /* Repeated preparation cannot erase host controls. */
+    const uint8_t master_volume[] = {0, 0xe7};
+    get_control(entity_request(2, 0, AUDIO_FU_CTRL_VOLUME, AUDIO_CS_REQ_CUR, 2), master_volume, 2);
+
+    tusb_control_request_t bad[] = {
+        entity_request(99, 0, AUDIO_FU_CTRL_MUTE, AUDIO_CS_REQ_CUR, 1),
+        entity_request(2, 3, AUDIO_FU_CTRL_MUTE, AUDIO_CS_REQ_CUR, 1),
+        entity_request(2, 0, 99, AUDIO_CS_REQ_CUR, 1),
+        entity_request(2, 0, AUDIO_FU_CTRL_MUTE, AUDIO_CS_REQ_RANGE, 1),
+        entity_request(4, 1, AUDIO_CS_CTRL_SAM_FREQ, AUDIO_CS_REQ_CUR, 4),
+        entity_request(4, 0, AUDIO_CS_CTRL_CLK_VALID, AUDIO_CS_REQ_RANGE, 1),
+    };
+    uint8_t data[4] = {0};
+    unsigned gets_before = control_gets;
+    for (unsigned i = 0; i < sizeof(bad) / sizeof(bad[0]); ++i) {
+        assert(!tud_audio_get_req_entity_cb(0, &bad[i]));
+        assert(!tud_audio_set_req_entity_cb(0, &bad[i], data));
+    }
+    assert(control_gets == gets_before);
+    tusb_control_request_t volume = entity_request(2, 0, AUDIO_FU_CTRL_VOLUME, AUDIO_CS_REQ_CUR, 2);
+    assert(!tud_audio_get_req_entity_cb(1, &volume));
+    assert(!tud_audio_set_req_entity_cb(1, &volume, data));
+    assert(!tud_audio_get_req_entity_cb(0, NULL));
+    assert(!tud_audio_set_req_entity_cb(0, NULL, data));
+    assert(!tud_audio_set_req_entity_cb(0, &volume, NULL));
+    tusb_control_request_t wrong_interface = volume;
+    ++wrong_interface.wIndex;
+    assert(!tud_audio_get_req_entity_cb(0, &wrong_interface));
+    assert(!tud_audio_set_req_entity_cb(0, &wrong_interface, data));
+    volume.wLength = 1;
+    assert(!tud_audio_set_req_entity_cb(0, &volume, data));
+    volume.wLength = 2;
+    data[0] = 1;
+    assert(!tud_audio_set_req_entity_cb(0, &volume, data)); /* Positive volume. */
+    data[0] = 0xff;
+    data[1] = 0xcd;
+    assert(!tud_audio_set_req_entity_cb(0, &volume, data)); /* Below -50 dB. */
+    tusb_control_request_t mute = entity_request(2, 0, AUDIO_FU_CTRL_MUTE, AUDIO_CS_REQ_CUR, 1);
+    data[0] = 2;
+    assert(!tud_audio_set_req_entity_cb(0, &mute, data));
+    get_control(volume, master_volume, 2);
+    control_result = false;
+    assert(!tud_audio_get_req_entity_cb(0, &volume));
+    control_result = true;
+
+    for (unsigned itf = MYBOT_USB_ITF_SPEAKER; itf <= MYBOT_USB_ITF_MICROPHONE; ++itf) {
+        tusb_control_request_t request = {.wIndex = itf, .wValue = 1};
+        assert(tud_audio_set_itf_cb(0, &request));
+        assert(tud_audio_set_itf_close_ep_cb(0, &request)); /* Same-alt reopen passes new alt. */
+        assert(tud_audio_set_itf_cb(0, &request));
+        assert(itf == MYBOT_USB_ITF_SPEAKER ? mosaico_usb_audio_stats().speaker_open
+                                            : mosaico_usb_audio_stats().microphone_open);
+        request.wValue = 2;
+        assert(!tud_audio_set_itf_cb(0, &request));
+        request.wValue = 0;
+        assert(!tud_audio_set_itf_cb(1, &request));
+        assert(tud_audio_set_itf_close_ep_cb(0, &request));
+    }
+    assert(!mosaico_usb_audio_stats().speaker_open && !mosaico_usb_audio_stats().microphone_open);
+    tusb_control_request_t not_audio = {.wIndex = MYBOT_USB_ITF_CDC};
+    assert(!tud_audio_set_itf_cb(0, &not_audio) && !tud_audio_set_itf_cb(0, NULL));
+    puts("PASS project UAC clock and channel controls, RANGE probes, validation and interface "
+         "lifetime");
+}
 int main(int argc, char **argv) {
     assert(argc == 2);
-    if (!strcmp(argv[1], "failed_prepare")) {
-        init_result = ESP_ERR_NO_MEM;
-        assert(mosaico_usb_audio_prepare() == ESP_ERR_NO_MEM && init_calls == 1);
-        init_result = ESP_OK;
-        assert(mosaico_usb_audio_prepare() == ESP_ERR_NO_MEM && init_calls == 1);
-        mounted = true;
-        assert(!mosaico_usb_audio_stats().ready);
-        puts("PASS mosaico USB audio cached partial initialization failure");
-    } else if (!strcmp(argv[1], "normal")) {
+    if (!strcmp(argv[1], "normal")) {
         test_transport();
+    } else if (!strcmp(argv[1], "controls")) {
+        test_controls();
     } else if (!strcmp(argv[1], "capture")) {
         test_capture();
     } else if (!strcmp(argv[1], "concurrency")) {

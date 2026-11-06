@@ -13,7 +13,7 @@ trap 'rm -r -- "$test_build_dir"' EXIT HUP INT TERM
     "$repo_root/components/mybot_platform/src/drivers/usb/mosaico_usb_resampler.c" \
     "$repo_root/tests/mosaico_usb_audio/test_audio.c" -lm -o "$test_build_dir/test_audio"
 "$test_build_dir/test_audio" normal
-"$test_build_dir/test_audio" failed_prepare
+"$test_build_dir/test_audio" controls
 "$test_build_dir/test_audio" capture
 "$test_build_dir/test_audio" concurrency
 "$test_build_dir/test_audio" resampler

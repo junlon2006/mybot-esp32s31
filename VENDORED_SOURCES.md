@@ -124,12 +124,19 @@ performs `479-y`; this does not alter the pinned BSP references or managed CST92
 ## Mosaico composite USB transport
 
 Production Mosaico uses the existing `espressif/esp_tinyusb` 2.4.0 and TinyUSB 0.19.0~3
-with `usb_device_uac` 1.3.1 in AS_PART mode. The UAC manifest belongs to the nested
+with the pinned `usb_device_uac` 1.3.1 descriptors and Kconfig in AS_PART mode. The UAC manifest belongs to the nested
 `boards/esp-mosaico-v1.2/mybot_mosaico_usb` component, registered only by that profile;
-Korvo does not discover or compile UAC. Project-owned descriptors/configuration combine
-one duplex UAC2 function and one CDC function. The production wrapper reuses the diagnostic's
-hash-checked generated DWC2 compilation copy and scoped ISR shim; the UAC singleton is placed
-in internal RAM because production enables PSRAM. Vendor sources remain unchanged.
+The wrapper's project include redirects only the downloaded package's component registration
+to a project-owned header-only CMake file, exposing the original header directory and Kconfig.
+This explicit boundary is needed because IDF 6.1 adds downloaded components to the build even
+when their manifest has `require: no`. Korvo does not discover or compile UAC.
+Project-owned descriptors/configuration combine one duplex UAC2 function and one CDC function.
+The project adapter implements fixed 48 kHz clock and speaker feature-unit controls following
+the pinned package's protocol; Espressif attribution remains in that file. Its static state
+does not allocate a package singleton, PCM scratch buffers or speaker/microphone tasks.
+Production retains the diagnostic's hash-checked generated DWC2 compilation copy, but no longer
+needs the package ISR/allocation compatibility shim. Vendor sources remain unchanged; the
+separate diagnostic still uses the complete UAC runtime and its own scoped shim.
 The project-owned USB OUT adapter drains into an owned bounded ring, then filters and
 decimates 48 kHz stereo to 16 kHz mono in the capture worker. Meeting SPEAK PCM is
 interpolated from 16 kHz mono to a bounded 48 kHz queue and sent on host-driven USB IN

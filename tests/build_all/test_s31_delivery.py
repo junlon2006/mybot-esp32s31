@@ -153,6 +153,7 @@ class S31DeliveryTests(unittest.TestCase):
         (self.build / "sdkconfig").write_text(
             self.config.replace("ES8389", "ES8311") + "CONFIG_USB_DEVICE_UAC_AS_PART=y\n"
         )
+        (self.build / "compile_commands.json").write_text("[]")
         self.usb_link_flags = (
             "-Wl,--gc-sections,--wrap=dcd_edpt_xfer,--wrap=dcd_event_handler"
             ",--wrap=usbd_edpt_xfer_fifo"
@@ -195,6 +196,46 @@ class S31DeliveryTests(unittest.TestCase):
 
     def test_mosaico_uac_requires_link_flags_and_live_wrappers(self) -> None:
         self.enable_mosaico_uac()
+        metadata = checker.verify_build(self.build, "zh-CN")
+        self.assertEqual(metadata["board"], "esp-mosaico-v1.2")
+
+    def test_mosaico_uac_rejects_compiling_vendor_runtime(self) -> None:
+        self.enable_mosaico_uac()
+        (self.build / "compile_commands.json").write_text(json.dumps([
+            {"file": "/project/managed_components/espressif__usb_device_uac/usb_device_uac.c",
+             "command": "cc -c usb_device_uac.c"},
+        ]))
+        with self.assertRaisesRegex(RuntimeError, "must not compile.*usb_device_uac.c"):
+            checker.verify_build(self.build, "zh-CN")
+
+    def test_mosaico_uac_rejects_live_vendor_symbols_or_object(self) -> None:
+        self.enable_mosaico_uac()
+        vendor_records = [f"                0x40012340                {symbol}\n"
+                          for symbol in ("uac_device_init", "usb_mic_task", "usb_spk_task")]
+        vendor_records.extend([
+            " .text.other 0x40012340 0x40 esp-idf/espressif__usb_device_uac/"
+            "libespressif__usb_device_uac.a(usb_device_uac.c.obj)\n",
+            " .text.other 0x40012340 0x40 vendor.a(usb_device_uac.o)\n",
+        ])
+        for record in vendor_records:
+            with self.subTest(record=record.strip()):
+                self.write_usb_link_fixture(live=self.usb_live_symbols + record)
+                with self.assertRaisesRegex(RuntimeError, "must not link.*vendor UAC|must not link.*vendor usb_device_uac"):
+                    checker.verify_build(self.build, "zh-CN")
+
+    def test_mosaico_uac_allows_header_component_and_discarded_vendor_records(self) -> None:
+        self.enable_mosaico_uac()
+        (self.build / "compile_commands.json").write_text(json.dumps([
+            {"file": "/project/components/mybot_platform/src/drivers/usb/mosaico_usb_audio.c",
+             "command": "cc -I/project/managed_components/espressif__usb_device_uac/include -c source.c"},
+        ]))
+        self.usb_discarded += (
+            " .text.uac_device_init 0x00000000 0x40 vendor.a(usb_device_uac.c.obj)\n"
+            " .text.usb_mic_task 0x00000000 0x40 vendor.a(usb_device_uac.c.obj)\n"
+            " .text.usb_spk_task 0x00000000 0x40 vendor.a(usb_device_uac.c.obj)\n"
+        )
+        self.usb_cross_reference += "uac_device_init vendor.a(usb_device_uac.c.obj)\n"
+        self.write_usb_link_fixture()
         metadata = checker.verify_build(self.build, "zh-CN")
         self.assertEqual(metadata["board"], "esp-mosaico-v1.2")
 

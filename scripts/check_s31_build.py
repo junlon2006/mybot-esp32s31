@@ -161,6 +161,29 @@ def verify_bundled_rtsa(project_root: Path) -> None:
             raise RuntimeError(f"bundled S31 RTSA fingerprint mismatch: {name}")
 
 
+def live_memory_map(map_text: str) -> str:
+    marker = re.search(r"^Linker script and memory map\s*$", map_text, re.MULTILINE)
+    live_map = map_text[marker.end():] if marker else ""
+    return re.split(r"^Cross Reference Table\s*$", live_map, maxsplit=1, flags=re.MULTILINE)[0]
+
+
+def verify_project_uac_runtime(build_dir: Path, map_text: str) -> None:
+    commands = json.loads(build_file(build_dir, "compile_commands.json").read_text())
+    if not isinstance(commands, list):
+        raise RuntimeError("invalid Mosaico UAC compile commands")
+    for command in commands:
+        if not isinstance(command, dict) or not isinstance(command.get("file"), str):
+            raise RuntimeError("invalid Mosaico UAC compile command")
+        if Path(command["file"]).name == "usb_device_uac.c":
+            raise RuntimeError("Mosaico must not compile the vendor usb_device_uac.c runtime")
+    live_map = live_memory_map(map_text)
+    for symbol in ("uac_device_init", "usb_mic_task", "usb_spk_task"):
+        if re.search(rf"\b{symbol}\b", live_map):
+            raise RuntimeError(f"Mosaico must not link vendor UAC runtime symbol {symbol}")
+    if re.search(r"\busb_device_uac(?:\.c)?\.(?:obj|o)\b", live_map):
+        raise RuntimeError("Mosaico must not link the vendor usb_device_uac object")
+
+
 def verify_usb_wrappers(build_dir: Path, app_elf: str, map_text: str) -> None:
     # IDF copies LINK_OPTIONS to the ELF during project(). A later build-property
     # append can leave valid-looking wrapper source completely unreferenced.
@@ -179,9 +202,7 @@ def verify_usb_wrappers(build_dir: Path, app_elf: str, map_text: str) -> None:
 
     # Both the discarded-input section and the cross-reference table contain
     # symbol names even when --gc-sections removed the wrappers from the ELF.
-    marker = re.search(r"^Linker script and memory map\s*$", map_text, re.MULTILINE)
-    live_map = map_text[marker.end():] if marker else ""
-    live_map = re.split(r"^Cross Reference Table\s*$", live_map, maxsplit=1, flags=re.MULTILINE)[0]
+    live_map = live_memory_map(map_text)
     for symbol in USB_WRAPPED_SYMBOLS:
         addresses = re.findall(
             rf"^[ \t]+0x([0-9a-fA-F]+)[ \t]+__wrap_{symbol}[ \t]*$",
@@ -235,6 +256,7 @@ def verify_build(build_dir: Path, language: str) -> dict:
         if not re.search(rf"^{symbol}\s+esp-idf/aosl/libaosl\.a\(", map_text, re.MULTILINE):
             raise RuntimeError(f"{symbol} must come from local S31 AOSL")
     if board == "esp-mosaico-v1.2" and config.get("CONFIG_USB_DEVICE_UAC_AS_PART") == "y":
+        verify_project_uac_runtime(build_dir, map_text)
         verify_usb_wrappers(build_dir, description["app_elf"], map_text)
     flash = json.loads(build_file(build_dir, "flasher_args.json").read_text())
     if flash.get("extra_esptool_args", {}).get("chip") != "esp32s31":
