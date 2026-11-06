@@ -20,7 +20,8 @@ esac
     -ffunction-sections -fdata-sections "$strip_flag" \
     -I"$test_dir/mocks" -I"$sdk_dir/src/internal" -I"$sdk_dir/include" \
     "$test_dir/test_control.c" \
-    "$sdk_dir/src/core/mybot_captions.c" "$test_binary.json.o" \
+    "$sdk_dir/src/core/mybot_captions.c" "$sdk_dir/src/core/mybot_state_model.c" \
+    "$test_binary.json.o" \
     -lm -o "$test_binary"
 "$test_binary"
 "${CC:-cc}" -std=c99 -Wall -Wextra -Werror -Wno-unused-function \

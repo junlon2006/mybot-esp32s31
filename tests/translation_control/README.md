@@ -15,6 +15,11 @@ ID before lifecycle finalization and storage teardown. Every scenario checks all
 balance. Separate lifecycle and protocol tests validate the boundaries mocked here;
 these tests do not establish vendor thread scheduling or real-device behavior.
 
+Application shutdown also retains its AOSL reference while any physical/USB media,
+HTTP queue or RTC teardown is incomplete. Retry tests cover failed worker joins,
+retained media buffers, a standalone RTC failure, and stopping before media was
+initialized. A new runtime must not overwrite resources left by an earlier run.
+
 The UI/control tests also require full RTC finalization at each session end and a
 successful RTC cleanup preflight before the next cloud START. Failed finalization
 keeps the UI error visible and rejects repeated cloud starts. RTC wrapper tests cover

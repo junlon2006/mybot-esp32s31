@@ -844,3 +844,18 @@ and face tests cover idle failures, cleanup and subsequent successful playback. 
 codec lifecycle suites pass. Formatting/SPDX, whitespace, Chinese incremental build
 and final S31 checks pass. No device was flashed; physical fault recovery still needs
 device fault injection to establish its hardware behavior.
+
+## Review fix 05: retain incomplete application teardown
+
+Application shutdown now shares one media cleanup path across startup failure,
+control-worker exit and repeated stop calls. Physical/USB workers and RTC must all
+stop before their PCM buffers or the application AOSL reference can be released.
+Uninitialized physical media is skipped. STOPPED is published only after the HTTP
+queue, lifecycle storage and media teardown have completed. Retained KV storage is
+also reclaimed when lifecycle initialization failed before an HTTP join completed.
+
+The public stop fault tests pass 16 control scenarios, including persistent physical,
+USB, RTC, HTTP/control-join failures and successful later reclamation. UI/caption/face
+regressions pass under UBSan. Formatting/SPDX and whitespace checks pass; the Chinese
+incremental build and final S31 checks pass in build/korvo-s31. No device was flashed;
+these fault results use mocked worker/vendor boundaries.

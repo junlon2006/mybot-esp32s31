@@ -1264,7 +1264,7 @@ static void cleanup_services(mybot_runtime_t *runtime) {
         runtime->control_timer = AOSL_MPQ_TIMER_INVALID;
     }
 
-    if (mybot_media_pipeline_stop(&runtime->media) < 0) {
+    if (runtime->media.initialized && mybot_media_pipeline_stop(&runtime->media) < 0) {
         AOSL_LOG_ERR("media pipeline stop incomplete");
     }
     if (runtime->usb_media && mybot_media_pipeline_stop(runtime->usb_media) < 0)
@@ -1290,6 +1290,37 @@ static void cleanup_services(mybot_runtime_t *runtime) {
         runtime->lifecycle_initialized = false;
     }
     mybot_kv_store_deinit(&runtime->kv_store);
+}
+
+/* Control's finalizer and later stop calls share the same retained ownership.
+ * Join every producer before freeing PCM or releasing the last AOSL reference. */
+static bool finish_media_shutdown(mybot_runtime_t *runtime) {
+    bool stopped = true;
+    if (runtime->media.initialized && mybot_media_pipeline_stop(&runtime->media) < 0)
+        stopped = false;
+    if (runtime->usb_media && mybot_media_pipeline_stop(runtime->usb_media) < 0)
+        stopped = false;
+#if MYBOT_ENABLE_VIDEO
+    if (mybot_video_stop(&runtime->video) < 0)
+        stopped = false;
+#endif
+    if (mybot_agora_rtc_fini() < 0)
+        stopped = false;
+    if (!stopped) {
+        AOSL_LOG_ERR("media shutdown incomplete; workers and buffers retained");
+        return false;
+    }
+    if (runtime->media.initialized && mybot_media_pipeline_destroy(&runtime->media) < 0)
+        return false;
+    if (stop_usb_media(runtime, true) < 0)
+        return false;
+#if MYBOT_ENABLE_VIDEO
+    if (mybot_video_destroy(&runtime->video) < 0)
+        return false;
+#endif
+    aosl_hal_free(runtime->silent_audio);
+    runtime->silent_audio = NULL;
+    return true;
 }
 
 static int start_services(mybot_runtime_t *runtime) {
@@ -1359,17 +1390,7 @@ static int start_services(mybot_runtime_t *runtime) {
 
 fail:
     cleanup_services(runtime);
-#if MYBOT_ENABLE_VIDEO
-    if (mybot_video_destroy(&runtime->video) < 0) {
-        AOSL_LOG_ERR("video source destroy incomplete");
-    }
-#endif
-    if (mybot_media_pipeline_destroy(&runtime->media) < 0) {
-        AOSL_LOG_ERR("media pipeline destroy skipped because stop was incomplete");
-    } else {
-        aosl_hal_free(runtime->silent_audio);
-        runtime->silent_audio = NULL;
-    }
+    (void)finish_media_shutdown(runtime);
     caption_lock(&runtime->caption_model_gate);
     mybot_captions_destroy(runtime->captions);
     runtime->captions = NULL;
@@ -1544,31 +1565,12 @@ static void control_stop_runtime(mybot_runtime_t *runtime) {
                                                          : MYBOT_LCD_SCREEN_STOPPING);
     mybot_presenter_deinit(&runtime->presenter);
 
-    bool rtc_stopped = mybot_agora_rtc_fini() == 0;
-    if (!rtc_stopped) {
-        AOSL_LOG_ERR("RTC fini incomplete; RTSA reported terminal cleanup failure");
-    }
-    if (stop_usb_media(runtime, rtc_stopped) < 0)
-        AOSL_LOG_ERR("USB media destroy pending; resources retained");
-#if MYBOT_ENABLE_VIDEO
-    if (mybot_video_destroy(&runtime->video) < 0) {
-        AOSL_LOG_ERR("video source destroy incomplete");
-    }
-#endif
-    if (mybot_media_pipeline_destroy(&runtime->media) < 0) {
-        AOSL_LOG_ERR("media pipeline destroy skipped because stop was incomplete");
-    } else {
-        aosl_hal_free(runtime->silent_audio);
-        runtime->silent_audio = NULL;
-    }
+    (void)finish_media_shutdown(runtime);
 
     caption_lock(&runtime->caption_model_gate);
     mybot_captions_destroy(runtime->captions);
     runtime->captions = NULL;
     aosl_atomic_set(&runtime->caption_model_gate, 0);
-
-    mybot_state_model_reset(&runtime->state_model);
-    AOSL_LOG_NTC("application control stopped");
 }
 
 static void handle_control_start(const aosl_ts_t *queued_ts, aosl_refobj_t robj, uintptr_t argc,
@@ -1635,12 +1637,15 @@ static bool destroy_control_queue(mybot_runtime_t *runtime) {
     if (runtime->lifecycle_initialized) {
         mybot_device_lifecycle_finish_shutdown(&runtime->lifecycle);
         runtime->lifecycle_initialized = false;
-        mybot_kv_store_deinit(&runtime->kv_store);
     }
-    /* Do not release AOSL or permit another start while USB workers still own
-     * callbacks into this runtime. A repeated stop retries retained teardown. */
-    if (runtime->usb_media && (mybot_agora_rtc_fini() < 0 || stop_usb_media(runtime, true) < 0))
+    if (runtime->kv_store.ctx)
+        mybot_kv_store_deinit(&runtime->kv_store);
+    /* A repeated stop joins retained physical, USB and RTC workers even after
+     * the control worker itself has already exited. */
+    if (!finish_media_shutdown(runtime))
         return false;
+    mybot_state_model_reset(&runtime->state_model);
+    AOSL_LOG_NTC("application control stopped");
     return true;
 }
 

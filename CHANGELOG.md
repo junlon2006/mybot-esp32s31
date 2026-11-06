@@ -2,6 +2,8 @@
 
 ## Unreleased — standalone S31 translation
 
+- Keep application ownership until physical/USB media, HTTP and RTC teardown completes; repeated stop retries retained resources before allowing restart.
+
 - Recover the physical playback backend after a hard audio fault so later translation sessions can play again.
 
 - Preserve an unknown start result after ambiguous gateway/server failures, preventing duplicate cloud sessions until recovery.
