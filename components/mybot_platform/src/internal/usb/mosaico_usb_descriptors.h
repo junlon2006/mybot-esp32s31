@@ -24,6 +24,8 @@ enum {
 };
 
 /* Configure descriptors before the single esp_tinyusb driver is installed.
+ * The serial uses the factory MAC-48; an unavailable/invalid identity fails
+ * configuration instead of exposing a serial shared by all devices.
  * The returned pointers have firmware lifetime; the caller still owns PHY,
  * task configuration, event handling and class initialization. */
 esp_err_t mybot_mosaico_usb_descriptors_configure(tinyusb_config_t *config);

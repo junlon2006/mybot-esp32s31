@@ -2,6 +2,8 @@
 
 ## Unreleased — standalone S31 translation
 
+- Derive the composite USB serial number from the hardware MAC, preserving stable device identity across reconnects.
+
 - Discard stale AI/PLAY button releases after a session or SDK attachment changes, preventing accidental restarts.
 
 - Preserve the selected language pair when switching between media, face-to-face and USB meeting scenes.

@@ -892,3 +892,15 @@ caption and route suites. One case injects STOP after the RTC-start cancellation
 precheck to verify that a starting attempt can still be stopped. Formatting/SPDX,
 whitespace, Chinese incremental build and final S31 checks pass. No device was flashed;
 physical key timing remains a separate hardware check.
+
+## Review fix 08: unique composite USB identity
+
+The USB serial string now comes from the factory MAC rather than the shared board
+model string. Product and audio/console interface names are preserved. Identity-read
+failure aborts descriptor configuration instead of exposing a shared fallback serial.
+
+The pinned-header descriptor test passes under UBSan with two synthetic factory
+MACs, stable repeat configuration, unchanged names, read errors and invalid identities.
+Formatting/SPDX, whitespace, Chinese incremental firmware build and final S31 checks
+pass in build/korvo-s31. No device was flashed; multi-device macOS enumeration is
+still a hardware validation item.

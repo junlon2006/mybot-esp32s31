@@ -1,9 +1,22 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 #include "usb/mosaico_usb_descriptors.h"
+#include "esp_mac.h"
 
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
+
+static uint8_t factory_mac[6] = {0x02, 0x11, 0x22, 0x33, 0x44, 0x55};
+static esp_err_t mac_result = ESP_OK;
+static unsigned mac_reads;
+
+esp_err_t esp_read_mac(uint8_t *mac, esp_mac_type_t type) {
+    assert(mac && type == ESP_MAC_EFUSE_FACTORY);
+    ++mac_reads;
+    if (mac_result == ESP_OK)
+        memcpy(mac, factory_mac, sizeof(factory_mac));
+    return mac_result;
+}
 
 static uint16_t le16(const uint8_t *p) {
     return (uint16_t)p[0] | (uint16_t)p[1] << 8;
@@ -97,6 +110,7 @@ int main(void) {
     assert(TUD_AUDIO_PREFER_RING_BUFFER && !CFG_TUD_DWC2_DMA_ENABLE && CFG_TUD_DWC2_SLAVE_ENABLE);
     assert(!CFG_TUD_MEM_DCACHE_ENABLE);
     assert(mybot_mosaico_usb_descriptors_configure(NULL) == ESP_ERR_INVALID_ARG);
+    assert(!mac_reads);
     tinyusb_config_t config = {.caller_owned_marker = 123};
     assert(mybot_mosaico_usb_descriptors_configure(&config) == ESP_OK);
     assert(config.caller_owned_marker == 123 && config.descriptor.string_count == 8);
@@ -104,12 +118,33 @@ int main(void) {
     for (size_t i = 0; i < config.descriptor.string_count; ++i)
         assert(config.descriptor.string[i]);
     assert(!strcmp(config.descriptor.string[4], "MyBot Mosaico Audio"));
+    assert(!strcmp(config.descriptor.string[2], "MyBot Mosaico"));
+    assert(!strcmp(config.descriptor.string[3], "MOSAICO-021122334455"));
     validate(config.descriptor.full_speed_config, false);
     validate(config.descriptor.high_speed_config, true);
     const uint8_t *high_speed = config.descriptor.high_speed_config;
     assert(mybot_mosaico_usb_descriptors_configure(&config) == ESP_OK);
     assert(high_speed == config.descriptor.high_speed_config);
     validate(config.descriptor.high_speed_config, true);
-    puts("PASS Mosaico UAC+CDC descriptors, endpoint layout and shared PIO configuration");
+    assert(!strcmp(config.descriptor.string[3], "MOSAICO-021122334455"));
+    char first_serial[32];
+    strcpy(first_serial, config.descriptor.string[3]);
+    factory_mac[5] = 0xa6;
+    assert(mybot_mosaico_usb_descriptors_configure(&config) == ESP_OK);
+    assert(!strcmp(config.descriptor.string[3], "MOSAICO-0211223344A6"));
+    assert(strcmp(first_serial, config.descriptor.string[3]));
+    mac_result = -1;
+    tinyusb_config_t failed = {.caller_owned_marker = 456};
+    assert(mybot_mosaico_usb_descriptors_configure(&failed) == mac_result);
+    assert(failed.caller_owned_marker == 456 && !failed.descriptor.string);
+    mac_result = ESP_OK;
+    memset(factory_mac, 0, sizeof(factory_mac));
+    assert(mybot_mosaico_usb_descriptors_configure(&failed) == ESP_ERR_INVALID_STATE);
+    assert(!failed.descriptor.string);
+    memset(factory_mac, 0xff, sizeof(factory_mac));
+    assert(mybot_mosaico_usb_descriptors_configure(&failed) == ESP_ERR_INVALID_STATE);
+    assert(!failed.descriptor.string);
+    puts("PASS Mosaico UAC+CDC factory identity, descriptors, endpoints and shared PIO "
+         "configuration");
     return 0;
 }
