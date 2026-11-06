@@ -10,7 +10,7 @@ if(CONFIG_LWIP_SNTP_MAX_SERVERS LESS 3)
         "regenerate the stale sdkconfig from project defaults")
 endif()
 
-set(mybot_main_sources "app_main.c")
+set(mybot_main_sources "app_main.c" "storage_init.c")
 if(CONFIG_MYBOT_DEBUG_RESOURCE_MONITOR)
     list(APPEND mybot_main_sources "resource_monitor.c")
 endif()

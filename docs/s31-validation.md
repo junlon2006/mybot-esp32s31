@@ -809,3 +809,15 @@ no device was flashed. Pinned-header descriptor tests pass. Remote CI remains pe
 
 - Korvo application: 3541936 bytes, SHA-256 `44438cde7b2b620cd6851756b87f02f5d94edd6f5ac1fd2357911581e413ea3f`.
 - Mosaico application: 3654352 bytes, SHA-256 `25715672b5bf35cfd61930e375423d1c2ab08fbd51d42983896ae639ae8868e7`.
+
+
+## Review fix 02: preserve NVS on startup errors
+
+Storage startup now attempts NVS initialization once and returns on any error without
+an automatic erase. Wi-Fi/auth data and pending cloud session journals remain available
+for explicit recovery. A small startup helper is exercised with success, no-free-pages,
+newer-format, allocation and generic failure mocks; all verify zero erase calls and
+unchanged retained bytes under UBSan. CI runs this targeted test. Formatting/SPDX and
+whitespace checks pass. Chinese incremental build and final S31 checks pass in the fixed
+build directory: application 3654352 bytes, SHA-256 `0c8502571d9385677438ee42eabfbabce87568428d0f1dd57584326263db6527`.
+No device was flashed; real corrupt-partition recovery is not emulated by the host test.
