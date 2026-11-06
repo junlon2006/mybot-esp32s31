@@ -2,6 +2,8 @@
 
 ## Unreleased — standalone S31 translation
 
+- Preserve the selected language pair when switching between media, face-to-face and USB meeting scenes.
+
 - Keep application ownership until physical/USB media, HTTP and RTC teardown completes; repeated stop retries retained resources before allowing restart.
 
 - Recover the physical playback backend after a hard audio fault so later translation sessions can play again.

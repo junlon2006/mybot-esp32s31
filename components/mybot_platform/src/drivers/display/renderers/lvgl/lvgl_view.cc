@@ -1112,12 +1112,6 @@ void clicked(lv_event_t *event) {
             request.type = MYBOT_UI_SET_MODE;
             request.value = mode;
             request.audio_source = audio_source;
-            if (s_view.content.audio_source != audio_source) {
-                std::snprintf(request.source_language, sizeof(request.source_language), "%s",
-                              "zh-CN");
-                std::snprintf(request.target_language, sizeof(request.target_language), "%s",
-                              "en-US");
-            }
             if (mybot_ui_submit(&request) < 0)
                 return;
             s_view.pending_mode = mode;

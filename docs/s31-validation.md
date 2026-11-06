@@ -859,3 +859,15 @@ USB, RTC, HTTP/control-join failures and successful later reclamation. UI/captio
 regressions pass under UBSan. Formatting/SPDX and whitespace checks pass; the Chinese
 incremental build and final S31 checks pass in build/korvo-s31. No device was flashed;
 these fault results use mocked worker/vendor boundaries.
+
+## Review fix 06: preserve languages across scenes
+
+Scene selection now changes only the translation mode and audio source. It no longer
+overwrites the accepted language pair with Chinese/English when crossing codec/USB
+scenes. The existing UI flow selects Japanese/Korean and checks preserved labels and
+commands through meeting, media, face-to-face and meeting again. Defaults remain at
+initial configuration, and language changes still wait for acknowledged readback.
+
+The Chinese/English UI suites pass on both screen layouts, along with font checks,
+formatting/SPDX and whitespace checks. Chinese incremental firmware build and final
+S31 checks pass in build/korvo-s31. No device was flashed.
