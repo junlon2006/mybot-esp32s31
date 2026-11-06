@@ -26,5 +26,5 @@ set(MYBOT_BOARD_SOURCES
     "${MYBOT_PLATFORM_ROOT}/src/drivers/input/mosaico_cst9220_touch.c")
 mybot_display_add_panel(MYBOT_BOARD_SOURCES "mosaico_co5300_panel.c")
 mybot_display_add_lvgl_sources(MYBOT_BOARD_SOURCES "mosaico_lvgl_adapter.cc")
-set(MYBOT_BOARD_REQUIRES espressif__esp_tinyusb mybot_mosaico_usb esp_codec_dev esp_driver_spi esp_driver_gpio esp_driver_i2c esp_driver_i2s
+set(MYBOT_BOARD_REQUIRES espressif__esp_tinyusb mybot_mosaico_usb esp_codec_dev esp_driver_spi esp_driver_gpio esp_driver_i2c esp_driver_i2s esp_driver_ledc efuse
     esp_lcd esp_mm espressif__esp_lcd_co5300 espressif__esp_lcd_touch_cst9220 esp_timer nvs_flash)

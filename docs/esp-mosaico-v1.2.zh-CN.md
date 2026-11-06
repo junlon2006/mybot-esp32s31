@@ -20,6 +20,20 @@
 原理图的 `I2S_DOUT` / `I2S_DIN` 来自 codec 视角，不能据此交换 MCU 的 TX/RX。
 Mosaico 不使用 Korvo 的 ES8389、TDM4、无 MCLK 配置。
 
+启动先读取 eFuse `USER_DATA` 的前 16 位，再操作任何供电、功放或 I2C 引脚。
+`0x0100`（V1.0）使用不同引脚映射，固件拒绝启动；`0x0101`（V1.1）与 `0x0102`
+（V1.2）使用官方 V1.2 映射，V1.1 会明确记录兼容接入。eFuse 读取失败同样拒绝继续。
+对未烧录或未知值，本项目按已选择的 V1.2 目标板继续，并打印
+`result=degraded policy=assume_v1.2_pin_map`。这是项目允许的降级策略；官方 BSP 对未知值
+直接拒绝，降级日志不表示已经识别或验证了该硬件版本。
+
+VCC 使能保留官方软启动：若早期启动阶段已将 GPIO60 配置为低电平输出，则接管当前
+开启状态；否则先保持高电平关闭，再用 LEDC 低速 timer1/channel1、100 kHz、8-bit
+占空比从 255 降到 0，等待约 50 ms 渐变完成，最后恢复为 GPIO 低电平输出。
+随后保留 10 ms 稳定等待，再初始化 I2C。软启动失败会尝试恢复高电平关闭，不会直接
+跳过渐变强行上电；I2C 初始化重试不重复已完成的上电过程。此过程移植自固定版本官方
+BSP，尚不能替代浪涌、电压或启动时序的实测结果。
+
 音频采集与播放共用既有生命周期实现，保留有界 I/O、独立启停、延迟回收及音量保存。
 Cloud AEC 继续使用 SDK 的麦克风/播放参考 PCM 契约；此处不启用 DAC 参考回读。
 触摸通过 INT6 通知读取新报文，在报文之间保留触点，避免反复读取已 ACK 数据。
@@ -94,5 +108,5 @@ SPI 刷新发生超时后会停止继续提交，保留尚未完成的 DMA 缓�
 - [CoreBoard V1.2 原理图](https://dl.espressif.com/AE/Mosaico/SCH_SCH_ESP-Mosaico_CoreBoard_V1_2_1_2026-09-24.pdf)
 - [固定版本官方 BSP](https://github.com/esp-mosaico/esp-mosaico-bsp/tree/8ce87a7ef130f946de4f84f6a5a20db1d8982605)
 
-仅采用必要引脚和 CO5300 初始化序列，保留其 Apache-2.0 版权。没有引入要求 IDF 6.2 的整套 BSP，
+采用必要引脚、eFuse 版本映射、供电软启动和 CO5300 初始化序列，保留其 Apache-2.0 版权。没有引入要求 IDF 6.2 的整套 BSP，
 也没有修改官方 codec 1.5.9、RTSA 或 AOSL 输入。CO5300 2.2.0、CST9220 0.1.0 由组件管理器固定下载。

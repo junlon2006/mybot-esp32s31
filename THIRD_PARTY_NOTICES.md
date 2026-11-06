@@ -51,7 +51,7 @@ MyBot SDK modifications for V2VT media, face-to-face and bidirectional USB meeti
 
 ## Mosaico hardware integration
 
-The Mosaico V1.2 pin configuration and CO5300 startup sequence derive from the official
+The Mosaico V1.2 pin configuration, eFuse revision mapping, VCC soft-start ramp and CO5300 startup sequence derive from the official
 `esp-mosaico/esp-mosaico-bsp` at `8ce87a7ef130f946de4f84f6a5a20db1d8982605` under Apache-2.0.
 Espressif 2026 copyright is retained in the derived hardware files. Managed
 `esp_lcd_co5300` 2.2.0 and `esp_lcd_touch_cst9220` 0.1.0 retain their package Apache-2.0

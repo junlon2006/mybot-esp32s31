@@ -964,3 +964,21 @@ formatting/SPDX and whitespace checks. This is a declared budget, not a measured
 load or a hardware current limit; charging, inrush, preconfiguration/suspend and
 full-volume load remain unmeasured. Chinese build and final S31 checks pass. No
 device was flashed.
+
+## Review fix 13: Mosaico revision guard and VCC ramp
+
+Board startup reads the first 16 eFuse USER_DATA bits before touching GPIO or I2C.
+V1.0 is rejected; V1.1 and V1.2 use the documented shared map. Unknown/unprogrammed
+values explicitly warn and assume the user-selected V1.2 target, a project policy
+that differs from the upstream BSP's strict rejection. Existing enabled power is
+adopted; a disabled rail follows the pinned BSP's active-low 100 kHz, 8-bit 255-to-0
+LEDC fade over 50 ms, then returns to GPIO ownership. Failures attempt to restore
+the off level, and only a locally installed fade service is uninstalled. The existing
+10 ms settling delay remains after power setup and before the first I2C initialization. The source
+reference blob f6c5efa192638e9cce674ed395fb1eb1de691fa4 matches the pinned BSP tree.
+
+All 23 hardware initialization fault cases pass under UBSan, including shared-fade
+failure ownership. CI runs the suite and checks its formatting/SPDX. Whitespace,
+Chinese incremental build and final S31 checks pass. No device was flashed; actual
+VCC waveform, inrush, eFuse contents and post-ramp peripheral operation still need
+hardware validation.

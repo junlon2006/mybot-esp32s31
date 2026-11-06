@@ -24,7 +24,7 @@ jobs:
           clang-format --version
       - name: Format check
         run: |
-          find main diagnostics/mosaico_uac components/mybot_platform components/mybot_stack/aosl/s31_port tests/aosl_s31_tasks tests/korvo_s31_display tests/mosaico_display tests/mosaico_usb tests/mosaico_usb_audio \
+          find main diagnostics/mosaico_uac components/mybot_platform components/mybot_stack/aosl/s31_port tests/aosl_s31_tasks tests/korvo_s31_display tests/mosaico_display tests/mosaico_hardware tests/mosaico_usb tests/mosaico_usb_audio \
             tests/korvo_s31_audio tests/korvo_s31_input tests/pcm_playback_buffer tests/media_pause \
             tests/conversation_http_trace tests/http_time_sync tests/translation_http tests/translation_ui tests/translation_client \
             tests/translation_lifecycle tests/translation_rtc tests/translation_control tests/translation_state tests/translation_volume tests/translation_captions tests/kv_store tests/storage_init tests/usb_cdc_probe tests/usb_host_probe \
@@ -65,7 +65,7 @@ jobs:
           fi
       - name: SPDX check
         run: |
-          find main diagnostics/mosaico_uac components/mybot_platform components/mybot_stack/aosl/s31_port tests/aosl_s31_tasks tests/korvo_s31_display tests/mosaico_display tests/mosaico_usb tests/mosaico_usb_audio \
+          find main diagnostics/mosaico_uac components/mybot_platform components/mybot_stack/aosl/s31_port tests/aosl_s31_tasks tests/korvo_s31_display tests/mosaico_display tests/mosaico_hardware tests/mosaico_usb tests/mosaico_usb_audio \
             tests/korvo_s31_audio tests/korvo_s31_input tests/pcm_playback_buffer tests/media_pause \
             tests/conversation_http_trace tests/http_time_sync tests/translation_http tests/translation_ui tests/translation_client \
             tests/translation_lifecycle tests/translation_rtc tests/translation_control tests/translation_state tests/translation_volume tests/translation_captions tests/kv_store tests/storage_init tests/usb_cdc_probe tests/usb_host_probe \
@@ -85,6 +85,8 @@ jobs:
           sh tests/translation_ui/run.sh
       - name: S31 AOSL task allocation and deletion tests
         run: sh tests/aosl_s31_tasks/run.sh
+      - name: Mosaico hardware revision and power initialization tests
+        run: sh tests/mosaico_hardware/run.sh
       - name: S31 TDM audio and ADC input host lifecycle tests
         run: sh tests/korvo_s31_audio/run.sh
       - name: Translation protocol, lifecycle and RTC ownership tests

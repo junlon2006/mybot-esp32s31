@@ -101,6 +101,17 @@ Power/audio/display configuration is based on `esp-mosaico/esp-mosaico-bsp` comm
 Espressif copyright and Apache-2.0 attribution remain in the project adapter. The full BSP,
 bootloader splash, NAND, camera, sensors and sample UI are not imported.
 
+The eFuse USER_DATA revision mapping, retained output-level detection and active-low VCC
+soft start derive from the same pinned BSP's `onboard/esp_mosaico.c`, Git blob
+`f6c5efa192638e9cce674ed395fb1eb1de691fa4`. The adapter retains the official low-speed
+LEDC timer1/channel1, 100 kHz / 8-bit duty sweep from 255 to 0, the Kconfig default
+50 ms duration, and the audio startup's following 10 ms settle. Project fault handling
+restores GPIO ownership and attempts to leave a failed ramp off without uninstalling
+another owner's fade service. Known V1.0 hardware is rejected before pin access;
+V1.1 and V1.2 share the official V1.2 map. Unlike upstream's rejection of all unknown
+revisions, this fixed-target firmware explicitly warns and assumes V1.2 for blank or
+unknown eFuse data. This policy does not establish electrical compatibility.
+
 Managed display inputs are `espressif/esp_lcd_co5300` **2.2.0** and
 `espressif/esp_lcd_touch_cst9220` **0.1.0**, with exact content hashes in `dependencies.lock`.
 They use the existing LCD touch base and shared board-owned I2C0. The production board retains
