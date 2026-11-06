@@ -233,6 +233,8 @@ static void reset(int initial_volume, bool use_hardware, bool initialization_fai
     if (use_hardware)
         assert((mybot_audio_device_volume_init(&runtime.media.audio) < 0) == initialization_fails);
     aosl_atomic_set(&runtime.running, true);
+    runtime.ui_generation = 7;
+    aosl_atomic_set(&runtime.conversation_generation, 11);
     assert(mybot_state_model_begin_start(&runtime.state_model));
     assert(mybot_state_model_begin_services(&runtime.state_model));
     assert(mybot_state_model_services_ready(&runtime.state_model));
@@ -257,9 +259,10 @@ static void expect_display(int volume) {
 }
 
 static void press(mybot_key_event_t event) {
-    uintptr_t arguments[] = {(uintptr_t)&runtime, (uintptr_t)event};
+    uintptr_t arguments[] = {(uintptr_t)&runtime, (uintptr_t)event, runtime.ui_generation,
+                             (uintptr_t)aosl_atomic_read(&runtime.conversation_generation)};
     unsigned previous = renders;
-    handle_key_event(NULL, NULL, 2, arguments);
+    handle_key_event(NULL, NULL, 4, arguments);
     assert(renders == previous + 1);
 }
 

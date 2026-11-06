@@ -1040,3 +1040,29 @@ All seven ownership/path/FD-anchored cleanup functions remain unchanged. The Pyt
 CLI dry-run plans four board/language variants using preview/60 ms and four checker
 calls; output roots remain absent. Whitespace checks pass. No firmware was built
 outside the fixed local directory, and no device was flashed.
+
+## Full host CI follow-up: key epoch test fixture
+
+The complete local quality run found one older volume test still dispatching the
+pre-epoch two-argument key handler. Its fixture now passes the current runtime and
+conversation generations, including nonzero test values. All eight volume scenarios
+pass under UBSan, with formatting/whitespace checks. This corrects the test harness
+for review fix 07; production behavior is unchanged.
+
+## Review fix 19: remove idle UAC runtime
+
+Production now owns fixed 48 kHz clock controls, speaker master/L/R mute and Q8.8
+volume state. The pinned package supplies descriptors/Kconfig through a header-only
+registration; managed sources and the standalone diagnostic remain intact. Actual
+IDF testing showed require:no alone still builds managed roots, so the project
+redirects only this package's registration before component processing. No vendor
+UAC source compiles or runtime symbols remain; six project callbacks are live.
+Existing PCM/feedback/DWC2 paths are retained. A delivery guard rejects reintroduced
+vendor runtime compilation or live symbols.
+
+Nine USB audio/control groups, eight console initialization fault groups and pinned
+FS/HS descriptor tests pass under UBSan. Builder/delivery tests pass 86 cases; the
+full local quality/host run passes all 34 jobs after the volume fixture correction.
+Chinese firmware and final source/link/OTA checks pass: app 3,667,776 bytes, each
+OTA slot free 460,992 bytes. No device was flashed; current USB traffic and audio
+quality still need hardware verification after these changes.
