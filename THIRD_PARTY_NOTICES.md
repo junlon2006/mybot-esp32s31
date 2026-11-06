@@ -20,7 +20,6 @@ The root Apache-2.0 license applies to project-maintained code unless a file sta
 | Official S31 ADC calibration source | Apache-2.0; copyright 2026 Espressif Systems (Shanghai) CO LTD | `components/mybot_platform/boards/esp32-s31-korvo-1/reference/esp32_s31_adc_calibration.c` |
 | Pairing prompt and digit recordings | Apache-2.0, SDK asset provenance | `components/mybot_platform/assets/locales/`, `SOURCES.json` and the retained MyBot license |
 | Noto Sans SC UI glyph subset | SIL Open Font License 1.1 | `components/mybot_platform/src/drivers/display/assets/licenses/LVGL_VIEW_FONT_LICENSE.txt` |
-| Noto Color Emoji rasterized glyphs | SIL Open Font License 1.1 | `components/mybot_platform/assets/ui/noto_emoji/LICENSE.txt` |
 | ESP-IDF v6.1 | Apache-2.0 plus component-specific terms | external development SDK |
 
 ## Retained component terms
@@ -42,8 +41,6 @@ ADC software calibration is copied unchanged from [Espressif's S31 BSP](https://
 Pairing prompts and digit recordings derive from MyBot's 16 kHz mono signed-16 PCM assets at `7854c1d5798004485aa1947ff55116bdb7ab0237`, under Apache-2.0. Source/output hashes, encoding commands and provisioning-prompt details are retained in `components/mybot_platform/assets/locales/SOURCES.json`. Build-generated PCM keeps the source asset's terms.
 
 The translation view's UI fonts and live-caption subsets use Noto Sans SC Regular (Adobe copyright 2014, 2015) and retain SIL OFL 1.1 in `LVGL_VIEW_FONT_LICENSE.txt`. The caption fonts add the 6,763 GB2312 Han characters, Latin-1 and common punctuation using the same source font. The pinned source-font hash and embedded license provenance are recorded in `VENDORED_SOURCES.md`; the original TTF is not redistributed. Built-in LVGL Montserrat and Font Awesome terms remain at `components/lvgl/scripts/built_in_font/font_license/Montserrat/OFL.txt` and `FontAwesome5/LICENSE.txt`.
-
-The four local state emoji are rasterized Noto Color Emoji glyphs supplied by the pinned `78/noto-fonts` package. Their original PNGs, Google copyright, SIL OFL 1.1 and per-file provenance remain under `components/mybot_platform/assets/ui/noto_emoji/`.
 
 The upstream MyBot baseline's own notices may describe packages used by other targets. Those notices remain part of the snapshot and do not define this S31 firmware's active dependency set. Every retained package license and file-level copyright/SPDX notice remains in force.
 

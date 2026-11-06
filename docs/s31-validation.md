@@ -1019,3 +1019,13 @@ reported Korvo baseline and Mosaico USB/display/basic meeting evidence; later fi
 remain host/build results. Historical sections retain their original scope. Local
 file links in all 27 changed Markdown documents and whitespace checks pass. This
 documentation-only correction required no firmware build or device flash.
+
+## Review fix 17: remove unused emoji assets
+
+Removed the nine-file emoji chain (439,331 source bytes): generated arrays/header,
+generator, four PNGs and their dedicated provenance/license. Source, CMake, actual
+compile commands and map inspection found no consumers. Current UI/caption fonts,
+their generators/tests and license notices remain. The four board/language UI
+variants and font checks pass; Chinese build, source/OTA delivery checks and whitespace
+checks pass. The app size remains 3,671,632 bytes: these assets were never linked,
+so this is a repository cleanup rather than a firmware memory reduction. No flash.

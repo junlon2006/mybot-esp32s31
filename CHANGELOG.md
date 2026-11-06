@@ -2,6 +2,8 @@
 
 ## Unreleased — standalone S31 translation
 
+- Remove the unused emoji arrays, PNG inputs and generator while retaining the fonts used by the translation UI.
+
 - Align build/release instructions, board capabilities and validation status with the current Mosaico target and fixed local build directory.
 
 - Enforce at least 300 KiB application-image headroom against the built OTA partition capacities during local and CI delivery checks.
