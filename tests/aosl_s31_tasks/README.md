@@ -10,6 +10,10 @@ Undefined-behavior sanitizer is enabled. PCM workers, `service_mpq` (HTTP/JSON)
 and `mybot_rtc` (RTC forwarding) use PSRAM; `control_mpq` performs persistence
 and keeps an internal stack, along with the opaque RTSA worker tasks.
 
-These tests do not execute the FreeRTOS scheduler. ESP-IDF implements WithCaps
-self-deletion using a temporary internal cleanup task; hardware must still verify
-concurrent shutdown and real resource headroom. No firmware build is performed.
+Audited PSRAM workers exit through a static internal reaper. Its queue, task control
+block and stack exist before the first worker starts; exit queues the worker and
+parks it without allocating a temporary cleanup task. The reaper uses IDF's external
+WithCaps deletion path, which waits for the target to stop on every CPU core.
+
+These tests mock the FreeRTOS scheduler. Hardware must still verify concurrent
+shutdown and real resource headroom. No firmware build is performed by this script.

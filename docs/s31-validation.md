@@ -936,3 +936,20 @@ reconfigure, dirty inputs, mid-build changes and artifact/embedded-digest mismat
 All 74 builder/delivery tests pass with Python 3.11; the 22 delivery tests also pass
 with IDF Python 3.10. Embedded Wi-Fi HTML and hidden-index modification regressions
 pass. The final Chinese rebuild and S31 checks pass. No device was flashed.
+
+## Review fix 11: allocation-free PSRAM task reclamation
+
+The S31 AOSL adapter prepares a static internal queue, TCB and aligned 2 KiB reaper
+stack before admitting a PSRAM worker. Normal return and explicit self-exit enqueue
+the task handle and park; the permanent reaper uses IDF's external WithCaps deletion
+path, which waits until the task is off every core before freeing it. Queue pressure
+blocks without discarding ownership or allocating a temporary cleanup task. Reaper
+startup failure rejects worker creation. Original AOSL inputs remain unchanged, and
+the reaper depends only on FreeRTOS so it can safely outlive an AOSL reference cycle.
+
+UBSan tests compile the unchanged HAL through the production wrapper and cover
+startup rollback, overlapping creators, matching allocation/deletion, explicit exit,
+and 24 worker exits with allocation denied and 16-slot queue backpressure. All pass;
+formatting/SPDX and whitespace checks pass. Chinese firmware and final S31 checks
+pass, and ELF inspection places every reaper resource in internal DRAM. No device
+was flashed; host mocks do not establish real SMP shutdown timing or stack headroom.
