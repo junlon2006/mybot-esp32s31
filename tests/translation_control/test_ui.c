@@ -153,6 +153,7 @@ int mybot_media_pipeline_end_session(mybot_media_pipeline_t *pipeline) {
     if (fail_end_session)
         return -1;
     paused = false;
+    pipeline->playback_fault = false;
     return 0;
 }
 int mybot_agora_rtc_fini(void) {
@@ -413,6 +414,20 @@ static void test_media_recovery_before_cloud_start(void) {
     fail_end_session = false;
     control_start_conversation(&runtime);
     assert(conversation_starts == 1 && session_ends == 3);
+    tests++;
+}
+
+static void test_idle_playback_fault_blocks_start_until_recovered(void) {
+    reset();
+    runtime.media.playback_fault = true; /* A prompt can fail without an active cloud session. */
+    fail_end_session = true;
+    control_start_conversation(&runtime);
+    assert(session_ends == 1 && !conversation_starts && runtime.media.playback_fault);
+    assert(runtime.media_recovery_required && !paused);
+    fail_end_session = false;
+    control_start_conversation(&runtime);
+    assert(session_ends == 2 && conversation_starts == 1 && !runtime.media.playback_fault);
+    assert(!runtime.media_recovery_required && !runtime.media_cancel_requested);
     tests++;
 }
 
@@ -680,6 +695,7 @@ int main(void) {
     test_old_generation_does_not_consume_new_command();
     test_pause_only_active_and_actual_state();
     test_media_recovery_before_cloud_start();
+    test_idle_playback_fault_blocks_start_until_recovered();
     test_each_session_releases_rtc_before_next_start();
     test_rtc_cleanup_failure_blocks_cloud_start();
     test_rtc_cleanup_failure_preserves_real_error();

@@ -290,7 +290,7 @@ static void rtc_on_caption_channel(const char *channel, const char *sender, cons
 static void refresh_translation_view(mybot_runtime_t *runtime);
 
 static int usb_media_send_audio(const void *data, size_t len, void *user_data);
-static void usb_media_error(void *user_data);
+static void media_error(void *user_data);
 
 /* Called with RTC callbacks drained, or release=false while shutdown is pending. */
 static int stop_usb_media(mybot_runtime_t *runtime, bool release) {
@@ -322,7 +322,7 @@ static int start_usb_media(mybot_runtime_t *runtime) {
     mybot_media_pipeline_init(runtime->usb_media);
     mybot_media_pipeline_callbacks_t callbacks = {
         .send_audio = usb_media_send_audio,
-        .on_audio_error = usb_media_error,
+        .on_audio_error = media_error,
         .user_data = runtime,
     };
     if (mybot_media_pipeline_start_usb(runtime->usb_media, &callbacks) < 0) {
@@ -349,7 +349,8 @@ static void control_start_conversation(mybot_runtime_t *runtime) {
             return;
         }
         if (runtime->media_recovery_required || runtime->usb_media ||
-            mybot_media_pipeline_is_paused(&runtime->media)) {
+            mybot_media_pipeline_is_paused(&runtime->media) ||
+            aosl_atomic_read(&runtime->media.playback_fault)) {
             runtime->media_recovery_required = end_session_media(runtime, true);
             if (runtime->media_recovery_required) {
                 snprintf(runtime->lifecycle.error_code, sizeof(runtime->lifecycle.error_code),
@@ -578,13 +579,12 @@ static int usb_media_send_audio(const void *data, size_t len, void *user_data) {
     return mybot_agora_rtc_send_audio(MYBOT_TRANSLATION_DIRECTION_LISTEN, data, len);
 }
 
-static void usb_media_error(void *user_data) {
+static void media_error(void *user_data) {
     mybot_runtime_t *runtime = user_data;
-    /* I/O workers only close admission and notify the control worker. */
+    /* Close both routes through cancellation, then let control quiesce USB.
+     * Its pipeline may be retiring while a physical worker reports this error. */
     aosl_atomic_set(&runtime->media_cancel_requested, true);
     mybot_media_pipeline_set_rtc_connected(&runtime->media, false);
-    if (runtime->usb_media)
-        mybot_media_pipeline_set_rtc_connected(runtime->usb_media, false);
     mybot_device_lifecycle_notify_conversation_ended(&runtime->lifecycle);
 }
 
@@ -1301,6 +1301,7 @@ static int start_services(mybot_runtime_t *runtime) {
     mybot_media_pipeline_callbacks_t media_cbs;
     memset(&media_cbs, 0, sizeof(media_cbs));
     media_cbs.send_audio = media_send_audio;
+    media_cbs.on_audio_error = media_error;
     media_cbs.on_wake_word = media_on_wake_word;
     media_cbs.user_data = runtime;
     mybot_media_pipeline_init(&runtime->media);

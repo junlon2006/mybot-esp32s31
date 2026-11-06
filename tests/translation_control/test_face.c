@@ -435,14 +435,39 @@ static void test_meeting_pause_failure_and_disconnect(void) {
     runtime.usb_media->cbs.on_audio_error(runtime.usb_media->cbs.user_data);
     assert(runtime.media_cancel_requested && runtime.lifecycle.stop_request &&
            cleanup_requests == 1);
-    assert(!runtime.media.rtc_connected && !runtime.usb_media->rtc_connected);
+    assert(!runtime.media.rtc_connected);
     remote(MYBOT_TRANSLATION_DIRECTION_LISTEN);
     remote(MYBOT_TRANSLATION_DIRECTION_SPEAK);
     assert(!pushes && !accepted_audio);
+    unsigned previous_sends = sends;
+    assert(usb_media_send_audio(uplink, sizeof(uplink), &runtime) == 0);
+    assert(media_send_audio(uplink, sizeof(uplink), &runtime) == 0 && sends == previous_sends);
     dev_on_conversation_stop(&runtime);
     assert(!runtime.usb_media && !allocations && quiesces == 2);
     tests++;
 }
+static void test_physical_audio_error_closes_session_media(void) {
+    for (unsigned bidirectional = 0; bidirectional < 2; ++bidirectional) {
+        reset();
+        if (!bidirectional) {
+            runtime.lifecycle.mode = conversation.mode = MYBOT_TRANSLATION_LISTEN;
+            conversation.route_count = 1;
+        }
+        dev_on_conversation_start(&conversation, &runtime);
+        registered.on_state_changed(MYBOT_RTC_STATE_CONNECTED, registered.user_data);
+        assert(runtime.media.rtc_connected);
+        media_error(&runtime);
+        assert(runtime.media_cancel_requested && !runtime.media.rtc_connected);
+        assert(runtime.lifecycle.stop_request && cleanup_requests == 1);
+        remote(MYBOT_TRANSLATION_DIRECTION_LISTEN);
+        remote(MYBOT_TRANSLATION_DIRECTION_SPEAK);
+        assert(!pushes && !accepted_audio);
+        dev_on_conversation_stop(&runtime);
+        assert(ends == 1 && rtc_finalizations == 1 && !runtime.media_recovery_required);
+    }
+    tests++;
+}
+
 static void test_meeting_teardown_retains_pending_workers(void) {
     for (unsigned failure = 0; failure < 2; ++failure) {
         start_meeting();
@@ -466,6 +491,7 @@ int main(void) {
     test_meeting_routes_remain_independent();
     test_meeting_pause_failure_and_disconnect();
     test_meeting_teardown_retains_pending_workers();
+    test_physical_audio_error_closes_session_media();
     test_initial_and_selected_uplink();
     test_media_single_route();
     test_switch_fences_and_filters_audio();

@@ -56,6 +56,8 @@ typedef struct {
     aosl_atomic_t remote_audio_busy;
     aosl_atomic_t pause_fence_generation;
     aosl_atomic_t pause_fence_done[3];
+    /* Physical playback errors stay latched until stop/start clears the backend. */
+    aosl_atomic_t playback_fault;
     bool playback_suspended;
 #if MYBOT_WAKE_WORDS
     aosl_atomic_t wake_words_enabled;

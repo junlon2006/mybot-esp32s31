@@ -38,6 +38,7 @@ static bool fail_pb_stop, fail_pb_start, stop_during_wait, release_producer_duri
 static bool fail_destroy;
 static bool cap_active, pb_active, usb_active, usb_pb_active;
 static bool usb_disconnected, pause_usb_write;
+static bool physical_playback_fault, pause_physical_write, stop_physical_write;
 static unsigned audio_errors, volume_inits, announce_inits;
 static bool fail_usb_start, fail_cap_stop, fail_codec_start, fail_cap_create;
 static unsigned usb_destroyed, codec_destroyed;
@@ -131,12 +132,22 @@ static int playback_start(void *context) {
         return -1;
     assert(cap_active || usb_active); /* Playback is independent of physical capture. */
     *(bool *)context = true;
+    if (context == &pb_active)
+        physical_playback_fault = false;
     return 0;
 }
 
 static int playback_write(void *context, const void *buffer, int frames) {
     assert(context == &pb_active || context == &usb_pb_active);
     playback_writes++;
+    if (context == &pb_active &&
+        (physical_playback_fault || pause_physical_write || stop_physical_write)) {
+        if (pause_physical_write)
+            aosl_atomic_set(&pipeline.paused, true);
+        if (stop_physical_write)
+            aosl_atomic_set(&pipeline.running, false);
+        return -1;
+    }
     if (context == &usb_pb_active && pause_usb_write) {
         aosl_atomic_set(&pipeline.paused, true);
         return -1;
@@ -428,6 +439,7 @@ static void reset(void) {
     hold_remote_producer = producer_acquired = release_remote_producer = false;
     cap_active = pb_active = usb_active = usb_pb_active = false;
     usb_disconnected = pause_usb_write = false;
+    physical_playback_fault = pause_physical_write = stop_physical_write = false;
     audio_errors = volume_inits = announce_inits = 0;
     fail_usb_start = fail_cap_stop = fail_codec_start = fail_cap_create = false;
     usb_destroyed = codec_destroyed = 0;
@@ -442,7 +454,8 @@ static void reset(void) {
     platform.audio_playback = &playback_ops;
     platform.audio_volume = &volume_ops;
     mybot_media_pipeline_init(&pipeline);
-    mybot_media_pipeline_callbacks_t callbacks = {.send_audio = send_audio, .user_data = &pipeline};
+    mybot_media_pipeline_callbacks_t callbacks = {
+        .send_audio = send_audio, .on_audio_error = audio_error, .user_data = &pipeline};
     assert(mybot_media_pipeline_start(&pipeline, &callbacks) == 0);
     mybot_media_pipeline_set_rtc_connected(&pipeline, true);
 }
@@ -842,7 +855,66 @@ static void test_disconnected_quiesce_clears_device_pcm(void) {
     tests++;
 }
 
+static void test_physical_playback_fault_recovers_at_session_end(void) {
+    reset();
+    physical_playback_fault = true; /* The physical PCM worker retains a hard I2S fault. */
+    push(2500);
+    tick(PLAYBACK_QUEUE);
+    assert(pipeline.playback_fault && audio_errors == 1 && !played_frames);
+    tick(PLAYBACK_QUEUE);
+    assert(audio_errors == 1 && playback_writes == 1);
+    assert(mybot_media_pipeline_end_session(&pipeline) == 0);
+    assert(!pipeline.playback_fault && !physical_playback_fault && pb_stops == 1);
+    assert(cap_active && !cap_stops && hardware_volume == 45 && !hardware_volume_sets);
+    mybot_media_pipeline_set_rtc_connected(&pipeline, true);
+    push(3000);
+    tick(PLAYBACK_QUEUE);
+    assert(played_frames == 960 && played[0] == 3000);
+    finish();
+    tests++;
+}
+
+static void test_physical_playback_fault_recovery_retries(void) {
+    reset();
+    physical_playback_fault = true;
+    push(2500);
+    tick(PLAYBACK_QUEUE);
+    fail_pb_stop = true;
+    assert(mybot_media_pipeline_end_session(&pipeline) < 0);
+    assert(pipeline.playback_fault && physical_playback_fault && pb_active && cap_active);
+    fail_pb_stop = false;
+    fail_pb_start = true;
+    assert(mybot_media_pipeline_end_session(&pipeline) < 0);
+    assert(pipeline.playback_fault && physical_playback_fault && !pb_active && cap_active);
+    fail_pb_start = false;
+    assert(mybot_media_pipeline_end_session(&pipeline) == 0);
+    assert(!pipeline.playback_fault && !physical_playback_fault && pb_active && cap_active);
+    mybot_media_pipeline_set_rtc_connected(&pipeline, true);
+    push(3500);
+    tick(PLAYBACK_QUEUE);
+    assert(played_frames == 960 && played[0] == 3500);
+    assert(audio_errors == 1 && !cap_stops && !hardware_volume_sets);
+    finish();
+    tests++;
+}
+
+static void test_physical_write_interrupted_by_pause_or_stop(void) {
+    for (unsigned stopping = 0; stopping < 2; ++stopping) {
+        reset();
+        pause_physical_write = !stopping;
+        stop_physical_write = stopping;
+        push(2500);
+        tick(PLAYBACK_QUEUE);
+        assert(!pipeline.playback_fault && !audio_errors);
+        finish();
+    }
+    tests++;
+}
+
 int main(void) {
+    test_physical_playback_fault_recovers_at_session_end();
+    test_physical_playback_fault_recovery_retries();
+    test_physical_write_interrupted_by_pause_or_stop();
     test_disconnected_quiesce_clears_device_pcm();
     test_usb_pipeline_zero_reference_and_unity_gain();
     test_usb_start_failures_and_retained_worker();

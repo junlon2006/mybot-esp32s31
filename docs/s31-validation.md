@@ -832,3 +832,15 @@ including 502/503/504 malformed/empty responses. Lifecycle tests pass 36 groups,
 durable unknown results and blocked duplicate starts after reboot. Formatting and whitespace
 checks pass. The Chinese incremental build and final S31 checks pass in build/korvo-s31.
 No device was flashed; gateway failure injection remains a host result.
+
+## Review fix 04: recover physical playback faults
+
+The physical pipeline now reports and latches hard playback faults. Session cleanup
+stop/starts the backend and only clears the latch after success; a failed recovery
+blocks a new cloud start. The common error callback closes routing through cancellation
+without dereferencing a concurrently retiring USB pipeline. Intentional pause/stop
+interruptions do not latch faults. Media tests pass 17 cases with AEC on/off; control/UI
+and face tests cover idle failures, cleanup and subsequent successful playback. Both
+codec lifecycle suites pass. Formatting/SPDX, whitespace, Chinese incremental build
+and final S31 checks pass. No device was flashed; physical fault recovery still needs
+device fault injection to establish its hardware behavior.
