@@ -113,8 +113,10 @@ performs `479-y`; this does not alter the pinned BSP references or managed CST92
 
 ## Mosaico composite USB transport
 
-Production Mosaico now uses the existing `espressif/esp_tinyusb` 2.4.0 and TinyUSB 0.19.0~3
-with `usb_device_uac` 1.3.1 in AS_PART mode. Project-owned descriptors/configuration combine
+Production Mosaico uses the existing `espressif/esp_tinyusb` 2.4.0 and TinyUSB 0.19.0~3
+with `usb_device_uac` 1.3.1 in AS_PART mode. The UAC manifest belongs to the nested
+`boards/esp-mosaico-v1.2/mybot_mosaico_usb` component, registered only by that profile;
+Korvo does not discover or compile UAC. Project-owned descriptors/configuration combine
 one duplex UAC2 function and one CDC function. The production wrapper reuses the diagnostic's
 hash-checked generated DWC2 compilation copy and scoped ISR shim; the UAC singleton is placed
 in internal RAM because production enables PSRAM. Vendor sources remain unchanged.

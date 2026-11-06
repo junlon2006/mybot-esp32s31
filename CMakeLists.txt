@@ -70,6 +70,7 @@ list(APPEND EXTRA_COMPONENT_DIRS
     "${MYBOT_STACK_ROOT}/mybot_sdk"
     "${MYBOT_STACK_ROOT}/aosl"
     "${MYBOT_STACK_ROOT}/agora_rtc"
+    ${MYBOT_BOARD_EXTRA_COMPONENT_DIRS}
 )
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)

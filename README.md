@@ -72,7 +72,7 @@ idf.py --preview -B build/korvo-s31 \
   -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;ci/ptime60.defaults" build
 ```
 
-CI builds language variants in isolated jobs. The [release guide](docs/RELEASING.md) describes
+CI builds both Mosaico and Korvo language variants in isolated jobs. The [release guide](docs/RELEASING.md) describes
 the packaging builder and delivery checks; local development uses the direct command above.
 The direct flash command and board-specific hardware details are in the
 [board guide](docs/esp-mosaico-v1.2.zh-CN.md).

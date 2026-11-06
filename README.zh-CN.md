@@ -63,7 +63,7 @@ idf.py --preview -B build/korvo-s31 \
   -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;ci/ptime60.defaults" build
 ```
 
-CI 在独立 job 中构建语言变体。[交付文档](docs/RELEASING.zh-CN.md)说明打包 builder 和交付校验；
+CI 在独立 job 中构建 Mosaico／Korvo 的中英文变体。[交付文档](docs/RELEASING.zh-CN.md)说明打包 builder 和交付校验；
 本地开发使用上面的直接构建命令。直接烧录命令和板级硬件信息见
 [板卡说明](docs/esp-mosaico-v1.2.zh-CN.md)。
 

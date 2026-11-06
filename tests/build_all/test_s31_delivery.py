@@ -9,6 +9,7 @@ import contextlib
 import io
 import json
 from pathlib import Path
+import re
 import shlex
 import sys
 import tempfile
@@ -326,6 +327,31 @@ class S31DeliveryTests(unittest.TestCase):
 
 
 class WorkflowDeliveryTests(unittest.TestCase):
+    def test_ci_builds_both_boards_and_languages_with_isolated_outputs(self) -> None:
+        workflow = (ROOT / ".github/workflows/ci.yml").read_text()
+        build_job = workflow.split("  idf-build:", 1)[1]
+        matrix = build_job.split("      matrix:\n", 1)[1].split("    steps:\n", 1)[0]
+        entries = re.findall(
+            r"- board: (\S+)\n\s+language: (\S+)\n\s+defaults: ([^\n]+)", matrix
+        )
+        expected = {
+            (board, language, "ci/ptime60.defaults" +
+             (";ci/en-us.defaults" if language == "en-US" else ""))
+            for board in ("esp-mosaico-v1.2", "esp32-s31-korvo-1")
+            for language in ("zh-CN", "en-US")
+        }
+        self.assertEqual(set(entries), expected)
+        self.assertEqual(len(entries), len(expected))
+        self.assertIn('BUILD_DIR: build/ci-${{ matrix.board }}-${{ matrix.language }}', build_job)
+        self.assertIn('-DMYBOT_BOARD="${{ matrix.board }}"', build_job)
+        self.assertIn('-DSDKCONFIG="$BUILD_DIR/sdkconfig"', build_job)
+        self.assertIn('mybot-${{ matrix.board }}-${{ matrix.language }}-ptime60-no-video-', build_job)
+        descriptor_step = build_job.split(
+            "      - name: Verify composite descriptors against pinned USB headers\n", 1
+        )[1].split("      - name:", 1)[0]
+        self.assertIn("        if: matrix.board == 'esp-mosaico-v1.2'\n", descriptor_step)
+        self.assertIn("run: sh tests/mosaico_usb/run_descriptors.sh", descriptor_step)
+
     def test_ci_merge_output_is_absolute_and_uploads_only_delivery_files(self) -> None:
         workflow = (ROOT / ".github/workflows/ci.yml").read_text()
         self.assertIn('merged="$GITHUB_WORKSPACE/releases/', workflow)
@@ -334,7 +360,7 @@ class WorkflowDeliveryTests(unittest.TestCase):
         self.assertIn('scripts/check_s31_build.py --build-dir "$BUILD_DIR"', workflow)
         upload = workflow.split("      - name: Upload firmware", 1)[1]
         for suffix in (".bin", ".manifest.json", ".sha256", ".flash.txt"):
-            self.assertIn('${{ matrix.language }}' + suffix, upload)
+            self.assertIn('releases/${{ matrix.board }}-${{ matrix.language }}' + suffix, upload)
         self.assertNotIn(".map", upload)
         self.assertNotIn(".tgz", upload)
         self.assertNotIn("vendor", upload)

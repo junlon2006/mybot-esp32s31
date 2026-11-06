@@ -792,3 +792,20 @@ audio quality and endurance remain separate validation items.
 The user requested PSRAM wherever practical; audited task stacks and large task buffers follow
 that policy while required internal-memory objects retain their placement. The global external
 BSS option remains disabled, avoiding an unrelated relocation of Wi-Fi/lwIP static storage.
+
+
+## Review fix 01: isolate Mosaico UAC from Korvo
+
+UAC's manifest now belongs to the nested mybot_mosaico_usb component, registered only
+for Mosaico before IDF dependency discovery. The global main manifest no longer downloads
+UAC for Korvo. CI builds both boards in both languages, with distinct output names and
+Mosaico-only descriptor tests. The focused workflow/delivery suite passes 21 cases.
+
+Fresh Korvo Chinese and restored Mosaico Chinese builds both pass in the same local
+build/korvo-s31 directory, with final S31 ABI/AOSL/RTSA/flash checks. Korvo's compilation
+graph has no UAC component/source; Mosaico contains the board wrapper and composite UAC,
+without standalone UAC descriptors. The original Mosaico build was preserved and restored;
+no device was flashed. Pinned-header descriptor tests pass. Remote CI remains pending.
+
+- Korvo application: 3541936 bytes, SHA-256 `44438cde7b2b620cd6851756b87f02f5d94edd6f5ac1fd2357911581e413ea3f`.
+- Mosaico application: 3654352 bytes, SHA-256 `25715672b5bf35cfd61930e375423d1c2ab08fbd51d42983896ae639ae8868e7`.
