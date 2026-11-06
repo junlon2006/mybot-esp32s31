@@ -2,7 +2,7 @@
 
 [English](esp32-s31-korvo-1.en.md) · [简体中文](esp32-s31-korvo-1.zh-CN.md)
 
-Board ID 为 `esp32-s31-korvo-1`，基于 ESP-IDF v6.1 的 preview S31 target。当前应用为板载 MIC → 云端 Bot → 板载喇叭的单向听译，包含 Wi-Fi/网页配网、HTTPS/配对、RTC/RTM、ES8389 并行采播、ADC 按键和 RGB/GT1151 界面。视频不在当前移植范围。
+Board ID 为 `esp32-s31-korvo-1`，基于 ESP-IDF v6.1 的 preview S31 target。当前应用为板载 MIC → 云端 Bot → 板载喇叭的媒体听译和面对面双向翻译，包含 Wi-Fi/网页配网、HTTPS/配对、RTC/RTM、ES8389 并行采播、ADC 按键和 RGB/GT1151 界面。视频不在当前移植范围。
 
 ## 编译和烧录
 
@@ -17,7 +17,10 @@ idf.py --preview -B build/korvo-s31 \
 idf.py --preview -B build/korvo-s31 -p PORT flash monitor
 ```
 
-开发直接运行 `idf.py`。板载 USB-UART 用于烧录和 UART0 日志（TX58/RX59），独立供电 USB 口只供电。英文构建使用独立目录/sdkconfig，并在 defaults 末尾追加 `;ci/en-us.defaults`。修改 defaults 后应重新配置并检查 sdkconfig；旧配置不会自动被默认值覆盖。
+开发直接运行 `idf.py`。J1 Type-C USB-UART 用于烧录和 UART0 日志（TX58/RX59），J5 Type-C 只供电；J2 Type-A 接原生 USB2 OTG，原厂按 Host 向外供电。可选的[CDC 诊断](USB_CDC_PROBE.zh-CN.md)只验证软件枚举和 Bulk 回显，不控制或证明 J2 供电安全。所有本地构建使用 `build/korvo-s31` 及其现有 sdkconfig，CI 的语言任务使用独立目录。修改 defaults 后应重新配置并检查 sdkconfig；旧配置不会自动被默认值覆盖。
+
+另有默认关闭的 [USB Host 枚举探针](USB_HOST_PROBE.zh-CN.md)，用直连安卓手机等外设
+验证 J2 的 Host 通信。该诊断与 CDC 互斥，本次启动只运行 USB 和串口日志，不启动翻译业务。
 
 提示音由 ffmpeg 在构建目录从 Ogg 转为 16 kHz mono S16LE，固件无需 S3 Opus 解码库。交付镜像与校验文件见[交付说明](RELEASING.zh-CN.md)。`idf.py flash` 日常烧录保留 NVS；合并镜像写入 **0x0**，覆盖 NVS 所在间隙，之后需重新配网。
 
@@ -35,7 +38,7 @@ idf.py --preview -B build/korvo-s31 -p PORT flash monitor
 | VOL+/VOL- | 调整音量并保存 |
 | 首次未配置 Wi-Fi | 自动进入网页配网并显示入口/播放提示 |
 
-等待 Wi-Fi 与配对完成后，从首页进入媒体翻译，选择输入语言与目标语言并开始。面对面、会议互译目前提供设置预览，亮度仍为演示；媒体实时字幕、全文与本次历史接收同一会话的 RTM 原文和译文。只有实际控件触摸会触发业务，空白区域不会启停；显示回调只将命令按值复制入队，不执行阻塞的 HTTPS/RTC 操作。清理或未知结果会阻止新会话；设备端 MIC 与播放参考继续沿用云 AEC 配对上行。开发服务为 `https://mybot.sh3t.agoralab.co/api`，需绑定开启译音的 V2VT Bot。完整界面说明见[翻译界面](PLATFORM_UI.zh-CN.md)，配置与烧录见[独立听译](LISTEN_TRANSLATION.zh-CN.md)。
+等待 Wi-Fi 与配对完成后，从首页进入媒体翻译，选择输入语言与目标语言并开始。面对面选择“我的语言/对方语言”后开始，点击语言按钮开启或切换发言方向；两路 RTC 共用一次 RTM 订阅，实时字幕、全文与本次历史按 Agent 区分方向。会议互译提供设置预览，亮度仍为演示。只有实际控件触摸会触发业务，空白区域不会启停；显示回调只将命令按值复制入队，不执行阻塞的 HTTPS/RTC 操作。清理或未知结果会阻止新会话；设备端 MIC 与播放参考继续沿用云 AEC 配对上行。开发服务为 `https://mybot.sh3t.agoralab.co/api`，需绑定 V2VT Bot；听方向允许仅字幕，说方向要求译音。完整界面说明见[翻译界面](PLATFORM_UI.zh-CN.md)，配置与烧录见[独立听译](LISTEN_TRANSLATION.zh-CN.md)。
 
 原有基础音频互通与显示有用户实机确认；当前同传路由、云 AEC、语言操作与恢复仍需本轮实机测试，不能沿用普通对话的验收结论。
 
@@ -56,7 +59,7 @@ idf.py --preview -B build/korvo-s31 -p PORT flash monitor
 
 按官方文档要求使用 TDM，未照搬固定 factory BSP 的标准 stereo I2S 初始化。ES8389 `use_mclk=false`、`no_dac_ref=false`，适配器检查 STDM 寄存器，播放映射时隙、采集选定麦克风时隙。名义 BCLK 为 1.024 MHz、WS 为 16 kHz，未声称经仪器测量。
 
-基础音频互通通过不代表双麦/参考时隙归属、量化音质或长稳已验收；本地 AEC/波束成形/唤醒、视频、SD/USB 应用和低功耗均未移植。媒体翻译沿用板载 MIC 与扬声器路径，新界面与本地暂停需要各自的实机验收。
+基础音频互通通过不代表双麦/参考时隙归属、量化音质或长稳已验收；本地 AEC/波束成形/唤醒、视频、SD/USB 音频应用和低功耗均未移植。原生 USB CDC 仅有默认关闭的链路诊断。媒体翻译沿用板载 MIC 与扬声器路径，新界面与本地暂停需要各自的实机验收。
 
 ## 开启对话正文日志
 

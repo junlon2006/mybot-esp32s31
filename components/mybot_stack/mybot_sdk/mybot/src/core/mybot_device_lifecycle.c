@@ -15,6 +15,7 @@
 #define PENDING_SESSION_KEY "tr_session"
 #define LANGUAGE_KEY "tr_languages"
 #define RECORD_VERSION 1U
+#define PENDING_RECORD_VERSION 2U
 #define PENDING_UNKNOWN 1U
 #define PENDING_KNOWN 2U
 #define PAIR_RETRY_INITIAL_TICKS 30
@@ -39,7 +40,19 @@ typedef struct {
     char conversation_id[MYBOT_DEVICE_CLIENT_MAX_ID];
     char reason[32];
     int64_t expires_at;
-} pending_session_record_t;
+} pending_session_v1_record_t;
+
+/* Version 2 stores only the five terminated strings that are actually used.
+ * A replacement NVS blob must fit alongside the previous journal until commit. */
+typedef struct {
+    uint32_t version;
+    uint32_t phase;
+    int64_t expires_at;
+} pending_session_header_t;
+
+_Static_assert(sizeof(pending_session_header_t) == 16, "Pending journal header must be 16 bytes");
+_Static_assert(sizeof(pending_session_v1_record_t) == 1456,
+               "The version 1 journal must remain readable");
 
 typedef struct {
     uint32_t version;
@@ -195,62 +208,132 @@ static void clear_auth(mybot_device_lifecycle_t *lifecycle) {
 }
 
 static int save_pending(mybot_device_lifecycle_t *lifecycle) {
-    pending_session_record_t *record = aosl_hal_malloc(sizeof(*record));
-    if (!record)
+    const char *fields[] = {lifecycle->pending_server_base, lifecycle->pending_device_id,
+                            lifecycle->pending_credential, lifecycle->conversation_id,
+                            lifecycle->stop_reason};
+    const size_t capacities[] = {
+        sizeof(lifecycle->pending_server_base), sizeof(lifecycle->pending_device_id),
+        sizeof(lifecycle->pending_credential), sizeof(lifecycle->conversation_id),
+        sizeof(lifecycle->stop_reason)};
+    size_t lengths[5];
+    size_t length = sizeof(pending_session_header_t);
+    for (size_t i = 0; i < 5; ++i) {
+        const char *end = memchr(fields[i], '\0', capacities[i]);
+        if (!end || (end == fields[i] && (i != 3 || !lifecycle->pending_unknown))) {
+            AOSL_LOG_ERR("event=translation_storage action=save key=%s field=%zu result=invalid",
+                         PENDING_SESSION_KEY, i);
+            return -1;
+        }
+        lengths[i] = (size_t)(end - fields[i]) + 1;
+        length += lengths[i];
+    }
+    if (length > sizeof(pending_session_v1_record_t))
         return -1;
-    memset(record, 0, sizeof(*record));
-    record->version = RECORD_VERSION;
-    record->phase = lifecycle->pending_unknown ? PENDING_UNKNOWN : PENDING_KNOWN;
-    memcpy(record->server_base, lifecycle->pending_server_base, sizeof(record->server_base));
-    memcpy(record->device_id, lifecycle->pending_device_id, sizeof(record->device_id));
-    memcpy(record->credential, lifecycle->pending_credential, sizeof(record->credential));
-    memcpy(record->conversation_id, lifecycle->conversation_id, sizeof(record->conversation_id));
-    memcpy(record->reason, lifecycle->stop_reason, sizeof(record->reason));
-    record->expires_at = lifecycle->expires_at;
-    int result =
-        mybot_kv_store_set(lifecycle->kv_store, PENDING_SESSION_KEY, record, sizeof(*record));
+    unsigned char *record = aosl_hal_malloc(length);
+    if (!record) {
+        AOSL_LOG_ERR("event=translation_storage action=allocate key=%s bytes=%zu phase=%s "
+                     "result=error",
+                     PENDING_SESSION_KEY, length, lifecycle->pending_unknown ? "unknown" : "known");
+        return -1;
+    }
+    const pending_session_header_t header = {
+        .version = PENDING_RECORD_VERSION,
+        .phase = lifecycle->pending_unknown ? PENDING_UNKNOWN : PENDING_KNOWN,
+        .expires_at = lifecycle->expires_at,
+    };
+    memcpy(record, &header, sizeof(header));
+    size_t offset = sizeof(header);
+    for (size_t i = 0; i < 5; ++i) {
+        memcpy(record + offset, fields[i], lengths[i]);
+        offset += lengths[i];
+    }
+    int result = mybot_kv_store_set(lifecycle->kv_store, PENDING_SESSION_KEY, record, length);
     aosl_hal_free(record);
     if (result == 0)
         lifecycle->journal_present = true;
+    else
+        AOSL_LOG_ERR("event=translation_storage action=save key=%s bytes=%zu phase=%s result=%d",
+                     PENDING_SESSION_KEY, length, lifecycle->pending_unknown ? "unknown" : "known",
+                     result);
     return result;
 }
 
 /* Never discard a malformed/unreadable journal: it might own a live cloud session. */
 static int load_pending(mybot_device_lifecycle_t *lifecycle) {
-    pending_session_record_t *record = aosl_hal_malloc(sizeof(*record));
+    pending_session_v1_record_t *record = aosl_hal_malloc(sizeof(*record));
     if (!record)
         return -1;
     size_t length = 0;
-    memset(record, 0, sizeof(*record));
     int result = mybot_kv_store_get(lifecycle->kv_store, PENDING_SESSION_KEY, record,
                                     sizeof(*record), &length);
     if (result == MYBOT_ERR_NOT_FOUND) {
         aosl_hal_free(record);
         return 0;
     }
-    bool valid = result == 0 && length == sizeof(*record) && record->version == RECORD_VERSION &&
-                 (record->phase == PENDING_UNKNOWN || record->phase == PENDING_KNOWN) &&
-                 string_valid(record->server_base, sizeof(record->server_base), true) &&
-                 string_valid(record->device_id, sizeof(record->device_id), true) &&
-                 string_valid(record->credential, sizeof(record->credential), true) &&
-                 string_valid(record->conversation_id, sizeof(record->conversation_id),
-                              record->phase == PENDING_KNOWN) &&
-                 string_valid(record->reason, sizeof(record->reason), true);
-    if (!valid) {
-        aosl_hal_free(record);
-        return -1;
+    if (result != 0 || length < sizeof(uint32_t) || length > sizeof(*record))
+        goto invalid;
+
+    const char *fields[5];
+    char *outputs[] = {lifecycle->pending_server_base, lifecycle->pending_device_id,
+                       lifecycle->pending_credential, lifecycle->conversation_id,
+                       lifecycle->stop_reason};
+    const size_t capacities[] = {
+        sizeof(lifecycle->pending_server_base), sizeof(lifecycle->pending_device_id),
+        sizeof(lifecycle->pending_credential), sizeof(lifecycle->conversation_id),
+        sizeof(lifecycle->stop_reason)};
+    uint32_t version;
+    uint32_t phase;
+    int64_t expires_at;
+    memcpy(&version, record, sizeof(version));
+    if (version == RECORD_VERSION && length == sizeof(*record)) {
+        phase = record->phase;
+        expires_at = record->expires_at;
+        fields[0] = record->server_base;
+        fields[1] = record->device_id;
+        fields[2] = record->credential;
+        fields[3] = record->conversation_id;
+        fields[4] = record->reason;
+    } else if (version == PENDING_RECORD_VERSION && length >= sizeof(pending_session_header_t)) {
+        pending_session_header_t header;
+        memcpy(&header, record, sizeof(header));
+        phase = header.phase;
+        expires_at = header.expires_at;
+        const char *cursor = (const char *)record + sizeof(header);
+        const char *limit = (const char *)record + length;
+        for (size_t i = 0; i < 5; ++i) {
+            size_t remaining = (size_t)(limit - cursor);
+            size_t available = remaining < capacities[i] ? remaining : capacities[i];
+            const char *end = memchr(cursor, '\0', available);
+            if (!end)
+                goto invalid;
+            fields[i] = cursor;
+            cursor = end + 1;
+        }
+        if (cursor != limit)
+            goto invalid;
+    } else {
+        goto invalid;
     }
-    memcpy(lifecycle->pending_server_base, record->server_base, sizeof(record->server_base));
-    memcpy(lifecycle->pending_device_id, record->device_id, sizeof(record->device_id));
-    memcpy(lifecycle->pending_credential, record->credential, sizeof(record->credential));
-    memcpy(lifecycle->conversation_id, record->conversation_id, sizeof(record->conversation_id));
-    memcpy(lifecycle->stop_reason, record->reason, sizeof(record->reason));
-    lifecycle->expires_at = record->expires_at;
-    lifecycle->pending_unknown = record->phase == PENDING_UNKNOWN;
+    if (phase != PENDING_UNKNOWN && phase != PENDING_KNOWN)
+        goto invalid;
+    for (size_t i = 0; i < 5; ++i)
+        if (!string_valid(fields[i], capacities[i], i != 3 || phase == PENDING_KNOWN))
+            goto invalid;
+    /* Only publish the decoded identity after every field and the full length
+     * have been checked. Keep the original credential even after a rebind. */
+    for (size_t i = 0; i < 5; ++i) {
+        memset(outputs[i], 0, capacities[i]);
+        memcpy(outputs[i], fields[i], strlen(fields[i]) + 1);
+    }
+    lifecycle->expires_at = expires_at;
+    lifecycle->pending_unknown = phase == PENDING_UNKNOWN;
     lifecycle->journal_present = true;
     lifecycle->cleanup_needed = true;
     aosl_hal_free(record);
     return 1;
+invalid:
+    aosl_hal_free(record);
+    return -1;
 }
 
 static int clear_pending(mybot_device_lifecycle_t *lifecycle) {
@@ -382,6 +465,7 @@ static void start_session(mybot_device_lifecycle_t *lifecycle) {
     mybot_device_service_request_t *request = new_request(lifecycle, MYBOT_DEVICE_SERVICE_START);
     if (!request)
         return;
+    request->payload.start.mode = lifecycle->mode;
     memcpy(request->payload.start.source_language, lifecycle->source_language,
            sizeof(request->payload.start.source_language));
     memcpy(request->payload.start.target_language, lifecycle->target_language,
@@ -861,10 +945,12 @@ static bool ui_language_supported(const char *language) {
 int mybot_device_lifecycle_set_languages(mybot_device_lifecycle_t *lifecycle, const char *source,
                                          const char *target) {
     if (!lifecycle || aosl_atomic_read(&lifecycle->shutting_down) || lifecycle->storage_fault ||
-        lifecycle->journal_present || lifecycle->conversation_requested ||
-        lifecycle->start_pending || lifecycle->stop_pending || lifecycle->pairing_requested ||
-        state(lifecycle) != MYBOT_DEVICE_STATE_RUNTIME || !ui_language_supported(source) ||
-        !ui_language_supported(target) || strcmp(source, target) == 0)
+        lifecycle->cleanup_needed || lifecycle->pending_unknown || lifecycle->conversation_id[0] ||
+        lifecycle->local_media_active || lifecycle->journal_present ||
+        lifecycle->conversation_requested || lifecycle->start_pending || lifecycle->stop_pending ||
+        lifecycle->pairing_requested || state(lifecycle) != MYBOT_DEVICE_STATE_RUNTIME ||
+        !ui_language_supported(source) || !ui_language_supported(target) ||
+        strcmp(source, target) == 0)
         return -1;
     if (strcmp(source, lifecycle->source_language) == 0 &&
         strcmp(target, lifecycle->target_language) == 0)
@@ -880,6 +966,23 @@ int mybot_device_lifecycle_set_languages(mybot_device_lifecycle_t *lifecycle, co
     }
     memcpy(lifecycle->source_language, record.source, sizeof(record.source));
     memcpy(lifecycle->target_language, record.target, sizeof(record.target));
+    lifecycle->error_code[0] = '\0';
+    configuration_changed(lifecycle);
+    return 0;
+}
+
+int mybot_device_lifecycle_set_mode(mybot_device_lifecycle_t *lifecycle,
+                                    mybot_translation_mode_t mode) {
+    if (!lifecycle || aosl_atomic_read(&lifecycle->shutting_down) || lifecycle->storage_fault ||
+        lifecycle->cleanup_needed || lifecycle->pending_unknown || lifecycle->conversation_id[0] ||
+        lifecycle->local_media_active || lifecycle->journal_present ||
+        lifecycle->conversation_requested || lifecycle->start_pending || lifecycle->stop_pending ||
+        lifecycle->pairing_requested || state(lifecycle) != MYBOT_DEVICE_STATE_RUNTIME ||
+        (mode != MYBOT_TRANSLATION_LISTEN && mode != MYBOT_TRANSLATION_LISTEN_SPEAK))
+        return -1;
+    if (lifecycle->mode == mode)
+        return 0;
+    lifecycle->mode = mode;
     lifecycle->error_code[0] = '\0';
     configuration_changed(lifecycle);
     return 0;

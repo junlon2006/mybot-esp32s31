@@ -1,6 +1,6 @@
 # S31 validation record
 
-The latest local checks are under [RTM translation captions](#2026-11-04-rtm-translation-captions). Earlier sections describe the revision tested at that time. Use the manifests and checksums beside delivered images for their current binary identity.
+The current development target is ESP-Mosaico CoreBoard V1.2. The latest checks are under [Caption stripe comparison](#2026-11-05-caption-stripe-comparison). Earlier sections describe the revision tested at that time. Use the manifests and checksums beside delivered images for their current binary identity.
 
 This records local build/host validation and separately attributed hardware feedback. Basic bidirectional audio passed the user's real-board interoperability test. The user subsequently confirmed normal screen display. Detailed TDM channel/reference mapping, quantitative audio quality, the new touch behavior, power sequencing and long-duration stability are not established by those reports.
 
@@ -244,3 +244,272 @@ Merged image: `esp32-s31-listen-zh-CN.bin`, 2572064 bytes, SHA-256 `8c287ca15037
 - Direct ESP-IDF v6.1 preview Chinese `build`, `size`, absolute-path `merge-bin` and delivery checks passed in `build/korvo-s31`, preserving its existing sdkconfig. The checker verified RISC-V ELF, local AOSL ownership, unchanged pinned RTSA fingerprints, disabled video and all four flash segments. Chinese-to-English defaults, 60 ms audio, cloud AEC and disabled AI QoS remain configured. The application is 3,521,888 bytes, with 15% partition headroom reported by IDF.
 - Merged image: `build/korvo-s31/mybot_esp32s31-merged.bin`, 3,652,960 bytes, SHA-256 `052e5fb4ed005688c35de3510b89b0a4297c4febe2634c8c73935a6f94989bbe`. Adjacent manifest, checksum and flash instructions identify this build. Use segmented `idf.py --preview -B build/korvo-s31 -p PORT flash monitor` to retain NVS settings.
 - The agent did not flash a device or run remote CI. The user subsequently reported that this caption firmware passed testing. This is user-reported acceptance, separate from the local host/build results above; no detailed caption trace, per-page results, endurance or resource measurements were supplied.
+
+## 2026-11-04 face-to-face translation
+
+- Implemented the user-approved two-RTC/one-RTM design. Media requests `listen`; face-to-face requests `listen_speak`, with the stored left/right language pair interpreted as my/other languages. The client normalizes returned routes by direction, checks a shared App ID/channel, four distinct identities, direction languages, publisher roles and expiry. A listen route may be captions-only; speak requires translated audio. Mode is held in memory and defaults to media after SDK restart. No new persistent record was introduced.
+- Each parent session owns one RTSA service and forwarding queue. Face-to-face joins two RTC connections with their own returned accounts/tokens; only the listen account logs into RTM and subscribes to the common channel once. Both trusted Agent publishers feed the caption inbox. Audio becomes ready only after all RTC joins and required publisher subscriptions succeed. Connection/publisher readiness and reconnect use a 15-second deadline checked by the existing RTC queue; a missing route or required Agent failure closes all audio and triggers the existing parent cleanup.
+- Face-to-face starts with microphone content closed until a language button selects listen or speak. The sender consumes one physical capture/reference frame, sends real MIC only to the selected route, and gives the other route silent MIC with the same playback reference. Both preserve 16 kHz mono S16, G.722 and 60 ms cloud-AEC framing. Idle-route silence is not claimed to override the cloud Agent's idle timeout. The extra frame scratch is PSRAM-allocated on first face-to-face use and reclaimed only after media destruction succeeds.
+- Direction changes use the existing pause/worker fences to discard local capture, send and playback buffers before resuming. A separate bounded control gate covers remote PCM route admission, so a producer admitted for the previous direction cannot publish through the switch. The speaker accepts only the selected direction. Pause/resume or gate failure leaves an explicit retryable direction error; stop admission cancels the operation. No server-side TTS cancellation or text-final-to-playback-end inference is assumed.
+- Captions use `(direction, stream_id, turn_id)` within one shared 64-entry history. Live follows the selected direction's latest retained sentence; late captions from the other Agent retain their own direction. Full text and history show language direction, and stop retains history. The UI waits for SDK mode/direction readback; a small selection completion counter distinguishes a repeated failure from unrelated volume/caption updates. Meeting remains a preview.
+- All 16 workflow host suites passed with native Apple Clang 17 and GNU GCC/g++ 13.4. Native Clang also enabled UBSan for the display/input/UI runners; GNU used the original CI flags and LLVM UBSan bridge described above. Coverage includes 399/391 client checks with feature switches, 31 lifecycle scenarios, 48 RTC scenarios, 387 caption-model checks, 7 result-mailbox and 13 UI/control scenarios, 9 caption-routing cases/223 checks, and 10 face-to-face routing/fence/fault cases in each cloud-AEC configuration. Existing volume, audio, pause, HTTP, clock and PCM regressions passed.
+- All 52 Python 3.11 builder/delivery tests passed with zero skips. Full clang-format 18.1.8/SPDX scopes, workflow shell syntax, local documentation links and whitespace checks passed. The UI fonts were regenerated from the same pinned Noto Sans SC input: 319 glyphs per size, including 224 non-ASCII characters. Twelve actual LVGL CPU-framebuffer states were reviewed, including both speech directions, pending selection, pause, full text, history and completion. These previews are host renders.
+- Direct ESP-IDF v6.1 preview Chinese build, size, merge and delivery checks passed in `build/korvo-s31`, preserving its existing sdkconfig. RISC-V ELF, local AOSL ownership, pinned RTSA fingerprints, video disabled and four merged flash segments were verified. Chinese UI, the Chinese/English default pair, cloud AEC, 60 ms audio and disabled AI QoS remain configured. The application is 3,533,008 bytes, with 14% partition headroom reported by IDF.
+- Merged image: `build/korvo-s31/mybot_esp32s31-merged.bin`, 3,664,080 bytes, SHA-256 `3d839b82a229d8e34a4e3751278a63c2170419c312d441432068583bb42a4ad6`. Adjacent delivery metadata identifies this build. Segmented `idf.py --preview -B build/korvo-s31 -p PORT flash monitor` preserves NVS settings.
+- The agent did not flash a device or run remote CI. The user subsequently reported that this face-to-face firmware passed testing. This is user-reported acceptance, separate from the host/build checks above; no detailed per-scenario trace, echo/reference timing, idle-direction lifetime or sustained resource measurements were supplied. The supplied RTSA library/header and external reference sources remain unchanged.
+
+## 2026-11-04 native USB CDC probe
+
+- Added the opt-in `MYBOT_USB_CDC_PROBE` diagnostic to the existing Chinese firmware. It starts a native CDC echo interface before network setup and preserves the UART0 console and translation application. Its product is `MyBot S31 USB Probe`, with one CDC interface and no audio, storage, HID or network class. The default production configuration leaves the diagnostic disabled.
+- Pinned managed `esp_tinyusb 2.4.0` and `tinyusb 0.19.0~3`, both explicitly supporting S31, through the application manifest and IDF-generated lock. The wrapper selects S31's HS-capable port 0 and UTMI PHY, with internal DMA buffers and its built-in FS/HS/qualifier descriptors. Managed sources and the pinned RTSA/AOSL/codec inputs were not edited. Dependency provenance and notices were updated.
+- A single application worker owns a 512-byte pending buffer and all CDC I/O. Partial/zero writes preserve the remaining suffix and apply backpressure; nonblocking flush never causes already-queued bytes to be resent. Callbacks only update short link state and notify the worker. Mount/DTR/detach generations discard stale application pending data, while suspend/resume preserves a pending transfer. FIFO clearing does not retract in-flight endpoint or host data. Failure cleanup stops the USB task before releasing CDC callback state; incomplete teardown retains ownership and prevents another startup attempt during that boot.
+- The macOS checker validates the complete USB identity and native CDC path before opening it, rejecting CP2102N/UART even with an explicit port. Two rounds test 134,544 bytes with random data, control characters, packet boundaries and 64 KiB challenges. Reads and single-attempt nonblocking OS writes are interleaved under one total deadline; corruption, missing or extra bytes fail the check. `--list` only reads enumeration metadata.
+- All 17 workflow host suites passed locally. The new C suite passed 20 scenarios/1,352 checks on Clang UBSan and GNU GCC 13 UBSan; the new standard-library Python suite passed 17 cases, and all 52 Python 3.11 build/delivery tests passed with zero skips. Full clang-format 18.1.8/SPDX scopes, workflow shell syntax and whitespace checks passed. These tests mock USB/OS boundaries rather than establishing a real data connection.
+- Both diagnostic-on and production-off Chinese configurations built successfully with direct ESP-IDF v6.1 preview in `build/korvo-s31`. The official `kconfserver` temporarily disabled the diagnostic and all USB classes, then restored the saved diagnostic configuration; unrelated settings were preserved. Production-off application size remains 3,533,008 bytes. The final directory is diagnostic-on: 3,566,896 application bytes, with 14% partition headroom reported by IDF. Chinese UI, cloud AEC, disabled AI QoS and 60 ms audio remain configured.
+- The final merge/delivery checker verified RISC-V ELF, local AOSL ownership, unchanged RTSA fingerprints, video off and four flash segments. Image: `build/korvo-s31/mybot_esp32s31-merged.bin`, 3,697,968 bytes, SHA-256 `189d1dd32276b562b7362580de18646297e9597cddbf1e01110d7e2ab241a5ea`. Eleven pre-probe configuration/firmware files remain in `build/korvo-s31/before-usb-probe`; their backup hashes were verified for rollback.
+- Before flashing this diagnostic, read-only macOS inspection found the existing CP2102N bridge and `/dev/cu.usbserial-14410`, with no matching native probe or S31 audio device. The checker `--list` also found no matching probe. No physical port was opened by the checker, no board was flashed and no remote CI was run in this update.
+- The user confirms an unmodified factory board. Its J2 host VBUS is hardwired on; this firmware has neither board power control nor host VBUS monitoring. An apparently uneventful direct cable connection or a future CDC pass does not establish electrical safety, reliable physical-detach detection, UAC isochronous audio or meeting translation. See [probe operation and rollback](USB_CDC_PROBE.zh-CN.md).
+- The user subsequently flashed the diagnostic through the CP2102N bridge; the supplied log reports verified application data, TinyUSB installed on port 0, and normal display/network/audio startup. For roughly 70 seconds it reports `mounted=0`, no mount events and zero application RX/TX bytes. The user confirms a normal A-to-C cable directly from board J2 to a Mac USB-C port. Read-only Mac inspection and the checker also find no Probe device. Enumeration and CDC transfer have therefore not passed; the log does not identify whether any USB reset/control requests occurred. The cable's initial Type-C role assignment and the board's host VBUS wiring need to be resolved before treating this topology as a valid device test connection. No raw device identity, network identifiers or credentials from the log are retained here.
+
+## 2026-11-04 USB enumeration diagnostics
+
+- A second user-provided log after changing the connection still reports no configuration/mount or application data over approximately 21 seconds. The CP2102N path changed to `/dev/cu.usbserial-1430`; read-only Mac enumeration still finds no native Probe. This verifies continued software startup but does not establish the host role, electrical continuity or the stage at which enumeration stops.
+- Source inspection confirmed S31 port 0/UTMI mapping, automatic Device connect during TinyUSB initialization, and separate native OTG pads from LCD GPIO33/34. No corresponding initialization fix was established. The original `mounted` counter only observes completed configuration; it cannot distinguish absent host traffic from an earlier control-transfer failure. TinyUSB's interrupt allocation return is also not propagated through driver installation, so installation success alone does not establish IRQ allocation.
+- Added `diag=2`: the public TinyUSB event hook counts bus-reset, SETUP, transfer-complete and unplug events using the appropriate ISR/task critical section. The ISR performs no logging, allocation, FIFO access or task notification. Existing worker logs also query stack initialization/connection/configuration state.
+- Added project-local, read-only S31 PHY/controller snapshots and one public IDF interrupt allocation dump at startup. Snapshots cover clocks, actual mode, force-mode bits, soft disconnect, device address, internal session flags, frame/line state, clock gating and interrupt masks. They avoid FIFO/pop and interrupt-status registers and perform no register writes. Disabled clocks cause controller reads to be skipped. Internal session-valid and reset speed values are explicitly not treated as connector voltage or negotiated speed measurements.
+- USB host regression passed 23 scenarios/1,578 checks on Clang UBSan and GNU GCC 13 UBSan, including ISR side-effect restrictions, event routing, counter wrap, and one-time interrupt diagnostics. Changed C sources/mocks passed clang-format 18.1.8 and SPDX checks; whitespace checks passed. The real S31 snapshot code compiled against the installed IDF headers; host tests do not emulate its registers.
+- Chinese ESP-IDF v6.1 preview build/size/merge and delivery checks passed in `build/korvo-s31`, retaining the enabled probe, Chinese UI, disabled AI QoS, cloud AEC and 60 ms audio. RISC-V/local-AOSL/pinned-RTSA/no-video/four-segment checks passed. App size: 3,570,272 bytes; IDF reports 14% partition headroom. Merged image: 3,701,344 bytes, SHA-256 `22263ba0d3e176ae72b8e2f6940c93618783248728a1758e134c147bf2fbe63d`, at the same `build/korvo-s31/mybot_esp32s31-merged.bin` path.
+- The agent did not flash this revision, open the UART/CDC data ports, or alter the board's power connection. Enumeration remains unverified. The second diagnostic is intended to collect the missing evidence before choosing a firmware fix or attributing failure to a cable or PHY.
+- The user subsequently supplied diag=2 output: the controller reports Device mode, enabled clocks, cleared soft-disconnect and an allocated USB_OTGHS interrupt, with address/frame and TinyUSB event counters remaining zero. Unplugging only J2 changed the reported line state from 3 to 1 and suspend status from 0 to 1. This establishes a register-level response to connection changes, not successful enumeration or a physical voltage measurement. TinyUSB's reset event is reported at enumeration completion rather than every raw USBRST assertion. The exact factory example at esp-dev-kits `5c06bf1835329d6525f316475f7218aab6acfe79` uses HID Host with default PHY initialization; it provides a Host comparison, not a Device-mode fix.
+
+## 2026-11-04 USB Host phone enumeration probe
+
+- The user has an Android phone and A-to-C data cable but no wired mouse or USB flash drive; a bus-powered portable disk would add a power-load variable. Added a default-off `MYBOT_USB_HOST_PROBE`, mutually exclusive with CDC, using the pinned official `espressif/usb 1.6.0`. Its single CPU0 worker runs the default PHY/Host initialization and services library/client events, printing cached VID/PID, speed and device/configuration descriptors. It claims no interfaces and installs no storage, MTP, ADB or audio class driver. Phone charging can still affect power demand.
+- This diagnostic boot returns before NVS, Wi-Fi, display, audio and translation startup. Startup acceptance and actual USB readiness have distinct logs. Hotplug errors do not abort; close/initialization cleanup retries are bounded, and failed teardown retains resources until reboot. Managed and pinned vendor inputs remain unmodified.
+- Focused tests passed 19 scenarios/1,135 checks on Clang and GCC13 UBSan; inherited CDC tests passed 23 scenarios/1,578 checks. The source format/SPDX workflow and shell syntax checks completed successfully. These are software checks, not phone or board acceptance.
+- The initial Chinese diagnostic build and size check passed using ESP-IDF v6.1 preview in `build/korvo-s31` and its sdkconfig. Application: 239,328 bytes, SHA-256 `189f31a22484b08cda40ea2e6988c93314ba49605da757c28f8f7799390662b9`. RISC-V, local AOSL, pinned RTSA, video-off and four flash segments were checked. USB control transfer size is 1,024 bytes; existing Chinese, AEC, disabled AI QoS and 60 ms settings are preserved although business startup is skipped.
+- The user then requested rapid diagnostic iterations without broad validation. Additional English/repeated-Chinese builds were interrupted; they are not claimed as passing. The earlier successful Chinese application and its ELF remain the test artifacts, and the saved configuration is restored to Chinese Host mode. The merged image and adjacent metadata were regenerated from the existing flash segments without compiling again. Direct esptool flashing in [the test instructions](USB_HOST_PROBE.zh-CN.md) avoids a rebuild and preserves NVS.
+- Fourteen CDC diag=2 firmware/configuration files were backed up under `build/korvo-s31/before-usb-host-probe/` with recorded hashes; the original tested translation backup remains under `before-usb-probe/`. No device was flashed and no phone enumeration result is available yet. This Host comparison cannot establish Mac-to-S31 Device or USB audio operation.
+- The user subsequently flashed the simple Host probe and supplied a successful Android-phone trace matching ELF hash prefix `0c5426da9`. The Host became ready at 872 ms, opened address 1 at 6,662 ms, reported a valid VID/PID and `speed=high`, and completed device/configuration descriptor reporting at 6,749 ms without a reported error. The configuration exposes one `ff/42/01` interface with 512-byte Bulk IN/OUT endpoints. This confirms real High-Speed Host enumeration/control traffic through J2 and the tested connection; it does not measure Bulk throughput, sustained power margin, Device mode or USB audio. The descriptor's 500 mA value is declared power demand, not a current measurement. No additional firmware build or broad test run was performed for this log assessment.
+
+## 2026-11-04 isolated CDC Device comparison
+
+- At the user's request for the next quick test, CDC startup now logs `event=usb_probe_boot scope=cdc_only` and returns before NVS, network, display, audio and translation initialization. The existing TinyUSB/PHY, descriptors, task configuration and diag=2 event counters are unchanged, so the comparison isolates application concurrency. Successful Host enumeration does not resolve the Mac Host role or J2's fixed VBUS wiring.
+- The passed Host test segments, configuration and hashes are preserved in `build/korvo-s31/usb-host-probe-passed/`. The official kconfserver selected CDC and disabled Host in the existing Chinese sdkconfig. One direct ESP-IDF v6.1 preview build passed in `build/korvo-s31`; no extra language build or full test suite was run. The changed C file passed formatting and the working tree passed whitespace checks. Existing-image checks confirmed the new boot marker, RISC-V/local-AOSL/pinned-RTSA/no-video and four flash segments; merged delivery metadata was refreshed without another compilation.
+- Application: 231,920 bytes, SHA-256 `a70b3a6e449f8302e10af0f1bdc491d7573d33d142fc182371d0296ac0b2e268`; ELF SHA-256 prefix `adb332c93`. Merged image: 362,992 bytes, SHA-256 `023fa9b1134b4b2b0fe65afd39838438ecfc07f3e2d4a0d4c3fafaa5c024cdd1`. Direct esptool segmented flashing avoids recompilation and preserves NVS. No board was flashed by the agent; isolated Device enumeration remains pending.
+- The user subsequently supplied verified segmented flashing and an approximately 56-second trace of this exact ELF with `scope=cdc_only`. The probe continues logging; Device mode, clocks, soft-connect and USB_OTGHS interrupt allocation are present. Reported line state changes from 1 to 3 around 26 seconds, while address/frame, configuration state and TinyUSB reset/SETUP/transfer counts remain zero. Read-only Mac enumeration and the identity checker also find no native CDC probe. The failure therefore reproduces without application business startup; TinyUSB Device correctness and raw physical-reset reception remain unproven. Further comparison needs a confirmed Mac Host connection with J2's fixed VBUS output appropriately isolated. No additional firmware change or build was made for this assessment.
+
+## 2026-11-05 Mosaico V1.2 minimum USB audio test
+
+- The user confirmed a separate ESP-Mosaico CoreBoard V1.2. Read-only macOS inspection found its existing `mosaico` device at USB High-Speed, VID 303a/PID 4011, with UAC2 and a two-channel 48 kHz output device; no Mosaico input device was exposed. No playback or recording was performed during that inspection.
+- Added the isolated `MYBOT_MOSAICO_UAC_TEST` build selector and `diagnostics/mosaico_uac`, using IDF 6.1, the immutable codec 1.5.9 ES8311 driver, TinyUSB 0.19.0~3 and official UAC 1.3.1. It is not a full MyBot board port. The app initializes V1.2 power/I2C and full-duplex I2S at 48 kHz/S16/stereo. Mono microphone samples are duplicated into USB stereo; USB stereo playback is mixed to the single speaker. No display, Wi-Fi, camera, NVS, filesystem, OTA or NAND application path runs.
+- USB uses S31's UTMI High-Speed port 0 with one TinyUSB instance. A project-only forced include corrects ISR notifications/critical sections in the pinned UAC component and substitutes nominal sample-rate feedback. A four-block playback queue decouples I2S writes from USB callbacks. Software mute/volume and bounded error/drop counters support the short test. Long-term clock compensation and lossless operation are not claimed; the upstream single-slot handoff remains a limitation.
+- The minimal build passed after adapting the codec API to the pinned version. Output remains in `build/korvo-s31`: `mosaico_uac_test.bin`, 272,576 bytes, SHA-256 `c73efdeadb6b763318500c72588711fc3b84461610ebec43e1d28b25892d8fbe`. RISC-V ELF and three flash segments at 0x2000/0x8000/0x10000 were checked. The whole application partition ends at 1 MiB; there are no data partitions. Changed-source formatting, whitespace and the flash helper's image-only checks passed. No broad host suite or extra language build was run.
+- The prior Korvo CDC build/config remains under `build/korvo-s31/before-mosaico-uac/`. The new flash helper requires manual native-ROM mode, checks the test identity/write range, backs up the first 1 MiB of original NOR before writing, and saves an exact restore command. That prefix is sufficient only because this diagnostic has no writes outside its covered window; it is not a full-device/NAND backup. The helper has not opened or flashed hardware in this update. Mac input/output enumeration and actual simultaneous recording/playback remain pending. See [operation and rollback](../diagnostics/mosaico_uac/README.zh-CN.md).
+- The user chose direct `idf.py flash` and subsequently reported not finding the expected sound-device name. Read-only macOS inspection now finds USB product `Mosaico UAC Test`, and CoreAudio exposes `usb uac` (manufacturer MyBot) with two input and two output channels at 48 kHz. That device is already the default output; the default input remains the built-in MacBook microphone. The generic name comes from the pinned UAC interface string, so instructions now distinguish it from the USB product name. Bidirectional audio-device enumeration has passed; actual playback, microphone capture and simultaneous audio have not yet been reported. No firmware rebuild or audio recording/playback was performed for this diagnosis.
+- The user subsequently confirmed microphone capture in a voice-call app, but no speaker sound from either that app or local music/video. Mac inspection reports `usb uac` as the default output, output volume 100 and mute false; its streaming interfaces are open. This does not establish the device's received PCM level. The codec's initial volume 40 maps to -30 dB, while review found no definite PA/pin/BOTH-mode initialization error.
+- Found a concrete TinyUSB 0.19 receive defect: the linear audio OUT ISR returns before rearming when a zero-length packet makes `tu_fifo_write_n` return zero. The diagnostic now selects the supported DWC2 PIO FIFO path (ring=1, DMA=0, slave=1), which rearms before notifying the application. A small temporary harness using the actual preprocessed RX function passed 0/24/192-byte rearm cases and failed-rearm handling. It proves the selected control flow, not that this event caused the hardware symptom.
+- Added two short local startup tones before USB initialization, raised codec volume to 60 (-20 dB), and included USB mute/gain in UART status. A heard startup tone will distinguish the local codec/I2S/PA path from host playback. Incremental IDF 6.1 build and changed-source format/whitespace checks passed; no broad suite was run. The new app in the same directory is 276,864 bytes, SHA-256 `36e5408afe001808980d27d41476114e5b441c6af839eea7aef2a58bb13bc487`. Previous app retained as `mosaico_uac_test-before-speaker-fix.bin`. The agent did not flash or play/record audio; speaker recovery still requires the user's retest.
+- The user heard the local startup tones, but reported very low volume and continued silence during music playback. This confirms audible local codec/I2S/PA output without establishing the USB playback path. At the user's request the codec volume is now 100 (nominal 0 dB); host mute and software volume remain effective.
+- Added a read-only endpoint-zero vendor status request, without another interface: it reports actual OUT packet/byte counts before upstream buffering, callback/raw PCM peak, queued/written audio, written peak, errors/drops and mute/gain. `read_status.py` uses the Mac's installed libusb without interface claim, detach, reset or configuration changes. A temporary harness using the actual callback passed request rejection, DATA/ACK buffer-lifetime and maximum-counter JSON checks (421 bytes, below the 512-byte bound) with Clang/UBSan. No device status query was attempted against the older firmware.
+- Incremental IDF 6.1 build and changed-source format/whitespace checks passed. Current app: 278,000 bytes, SHA-256 `c6b1a0deb75f5b173b793c01de7788c43298dc8f60c5c4d32ec42b75507a3329`, at the same `build/korvo-s31/mosaico_uac_test.bin`. This update adds observability; the music-silence root cause is not yet established. No automatic flashing, playback, recording or full regression run was performed.
+- The user supplied two status samples with OUT fixed at 512 packets/12,288 bytes, callback bytes 12,264 and I2S-written bytes 11,520, while local capture grew. A read-only follow-up query reproduced the stalled OUT count. This is 64 ms of HS 48 kHz stereo S16 audio, with no write/drop errors and mute false; gain 10,362 represents about -10 dB software attenuation. Local capture is not evidence of successful USB IN completion.
+- Rechecked the user's V1.2 guide, schematic pages 4/5 and official BSP: power, PA, I2C and I2S assignments match. In particular Codec ASDOUT is MCU RX40 and Codec DSDIN is MCU TX52; the schematic's codec-view net names must not be used to reverse the MCU configuration. UTMI port0 and HUSB320 hardware DRP control are correct. No board wiring or audio pin change was justified.
+- S31's own `usb_otghs_struct.h` documents periodic IN `DIEPTSIZn.MC=01` for one packet per microframe. The pinned DWC2 driver left MC zero in normal scheduling and ISO IN retries. A diagnostic-only CMake adapter now checks the immutable input hash and compiles a generated copy setting MC=1 in both places, with at least one retry packet for ZLP. A temporary harness extracting actual functions passed 36 normal/retry/frame-parity cases; OUT and non-ISO register results were unchanged. Physical causality still requires a retest.
+- Added a narrow transfer wrapper to supply correct nominal HS feedback from the first packet, before the upstream late parameter callback, and to count real feedback/MIC USB completion events. Its temporary Clang/UBSan checks passed payload correction, unchanged other/FS transfers, result propagation and completion/error accounting. The final link map includes the generated driver and both wrappers. Status payload capacity is now 1,024 bytes. No managed input was hand-edited.
+- Incremental IDF 6.1 build and changed-source formatting/whitespace passed. Current app is 278,736 bytes, SHA-256 `95d2e5680a0079b93485b7656672bf1ce9a9929c4c903dd0ee1605afae4b41e2`; previous app is `mosaico_uac_test-before-iso-in-fix.bin`. No device flashing or audio playback/recording was performed by the agent, and continued playback after this correction is pending the user's hardware test.
+- Subsequent user status shows every feedback completion failing (`fb_bytes=0`, `fb_completed=fb_errors`), while actual USB microphone bytes grow from roughly 5.6 to 6.2 MB with only 36 fixed startup errors. OUT remains at 512 packets/12,288 bytes. A read-only query reproduced that behavior over a longer interval. This establishes a feedback-endpoint failure separately from working microphone IN traffic.
+- Identified another target-documented DWC2 configuration defect: S31 `DIEPTXF1_INEPNTXFDEP` requires at least 16 32-bit words, but the pinned allocator gives the four-byte feedback endpoint only one word. EP0 receives 16 words and the microphone receives 49, matching the affected-endpoint distinction. The generated diagnostic driver now clamps IN FIFO depth after optional doubling and before its capacity check; feedback descriptors and four-byte transfer size stay the same. Nine temporary host cases using the actual generated allocation function passed normal/half-empty sizes, unchanged OUT handling, and 15-word rejection/16-word acceptance. The original managed-source hash remains unchanged.
+- Incremental build and whitespace checks passed in the same directory. Current application: 278,752 bytes, SHA-256 `eea9fda589ddab6744ef0eb687a21f565f67cd55b8900601e4bc56285401d5c1`; prior image retained as `mosaico_uac_test-before-fifo-min.bin`. No device flashing or audio playback/recording was performed by the agent. Hardware confirmation should show feedback success bytes increasing, feedback errors no longer accumulating rapidly, and OUT continuing beyond its initial 512 packets.
+- The next user test still reports zero successful feedback bytes with every feedback completion failed; OUT is now fixed at 1,023 packets/24,552 bytes, while microphone USB bytes continue increasing. The FIFO correction therefore did not resolve the observed playback failure. These errors are DWC2 incomplete-ISO timeouts, which also occur if the host does not poll; they do not prove a packet was sent and rejected by the host.
+- Compared the pinned component's HS feedback `bInterval=1` (125 us) with the same-version TinyUSB canonical `uac2_speaker_fb` example, which uses HS 4 (1 ms) / FS 1. Historical public AppleUSBAudio UAC2 parsing converts feedback interval using `bInterval-1-3`; values below 4 can underflow. The current Mac uses newer `usbaudiod`, so this is evidence for a compatibility test, not proof of its internal behavior or a USB specification violation.
+- Added a project-local configuration-descriptor wrapper selecting HS feedback interval 4 and FS interval 1, including the opposite-speed descriptor. The remaining 254-byte descriptor is unchanged except the feedback interval and other-speed descriptor type. Temporary tests using the actual ELF descriptor and actual helper functions passed HS/FS/current/other-speed mapping, unchanged endpoint addresses/sizes and malformed-descriptor rejection with Clang UBSan. The link map confirms the USBD configuration request calls the wrapper. No additional controller parameters were changed in this iteration.
+- Incremental IDF 6.1 build and changed-source format/whitespace checks passed. Current app: 279,056 bytes, SHA-256 `c4127a53ef9b1817c0322dc51a48a4108380df3ed9a70938cdca67b637277959`, in `build/korvo-s31/mosaico_uac_test.bin`; prior image retained as `mosaico_uac_test-before-feedback-interval.bin`. USB status now includes `fb_interval`. Hardware confirmation remains pending; the agent did not flash or play/record audio.
+- The user subsequently confirmed audible device playback after this descriptor change. Three status samples show OUT increasing from 503,582 to 532,265 packets, I2S-written playback from 12,085,440 to 12,773,760 bytes, and actual USB microphone bytes from 12,096,764 to 12,785,180. Feedback success bytes grow from 251,796 to 266,140; feedback errors stay at 54 and microphone errors stay at 77. Playback/capture I/O errors, OUT errors, feedback-submit errors and playback queue drops remain zero. These observations establish successful short-run bidirectional USB audio on this Mac/Mosaico V1.2 connection and associate playback recovery with the HS feedback-interval change to 4. They do not prove the current macOS daemon uses the historical parser or establish long-term drift/quality/AEC behavior.
+- Codec volume is 100, mute is false, and USB gain remains 10,362 Q15 (about -10 dB); the effective host software attenuation is separate from codec maximum volume. The user-tested image and its flash segments/configuration are preserved, with hashes, in `build/korvo-s31/mosaico-uac-passed/`. No additional firmware changes or rebuild were made for this acceptance record.
+
+## 2026-11-05 Mosaico translation migration
+
+- The user changed the active objective from meeting integration to porting the two existing
+  translation modes to Mosaico V1.2. It is now the default `MYBOT_BOARD` and future design target.
+  Korvo remains an explicit profile. No meeting audio routing was added.
+- Added ES8311 standard stereo I2S at 16 kHz/MCLK256 with SDK mono conversion, shared audio
+  lifecycle, AI short/long press controls, CO5300 QSPI/CST9220 and a 480×480 LVGL layout.
+  Provisioning, binding, captions, language selection and both existing cloud modes are reused.
+- The passed standalone 48 kHz UAC image remains preserved in
+  `build/korvo-s31/mosaico-uac-passed/`, including its bootloader, partition table, sdkconfig and
+  flash arguments. Its279056-byte app SHA-256 is
+  `c4127a53ef9b1817c0322dc51a48a4108380df3ed9a70938cdca67b637277959`, rechecked after the build.
+- Direct `idf.py --preview -B build/korvo-s31 ... build` passed for Chinese on ESP-IDF 6.1.
+  The build uses `MYBOT_BOARD=esp-mosaico-v1.2`, `MYBOT_MOSAICO_UAC_TEST=OFF`, ES8311, Octal
+  PSRAM, 60 ms and the normal NVS/OTA partition layout. AI QoS, video and USB diagnostic boots
+  are off. Runtime USB is a CDC log console; the UAC component is absent.
+- Application: `mybot_esp32s31.bin`, 3581664 bytes (0x36a6e0), SHA-256
+  `a5712bff3e9dda3b3333d17dac29d79e9feee22ac5e0e529f0cb28e99dd61c01`.
+  The 0x3f0000 application partition has 13% space remaining. Four flash segments were verified;
+  ELF is RISC-V, RTSA inputs match the approved hashes, AOSL symbols come from the local
+  adapter, and exactly one MyBot/AOSL/RTSA component is present.
+- Host audio fault/lifecycle and input suites passed for both board backends. Mosaico display
+  adapter 18 lifecycle/failure cases passed normally and with UBSan. The shared UI suite passed
+  at 480×480 and 800×480, both UI languages and both input selectors. Geometry checks cover
+  containment, 44×44 minimum touch targets, overlap, language submission gating, captions and
+  scene transitions. A read-only audit measured 250 unique labels against the actual fonts
+  without finding static text-height overflow.
+- Builder/delivery tests: 55 cases on IDF Python 3.10, 50 passed and 5 Python 3.11+ safe-cleanup
+  cases skipped. Changed/new C/C++ files passed clang-format 18 and SPDX checks; whitespace
+  checks passed. CI now targets Mosaico language variants; no remote CI run is claimed.
+- Display transfer timeout stops further submissions and retains in-flight DMA storage; this
+  first port requires a device reboot to recover the display. ASan could not run under the
+  local toolchain (Illegal instruction before test diagnostics); it is not counted as passing.
+
+Hardware acceptance for this migration is pending: panel direction/colors, physical touch,
+16 kHz translation audio, Cloud AEC, Type-C CDC and repeated sessions need user flashing.
+The previously reported UAC microphone/speaker success is a separate hardware baseline.
+The build was not flashed by the agent, and no commit or push was made.
+
+## 2026-11-05 Mosaico touch and rounded display
+
+The user supplied a physical-device photo showing the Home page, connected Wi-Fi, clock
+and volume, with status text clipped by the screen corners, and reported that tapping the
+translation entry did nothing. This confirms that the new image boots and renders on this
+board; it does not establish working touch or translation audio.
+
+A read-only 15-second capture from the connected CDC console received repeated
+`cst9220: Malformed report header: first=0xab marker=0xab` approximately every 30 ms.
+The adapter had read an already-acknowledged HYN212 report on each LVGL poll, and each
+invalid report cancelled gesture recognition before a valid release could arm it.
+
+- Touch now uses active-low INT6 with an IRQ readiness latch and level fallback. No new
+  report returns the last contact sample; holding a finger does not synthesize release.
+  Errors cancel the gesture and remain invalid until a new valid report. Press/release
+  coordinates and out-of-range coordinates are logged for hardware verification.
+- GPIO readiness is sampled before the atomic pending exchange so an IRQ during level
+  sampling cannot trigger a duplicate read of the same acknowledged report.
+- Mosaico status text is inset 60 px, body controls 32 px, bottom controls avoid the rounded
+  corners, and the Home entry is single-line with less unused vertical space.
+- Existing UI tests pass with rounded 64 px-corner bounds, button sizing and overlap checks.
+  A temporary smoke test linked the production LVGL, view and fonts: a pointer press/release
+  at the actual Home button centre successfully entered scene selection.
+- Display 18-scenario lifecycle tests and new actual touch-adapter readiness/error/bounds/
+  teardown tests pass normally and with UBSan. Formatting, SPDX and whitespace checks pass.
+- Incremental Chinese build at `build/korvo-s31` passes. App size 3582224 bytes (0x36a910),
+  SHA-256 `4ff79d20eb74ca0d8cec8a8b5f320e638dca97511004d81e3f8bf58178e07d22`.
+  RISC-V/local-AOSL/RTSA fingerprints and all four flash segments pass the build checker.
+
+The new touch/corner fixes still require user flashing. No coordinate rotation or axis swap
+was guessed from the photo; the packet-read failure was directly observed on the device.
+
+## 2026-11-05 Mosaico touch Y direction
+
+The user confirmed the previous fix was flashed (single-line Home entry visible), but taps
+still did not operate the entry or volume. During their requested click/drag sequence, a
+read-only 45-second capture from `/dev/cu.usbmodemMOSAICO_V121` collected 41 press/release
+pairs, with zero malformed reports or adapter read errors. The prior readiness fix now
+produces valid gestures; it did not address the separate physical Y orientation.
+
+- Home occupies screen Y226–321. Reported taps Y174–215 map to Y264–305 under `479-y`.
+- Volume occupies screen Y376–419. Reported drag endpoints Y69–89 map to Y410–390.
+- Both independent controls support a Y mirror, with no X swap/rotation. Enabled the public
+  touch config `mirror_y` on the Mosaico adapter; the managed driver remains unchanged.
+- The actual common touch getter passes recorded-point/edge transforms with UBSan. Mapped
+  point (224,281) injected into actual LVGL/view/fonts enters the scene selector. Existing
+  18 display lifecycle scenarios and updated touch tests pass normally and with UBSan.
+- Chinese incremental build and final RISC-V/local-AOSL/RTSA/four-segment checks pass in
+  `build/korvo-s31`. Application size 3582224 bytes, SHA-256
+  `541a9b3d29427c99b1ab5f68cb5c1a06aa550cfcf36bccdb4f5259cd3cf8ca9c`.
+
+The agent read CDC without sending serial data, resetting or flashing; DTR/RTS were false.
+The runtime log port differs from the ROM download port. The new Y mapping remains pending
+user flashing/confirmation; this record does not claim completed physical interaction.
+
+## 2026-11-05 Mosaico session persistence diagnostics
+
+The user's device log confirms touch navigation and the media start action now reach the
+service. The service returned HTTP 201 and a valid Chinese-to-English listen route, then the
+local known-session journal save failed. The device correctly aborted local startup, ended
+the remote session with HTTP 200, and erased the pending journal. RTC and audio startup were
+not reached. The runtime latches STORAGE_ERROR until restart.
+
+The initial UNKNOWN journal was saved successfully before HTTP dispatch. The failing overwrite
+uses the same `tr_session` key and 1456-byte record. A static key/blob-length limit cannot
+explain this sequence. Capacity/fragmentation, flash write errors or allocation pressure remain
+unconfirmed because the old platform adapter discarded the NVS error code. No NVS erase,
+partition migration or journal-safety bypass was introduced.
+
+- KV failures now log exact API operation, key, byte count, error name and numeric code.
+  NVS used/free/available entries and internal/PSRAM free/largest-block figures are emitted
+  at open and on errors. Successful committed writes log key/size only. Stored values are
+  never included by this diagnostic.
+- Journal allocation failure is distinguished from platform save failure and identifies
+  UNKNOWN/KNOWN phase. The previous abort/cleanup behavior is preserved.
+- New platform KV fault tests pass normally and with UBSan, checking error propagation,
+  commit ordering, optional statistics failure, no write-failure erase/retry and no payload
+  logging. Existing 31 translation lifecycle fault scenarios pass with UBSan. Format/SPDX
+  and whitespace checks pass.
+- Chinese incremental build at `build/korvo-s31` passes: 3584416-byte application, SHA-256
+  `b17effa1a7c01583d157ce93547eb171e48bdc77bb482c40abf3b6d16ea4e814`.
+  RISC-V/local-AOSL/RTSA and four flash segments pass the final build checker.
+
+This is a diagnostic build; the underlying device storage failure has not yet been fixed
+or attributed to a specific NVS/heap error. User flashing and one further start attempt
+are required to collect that evidence.
+
+## 2026-11-05 Compact session journal
+
+The new user log establishes the storage failure: `nvs_set_blob(tr_session,1456)` returned
+`ESP_ERR_NVS_NOT_ENOUGH_SPACE (0x1105)`. At boot NVS had 311 used / 67 available entries;
+the UNKNOWN record succeeded and left 360 used / 18 available. The KNOWN overwrite failed
+twice, while internal free heap was about 190 KB and PSRAM about 16 MB. Cloud cleanup
+returned HTTP 200 and cleared the journal. The 16 KiB shared NVS and live retained records
+left too little space for both fixed-size journal copies during an atomic overwrite.
+
+- New journal writes use version 2: a 16-byte header (version, phase, expiry), followed by
+  five bounded NUL-terminated strings (server, device, credential, parent ID, stop reason).
+  Only actual bytes are stored. Authentication/language records keep their prior format.
+- Version 1 fixed-size records remain readable for cleanup after upgrade. Both formats
+  validate all fields before publishing the recovered identity; malformed/truncated/trailing
+  data is retained and blocks a new cloud start. Pre-dispatch persistence and post-start
+  cleanup ordering are preserved. No NVS/partition erase or migration is required.
+- The conservative copy-on-write entry model reproduces 49+49>67 for the old format and
+  verifies 23+23<=67 for 609/630-byte compact records using a 511-byte synthetic credential,
+  deployment-shaped endpoint/ID lengths and repeated start/stop. This models entry pressure;
+  it is not an NVS page/flash emulator.
+- All 35 lifecycle/fault scenarios pass with UBSan, including legacy recovery, compact
+  unknown/known roundtrips, malformed records and latched post-start write failure.
+  Formatting, SPDX and `git diff --check` pass.
+- Direct Chinese incremental build at `build/korvo-s31` and final RISC-V/local-AOSL/RTSA/
+  four-flash-segment checks pass. Application 3584784 bytes, SHA-256
+  `061e4e8af394c49a7ab114243e30c4526c6861a259f2b60c25556a6ac1d33ac7`.
+
+The compact format awaits user flashing and a successful hardware media start. Existing
+Wi-Fi, binding, language and volume data remain in their existing NVS locations.
+
+## 2026-11-05 Caption stripe comparison
+
+The user supplied a face-to-face screenshot with finalized English/Chinese captions and
+reported a light horizontal stripe through the English glyphs. It remains after at least
+five seconds without speech or interaction, so transient scan tearing alone does not
+explain the report. The exact device failure is not yet identified.
+
+Read-only checks reproduced the same text with production LVGL/fonts at 480×480: 8-row,
+40-row and full-frame software renders matched; long-to-short dirty updates and forced
+repaints differed by zero caption pixels. The real custom LVGL allocator with poisoned
+new/free memory also matched. UI has no line decoration; the IDF SPI path already performs
+TX cache synchronization. These checks cannot simulate S31 memory hardware or panel writes.
+
+A controlled hardware comparison changes only partial-buffer capacity from 8 to 40 full-width
+rows. SPI clock, panel initialization, TE setting, coordinates, font and translation remain
+the same. Internal DMA staging grows from 7680 to 38400 bytes; LVGL's separate PSRAM buffer
+grows equally. The initialization log now prints the actual row count. The previous app
+and hash are saved in `build/korvo-s31/display-partial8-baseline/`.
+
+- Display 18 lifecycle/fault scenarios plus touch tests pass with UBSan; flush checks cover
+  the whole staging payload. Format/SPDX/whitespace checks pass.
+- Direct Chinese build and final RISC-V/local-AOSL/RTSA/four-segment checks pass in the fixed
+  build directory. Application 3584800 bytes, SHA-256
+  `96d847876512f230087370668124bb6f2fd420b2b2d9323e34cbfffd9f7f358b`.
+
+The user subsequently flashed this version and confirmed that the horizontal stripe is gone
+and the display is normal. Retain 40 rows as the current Mosaico display baseline. This is
+user-reported hardware confirmation of the visible fix; it does not identify the exact
+controller-level cause or establish long-duration/audio performance.

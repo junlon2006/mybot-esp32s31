@@ -22,3 +22,8 @@ callback finishing before its deferred context is freed.
 
 These are host results. They do not establish actual ES8389 slot order, waveform,
 audio quality, microphone gain, PA sequencing, or concurrent hardware stability.
+
+The same suite also builds the Mosaico ES8311 backend. It verifies the 16 kHz
+stereo Philips/MCLK256 configuration, 0x19 codec address, RX slot-zero extraction,
+mono duplication and the same bounded lifecycle/failure ownership as Korvo.
+These host checks do not establish physical clock, slot, loudness or AEC quality.

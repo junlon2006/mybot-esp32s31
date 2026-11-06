@@ -1,0 +1,490 @@
+/* SPDX-License-Identifier: MIT */
+#include "host_platform.h"
+#include "display/lvgl_view.h"
+#include "input/mosaico_keys.h"
+#include "display/mosaico_panel.h"
+#include "display/mosaico_touch.h"
+
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <set>
+#include <string>
+#include <vector>
+
+#define CHECK(test)                                                                                \
+    do {                                                                                           \
+        if (!(test)) {                                                                             \
+            std::fprintf(stderr, "FAIL %s:%d: %s\n", __FILE__, __LINE__, #test);                   \
+            std::exit(1);                                                                          \
+        }                                                                                          \
+    } while (0)
+
+struct host_panel {
+    bool open = false;
+    bool initialized = false;
+    void *buffers[2]{};
+    io_callback_t callback = nullptr;
+    void *user = nullptr;
+} panel;
+struct host_io {
+    bool open = false;
+} io;
+struct host_touch {
+    bool open = false;
+} touch;
+struct host_display {
+    bool open = false;
+    bool refresh = false;
+    lv_display_flush_cb_t flush = nullptr;
+    uint8_t *buffer = nullptr;
+    void (*round)(lv_event_t *) = nullptr;
+} display;
+struct host_timer {
+    bool open = false;
+    lv_timer_cb_t callback = nullptr;
+} timer, input_timer;
+struct host_input {
+    bool open = false;
+    lv_indev_read_cb_t read = nullptr;
+} input;
+
+static bool port_open, port_locked, view_open, complete_frame = true;
+static bool report_touch;
+static unsigned ready_calls, frame_callbacks;
+static std::string failure, cleanup_failure;
+static std::set<void *> allocations;
+static std::vector<std::string> events;
+static mybot_lcd_content_t applied;
+static std::vector<std::pair<bool, bool>> touch_samples;
+
+static int step(const char *name) {
+    events.emplace_back(name);
+    if (failure == name) {
+        failure.clear();
+        return ESP_FAIL;
+    }
+    if (cleanup_failure == name) {
+        cleanup_failure.clear();
+        return ESP_FAIL;
+    }
+    return ESP_OK;
+}
+
+static void callback() {
+    CHECK(panel.open && panel.callback && panel.user);
+    ++frame_callbacks;
+    (void)panel.callback(&io, nullptr, panel.user);
+}
+
+extern "C" {
+void mybot_mosaico_keys_touch_sample(bool valid, bool pressed) {
+    CHECK(port_locked); // forwarding is non-blocking while the LVGL lock is owned
+    touch_samples.emplace_back(valid, pressed);
+}
+const char *esp_err_to_name(esp_err_t result) {
+    return result == ESP_OK ? "OK" : "FAIL";
+}
+void *heap_caps_aligned_calloc(size_t alignment, size_t count, size_t bytes, uint32_t caps) {
+    CHECK(alignment == 64 && caps == (MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    CHECK(count == 1 && bytes == 480 * MYBOT_MOSAICO_DRAW_ROWS * 2);
+    if (step("draw_buffer") != ESP_OK)
+        return nullptr;
+    void *result = nullptr;
+    CHECK(posix_memalign(&result, alignment, bytes) == 0);
+    std::memset(result, 0, bytes);
+    CHECK(allocations.insert(result).second);
+    return result;
+}
+void heap_caps_free(void *pointer) {
+    if (!pointer)
+        return;
+    CHECK(!panel.open && !display.open);
+    CHECK(allocations.erase(pointer) == 1);
+    std::free(pointer);
+}
+int mybot_mosaico_panel_open(mybot_mosaico_panel_t *owner) {
+    CHECK(!panel.open);
+    panel.open = true;
+    io.open = true;
+    owner->handle = &panel;
+    owner->io = &io;
+    owner->dma_buffer = std::calloc(480 * MYBOT_MOSAICO_DRAW_ROWS, 2);
+    owner->transfer_bytes = 480 * MYBOT_MOSAICO_DRAW_ROWS * 2;
+    CHECK(owner->dma_buffer);
+    panel.buffers[0] = owner->dma_buffer;
+    return step("panel_new");
+}
+int mybot_mosaico_panel_close(mybot_mosaico_panel_t *owner) {
+    CHECK(!display.open);
+    if (step("panel_del") != ESP_OK)
+        return -1;
+    std::free(owner->dma_buffer);
+    *owner = {};
+    panel = {};
+    io = {};
+    return 0;
+}
+esp_err_t esp_lcd_panel_draw_bitmap(esp_lcd_panel_handle_t handle, int x1, int y1, int x2, int y2,
+                                    const void *pixels) {
+    CHECK(handle == &panel && panel.open && display.open && port_locked);
+    CHECK(x1 == 0 && y1 == 0 && x2 == 480 && y2 == MYBOT_MOSAICO_DRAW_ROWS);
+    CHECK(pixels == panel.buffers[0] && pixels != display.buffer);
+    if (step("draw") != ESP_OK)
+        return ESP_FAIL;
+    for (size_t offset = 0; offset < (size_t)480 * MYBOT_MOSAICO_DRAW_ROWS * 2; offset += 2) {
+        CHECK(static_cast<const uint8_t *>(pixels)[offset] == display.buffer[offset + 1]);
+        CHECK(static_cast<const uint8_t *>(pixels)[offset + 1] == display.buffer[offset]);
+    }
+    if (complete_frame)
+        callback();
+    return ESP_OK;
+}
+esp_err_t esp_lcd_panel_io_register_event_callbacks(esp_lcd_panel_io_handle_t handle,
+                                                    const esp_lcd_panel_io_callbacks_t *callbacks,
+                                                    void *opaque) {
+    CHECK(handle == &io && panel.open && callbacks->on_color_trans_done);
+    panel.callback = callbacks->on_color_trans_done;
+    panel.user = opaque;
+    return step("register_callback");
+}
+int mybot_mosaico_touch_open(mybot_mosaico_touch_t *owner) {
+    CHECK(!touch.open);
+    touch.open = true;
+    owner->handle = &touch;
+    return step("touch_new");
+}
+int mybot_mosaico_touch_close(mybot_mosaico_touch_t *owner) {
+    CHECK(!input.open);
+    if (step("touch_del") != ESP_OK)
+        return -1;
+    touch = {};
+    *owner = {};
+    return 0;
+}
+int mybot_mosaico_touch_read(mybot_mosaico_touch_t *, uint16_t *x, uint16_t *y, bool *pressed) {
+    if (step("touch_read") != ESP_OK || step("touch_get") != ESP_OK)
+        return -1;
+    *x = 350;
+    *y = 200;
+    *pressed = report_touch;
+    return 0;
+}
+void *lv_event_get_param(lv_event_t *event) {
+    return event->param;
+}
+void lv_display_add_event_cb(lv_display_t *handle, void (*cb)(lv_event_t *), int event, void *) {
+    CHECK(handle == &display && event == LV_EVENT_INVALIDATE_AREA);
+    display.round = cb;
+}
+void lv_draw_sw_rgb565_swap(void *buffer, uint32_t pixels) {
+    auto *bytes = static_cast<uint8_t *>(buffer);
+    for (uint32_t i = 0; i < pixels; ++i)
+        std::swap(bytes[i * 2], bytes[i * 2 + 1]);
+}
+SemaphoreHandle_t xSemaphoreCreateMutexStatic(StaticSemaphore_t *storage) {
+    *storage = {true, false, 1};
+    return storage;
+}
+SemaphoreHandle_t xSemaphoreCreateBinaryStatic(StaticSemaphore_t *storage) {
+    *storage = {true, true, 0};
+    return storage;
+}
+int xSemaphoreTake(SemaphoreHandle_t semaphore, TickType_t ticks) {
+    CHECK(semaphore && semaphore->active && ticks != UINT32_MAX);
+    if (!semaphore->count)
+        return pdFALSE;
+    --semaphore->count;
+    return pdTRUE;
+}
+int xSemaphoreGive(SemaphoreHandle_t semaphore) {
+    CHECK(semaphore && semaphore->active);
+    semaphore->count = 1;
+    return pdTRUE;
+}
+int xSemaphoreGiveFromISR(SemaphoreHandle_t semaphore, BaseType_t *wake) {
+    *wake = pdFALSE;
+    return xSemaphoreGive(semaphore);
+}
+void vSemaphoreDelete(SemaphoreHandle_t semaphore) {
+    CHECK(semaphore && semaphore->active && !panel.open && !display.open);
+    semaphore->active = false;
+    events.emplace_back("sem_delete");
+}
+lv_display_t *lv_display_create(int width, int height) {
+    CHECK(width == 480 && height == 480 && !display.open && port_locked);
+    if (step("display_new") != ESP_OK)
+        return nullptr;
+    display.open = display.refresh = true;
+    return &display;
+}
+void lv_display_delete(lv_display_t *handle) {
+    CHECK(handle == &display && display.open && port_locked && !input.open && !view_open);
+    display = {};
+    events.emplace_back("display_delete");
+}
+void lv_display_delete_refr_timer(lv_display_t *handle) {
+    CHECK(handle == &display && display.open && port_locked);
+    display.refresh = false;
+}
+void lv_display_set_color_format(lv_display_t *handle, int format) {
+    CHECK(handle == &display && format == LV_COLOR_FORMAT_RGB565);
+}
+void lv_display_set_buffers(lv_display_t *handle, void *first, void *second, size_t bytes,
+                            int mode) {
+    CHECK(handle == &display && first != panel.buffers[0] && second == nullptr);
+    CHECK(bytes == 480 * MYBOT_MOSAICO_DRAW_ROWS * 2 && mode == LV_DISPLAY_RENDER_MODE_PARTIAL);
+    display.buffer = static_cast<uint8_t *>(first);
+}
+void lv_display_set_flush_cb(lv_display_t *handle, lv_display_flush_cb_t cb) {
+    CHECK(handle == &display);
+    display.flush = cb;
+}
+bool lv_display_flush_is_last(lv_display_t *handle) {
+    CHECK(handle == &display);
+    return true;
+}
+void lv_display_flush_ready(lv_display_t *handle) {
+    CHECK(handle == &display && display.open);
+    ++ready_calls;
+}
+lv_indev_t *lv_indev_create() {
+    CHECK(port_locked && !input.open);
+    if (step("input_new") != ESP_OK)
+        return nullptr;
+    input.open = input_timer.open = true;
+    return &input;
+}
+void lv_indev_reset(lv_indev_t *handle, void *object) {
+    CHECK(handle == &input && input.open && port_locked && !object);
+    events.emplace_back("input_reset");
+}
+void lv_indev_delete(lv_indev_t *handle) {
+    CHECK(handle == &input && input.open && port_locked);
+    input = {};
+    input_timer = {};
+}
+void lv_indev_set_type(lv_indev_t *handle, int type) {
+    CHECK(handle == &input && type == LV_INDEV_TYPE_POINTER);
+}
+void lv_indev_set_display(lv_indev_t *handle, lv_display_t *out) {
+    CHECK(handle == &input && out == &display);
+}
+void lv_indev_set_read_cb(lv_indev_t *handle, lv_indev_read_cb_t cb) {
+    CHECK(handle == &input);
+    input.read = cb;
+}
+lv_timer_t *lv_indev_get_read_timer(lv_indev_t *handle) {
+    CHECK(handle == &input);
+    return &input_timer;
+}
+lv_timer_t *lv_timer_create(lv_timer_cb_t cb, uint32_t period, void *) {
+    CHECK(period == 50 && !timer.open);
+    if (step("timer_new") != ESP_OK)
+        return nullptr;
+    timer.open = true;
+    timer.callback = cb;
+    return &timer;
+}
+void lv_timer_delete(lv_timer_t *handle) {
+    CHECK(handle == &timer && timer.open && port_locked);
+    timer = {};
+}
+void lv_timer_set_period(lv_timer_t *handle, uint32_t period) {
+    CHECK(handle == &input_timer && period == 30);
+}
+esp_err_t lvgl_port_init(const lvgl_port_cfg_t *config) {
+    CHECK(!port_open && config->task_affinity == 1 && config->task_priority == 1);
+    CHECK(config->task_stack == 7168 &&
+          config->task_stack_caps == (MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    port_open = true;
+    return step("port_init");
+}
+esp_err_t lvgl_port_deinit() {
+    CHECK(port_open && !port_locked && !display.open && !panel.open && !view_open);
+    if (step("port_deinit") != ESP_OK)
+        return ESP_FAIL;
+    port_open = false;
+    return ESP_OK;
+}
+bool lvgl_port_lock(uint32_t timeout) {
+    CHECK(port_open && !port_locked && timeout > 0);
+    if (step("port_lock") != ESP_OK)
+        return false;
+    port_locked = true;
+    return true;
+}
+void lvgl_port_unlock() {
+    CHECK(port_locked);
+    port_locked = false;
+}
+esp_err_t lvgl_port_task_wake(int event, void *) {
+    CHECK(event == LVGL_PORT_EVENT_USER && port_open);
+    return ESP_OK;
+}
+int mybot_lvgl_view_create_sized(lv_display_t *handle, int width, int height) {
+    CHECK(handle == &display && width == 480 && height == 480 && port_locked);
+    view_open = true;
+    return step("view_new");
+}
+void mybot_lvgl_view_update(const mybot_lcd_content_t *content) {
+    CHECK(view_open && port_locked);
+    applied = *content;
+}
+void mybot_lvgl_view_destroy() {
+    CHECK(port_locked);
+    view_open = false;
+}
+const mybot_lcd_ops_t *mybot_mosaico_lcd_ops();
+}
+
+static void clean() {
+    CHECK(!port_locked && !port_open && !panel.open && !display.open && !input.open);
+    CHECK(!touch.open && !io.open && !view_open && !timer.open && allocations.empty());
+}
+
+int main(int argc, char **argv) {
+    CHECK(argc == 2);
+    const std::string scenario = argv[1];
+    const mybot_lcd_ops_t *ops = mybot_mosaico_lcd_ops();
+    void *ctx = nullptr;
+    if (scenario == "normal" || scenario == "timeout" || scenario == "draw_error" ||
+        scenario == "stop_retry" || scenario == "touch_read" || scenario == "refcount" ||
+        scenario == "cleanup_touch" || scenario == "cleanup_port") {
+        CHECK(ops->init(&ctx) == 0 && ctx);
+        if (scenario == "normal" || scenario == "touch_read") {
+            mybot_lcd_content_t content{};
+            content.screen = MYBOT_LCD_SCREEN_PAIR_CODE;
+            std::strcpy(content.pair_code, "123456");
+            CHECK(ops->render(ctx, &content) == 0);
+            CHECK(lvgl_port_lock(100));
+            timer.callback(&timer);
+            CHECK(applied.screen == content.screen && !std::strcmp(applied.pair_code, "123456"));
+            std::strcpy(content.source_language, "en-US");
+            std::strcpy(content.target_language, "zh-CN");
+            std::strcpy(content.error_code, "stop_pending");
+            content.screen = MYBOT_LCD_SCREEN_CLEANUP_PENDING;
+            content.volume = 65;
+            content.paused = true;
+            content.translation_mode = MYBOT_TRANSLATION_LISTEN_SPEAK;
+            content.input_direction = MYBOT_TRANSLATION_DIRECTION_SPEAK;
+            content.selection_revision = 8;
+            content.caption_latest_listen_sequence = 4;
+            content.caption_latest_speak_sequence = 5;
+            content.caption_generation = 7;
+            content.caption_revision = 11;
+            content.caption_count = 4;
+            content.caption_first_sequence = 2;
+            content.caption_latest_sequence = 5;
+            lvgl_port_unlock();
+            CHECK(ops->render(ctx, &content) == 0);
+            CHECK(lvgl_port_lock(100));
+            timer.callback(&timer);
+            CHECK(applied.translation_mode == MYBOT_TRANSLATION_LISTEN_SPEAK &&
+                  applied.input_direction == MYBOT_TRANSLATION_DIRECTION_SPEAK &&
+                  applied.selection_revision == 8 && applied.caption_latest_listen_sequence == 4 &&
+                  applied.caption_latest_speak_sequence == 5);
+            CHECK(applied.caption_generation == 7 && applied.caption_revision == 11 &&
+                  applied.caption_count == 4 && applied.caption_first_sequence == 2 &&
+                  applied.caption_latest_sequence == 5);
+            CHECK(applied.volume == 65 && applied.paused &&
+                  !std::strcmp(applied.source_language, "en-US") &&
+                  !std::strcmp(applied.target_language, "zh-CN") &&
+                  !std::strcmp(applied.error_code, "stop_pending"));
+            lvgl_port_unlock();
+            std::memset(content.source_language, 'x', sizeof(content.source_language));
+            CHECK(ops->render(ctx, &content) < 0);
+            CHECK(lvgl_port_lock(100));
+            display.buffer[0] = 0x34;
+            display.buffer[1] = 0x12;
+            const lv_area_t area{0, 0, 479, MYBOT_MOSAICO_DRAW_ROWS - 1};
+            display.flush(&display, &area, display.buffer);
+            CHECK(display.buffer[0] == 0x34 &&
+                  display.buffer[1] == 0x12); // staging swap preserves the LVGL buffer
+            CHECK(frame_callbacks == 1 && ready_calls == 1);
+            lv_indev_data_t data{};
+            report_touch = true;
+            input.read(&input, &data);
+            CHECK(data.state == LV_INDEV_STATE_RELEASED); // require clean initial release
+            report_touch = false;
+            input.read(&input, &data);
+            report_touch = true;
+            input.read(&input, &data);
+            CHECK(data.state == LV_INDEV_STATE_PRESSED && data.point.x == 350 &&
+                  data.point.y == 200);
+            CHECK(touch_samples.back() == std::make_pair(true, true));
+            if (scenario == "touch_read") {
+                failure = "touch_read";
+                input.read(&input, &data);
+                CHECK(data.state == LV_INDEV_STATE_RELEASED);
+                CHECK(touch_samples.back() == std::make_pair(false, false));
+                input.read(&input, &data);
+                CHECK(data.state == LV_INDEV_STATE_RELEASED); // held finger after read error
+                CHECK(touch_samples.back() == std::make_pair(true, true));
+                report_touch = false;
+                input.read(&input, &data);
+                report_touch = true;
+                input.read(&input, &data);
+                CHECK(data.state == LV_INDEV_STATE_PRESSED);
+                failure = "touch_get";
+                input.read(&input, &data);
+                CHECK(data.state == LV_INDEV_STATE_RELEASED);
+                CHECK(touch_samples.back() == std::make_pair(false, false));
+            }
+            report_touch = false;
+            input.read(&input, &data);
+            CHECK(data.state == LV_INDEV_STATE_RELEASED);
+            CHECK(touch_samples.back() == std::make_pair(true, false));
+            lvgl_port_unlock();
+        } else if (scenario == "refcount") {
+            void *other = nullptr;
+            CHECK(ops->init(&other) == 0 && other == ctx);
+            ops->destroy(other);
+            CHECK(panel.open && display.open && allocations.size() == 1);
+        } else if (scenario == "timeout" || scenario == "draw_error" || scenario == "stop_retry") {
+            complete_frame = false;
+            if (scenario == "draw_error")
+                failure = "draw";
+
+            CHECK(lvgl_port_lock(100));
+            const lv_area_t area{0, 0, 479, MYBOT_MOSAICO_DRAW_ROWS - 1};
+            display.flush(&display, &area, display.buffer);
+            CHECK(!display.refresh && allocations.size() == 1 && display.open);
+            CHECK(panel.open && ready_calls == 1);
+            lv_area_t unaligned{7, 3, 476, 10};
+            lv_event_t event{&unaligned};
+            display.round(&event);
+            CHECK(unaligned.x1 == 4 && unaligned.x2 == 479 && unaligned.y1 == 3 &&
+                  unaligned.y2 == 10);
+            lvgl_port_unlock();
+            mybot_lcd_content_t content{};
+            CHECK(ops->render(ctx, &content) < 0);
+        } else if (scenario == "cleanup_touch") {
+            cleanup_failure = "touch_del";
+        } else if (scenario == "cleanup_port") {
+            cleanup_failure = "port_deinit";
+        }
+        if (scenario == "timeout" || scenario == "stop_retry") {
+            ops->destroy(ctx);
+            CHECK(panel.open && display.open && allocations.size() == 1);
+            void *other = nullptr;
+            CHECK(ops->init(&other) < 0 && other == nullptr);
+            callback(); // the old transfer finally completes, permitting cleanup
+            if (scenario == "stop_retry")
+                cleanup_failure = "panel_del";
+        }
+        ops->destroy(ctx);
+        CHECK(!touch_samples.empty() && touch_samples.back() == std::make_pair(false, false));
+        ops->destroy(ctx); // deferred close retry and idempotent release
+        clean();
+    } else {
+        failure = scenario;
+        CHECK(ops->init(&ctx) < 0 && !ctx);
+        clean();
+    }
+    // Every scenario must permit a complete fresh lifecycle afterwards.
+    CHECK(ops->init(&ctx) == 0 && ctx);
+    ops->destroy(ctx);
+    clean();
+    std::printf("PASS mosaico_display %s\n", argv[1]);
+}

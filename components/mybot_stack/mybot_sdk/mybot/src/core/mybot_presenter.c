@@ -49,11 +49,16 @@ void mybot_presenter_show_screen(mybot_presenter_t *presenter, mybot_lcd_screen_
     snprintf(content.error_code, sizeof(content.error_code), "%s", presenter->error_code);
     content.volume = presenter->volume;
     content.paused = presenter->paused && screen == MYBOT_LCD_SCREEN_IN_CONVERSATION;
+    content.translation_mode = presenter->translation_mode;
+    content.input_direction = presenter->input_direction;
+    content.selection_revision = presenter->selection_revision;
     content.caption_generation = presenter->captions.generation;
     content.caption_revision = presenter->captions.revision;
     content.caption_count = presenter->captions.count;
     content.caption_first_sequence = presenter->captions.first_sequence;
     content.caption_latest_sequence = presenter->captions.latest_sequence;
+    content.caption_latest_listen_sequence = presenter->captions.latest_listen_sequence;
+    content.caption_latest_speak_sequence = presenter->captions.latest_speak_sequence;
     if (mybot_lcd_show_content(&presenter->lcd, &content) < 0) {
         AOSL_LOG_WRN("failed to render translation screen %d", (int)screen);
     }

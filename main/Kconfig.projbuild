@@ -77,6 +77,33 @@ menu "mybot"
             statistics using a low-priority task. Adds scheduler accounting and
             serial logging overhead; intended for diagnostics only.
 
+    config MYBOT_USB_CDC_PROBE
+        bool "Enable native USB CDC loopback probe (diagnostic)"
+        default n
+        depends on IDF_TARGET_ESP32S31
+        select TINYUSB_CDC_ENABLED
+        select TINYUSB_SUSPEND_CALLBACK
+        select TINYUSB_RESUME_CALLBACK
+        help
+            Enumerate J2's native USB controller as a CDC device and echo raw
+            bytes for link verification. UART remains the log/flash console.
+            This diagnostic boot does not start NVS, network, display, audio
+            or translation. The probe tasks continue after app_main returns.
+            This does not implement USB audio or control J2's hardwired 5 V
+            VBUS output. Board/cable power and host-role requirements remain
+            independent of this firmware diagnostic.
+
+    config MYBOT_USB_HOST_PROBE
+        bool "Enable native USB Host enumeration probe (diagnostic only)"
+        default n
+        depends on IDF_TARGET_ESP32S31 && !MYBOT_USB_CDC_PROBE
+        help
+            Use J2 as USB Host to enumerate an attached device and print its
+            descriptors. This boot runs only the USB probe and UART logging;
+            translation, Wi-Fi, display and audio do not start. No storage,
+            MTP or ADB class driver is installed. Use a USB peripheral such
+            as an Android phone, not another computer, on J2.
+
     config MYBOT_ENABLE_VIDEO
         bool
         default n

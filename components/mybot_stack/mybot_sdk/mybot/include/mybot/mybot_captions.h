@@ -3,6 +3,7 @@
 #define MYBOT_CAPTIONS_H_
 
 #include <mybot/mybot_export.h>
+#include <mybot/mybot_translation.h>
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -16,6 +17,7 @@ extern "C" {
 
 typedef struct {
     uint32_t sequence;
+    mybot_translation_direction_t direction;
     char source_text[MYBOT_CAPTION_TEXT_CAPACITY];
     char target_text[MYBOT_CAPTION_TEXT_CAPACITY];
     bool source_final;
@@ -30,6 +32,8 @@ typedef struct {
     uint32_t count;
     uint32_t first_sequence;
     uint32_t latest_sequence;
+    uint32_t latest_listen_sequence;
+    uint32_t latest_speak_sequence;
 } mybot_caption_state_t;
 
 /**

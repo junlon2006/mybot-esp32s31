@@ -2,7 +2,7 @@
 
 [English](esp32-s31-korvo-1.en.md) · [简体中文](esp32-s31-korvo-1.zh-CN.md)
 
-Board ID: `esp32-s31-korvo-1`. Requires ESP-IDF v6.1 with the S31 preview target and ffmpeg. The approved ESP32-S31 RTSA v1.10.1 build 1366494 payload is bundled. The application provides standalone board MIC → cloud `v2vt/listen` translation → board speaker, with Wi-Fi provisioning, HTTPS pairing, RTC/RTM, PCM prompts, ADC keys and RGB/GT1151 LVGL. The development API is `https://mybot.sh3t.agoralab.co/api`. Video is unavailable. See [translation and flashing](LISTEN_TRANSLATION.zh-CN.md).
+Board ID: `esp32-s31-korvo-1`. Requires ESP-IDF v6.1 with the S31 preview target and ffmpeg. The approved ESP32-S31 RTSA v1.10.1 build 1366494 payload is bundled. The application provides standalone board MIC → cloud V2VT media/face-to-face translation → board speaker, with Wi-Fi provisioning, HTTPS pairing, RTC/RTM, PCM prompts, ADC keys and RGB/GT1151 LVGL. The development API is `https://mybot.sh3t.agoralab.co/api`. Video is unavailable. See [translation and flashing](LISTEN_TRANSLATION.zh-CN.md).
 
 ## Build and flash
 
@@ -10,14 +10,18 @@ Build directly with the bundled pinned RTSA dependency:
 
 ```sh
 . /path/to/esp-idf/export.sh
-idf.py --preview -B build/korvo-s31-en \
+idf.py --preview -B build/korvo-s31 \
   -DMYBOT_BOARD=esp32-s31-korvo-1 \
-  -DSDKCONFIG=build/korvo-s31-en/sdkconfig \
-  -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;ci/ptime60.defaults;ci/en-us.defaults" build
-idf.py --preview -B build/korvo-s31-en -p PORT flash monitor
+  -DSDKCONFIG=build/korvo-s31/sdkconfig \
+  -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;ci/ptime60.defaults" build
+idf.py --preview -B build/korvo-s31 -p PORT flash monitor
 ```
 
-Development uses `idf.py` directly. Use the onboard USB-UART bridge; the separate power connector carries no serial data. UART0 uses TX58/RX59. Chinese omits `ci/en-us.defaults` and uses a separate build directory/sdkconfig. Reconfigure and inspect generated configuration after changing defaults.
+Development uses `idf.py` directly. J1 Type-C is the USB-UART bridge (UART0 TX58/RX59); J5 Type-C supplies power only. J2 Type-A connects native USB2 OTG and supplies host VBUS on the factory board. The optional [CDC diagnostic](USB_CDC_PROBE.zh-CN.md) checks enumeration/bulk echo without controlling or validating that power connection. Local development builds Chinese firmware in `build/korvo-s31` with its existing sdkconfig. CI builds both languages in isolated job directories. Reconfigure and inspect generated configuration after changing defaults.
+
+The separate, default-off [USB Host probe](USB_HOST_PROBE.zh-CN.md) enumerates a directly connected
+peripheral such as an Android phone. It is mutually exclusive with CDC and runs only USB/UART logging,
+without starting translation during that diagnostic boot.
 
 ffmpeg converts tracked Ogg prompts to 16 kHz mono S16LE in the build directory. The firmware links no S3 Opus decoder. See [delivery](RELEASING.md) for merged images and metadata. Regular `idf.py flash` preserves NVS; a merged image at **0x0** overwrites the NVS gap and requires provisioning again.
 
@@ -34,7 +38,7 @@ ffmpeg converts tracked Ogg prompts to 16 kHz mono S16LE in the build directory.
 | VOL+/VOL- | Change and save volume |
 | First boot without Wi-Fi | Enter web provisioning with display/prompt guidance |
 
-After Wi-Fi and pairing, open Media translation from the home screen. Use the language and start/stop controls; empty screen taps have no action. Face-to-face and meeting modes provide settings previews; brightness remains a demo. Media captions, scrollable full text and session history receive original/translated RTM text from the current session. GUI callbacks enqueue copied commands and perform no blocking HTTPS/RTC work. Volume dragging commits only on valid release. Read errors, stale SDK epochs and invalid states discard gestures. See [the scene UI](PLATFORM_UI.md).
+After Wi-Fi and pairing, open Media translation from the home screen. Use the language and start/stop controls; empty screen taps have no action. Face-to-face starts one two-way session: choose a language button to open or switch the microphone direction. Two RTC connections share one RTM subscription, and captions/history retain their Agent-derived direction. Meeting remains a settings preview and brightness remains a demo. GUI callbacks enqueue copied commands and perform no blocking HTTPS/RTC work. Volume dragging commits only on valid release. Read errors, stale SDK epochs and invalid states discard gestures. See [the scene UI](PLATFORM_UI.md).
 
 The user confirmed normal physical-board screen output and basic bidirectional voice. The new scene UI, parameter controls and local pause/resume await hardware acceptance, including retained PLAY/SET behavior. See [validation](s31-validation.md).
 
@@ -44,7 +48,7 @@ The board has an ESP32-S31-WROOM-3, 16 MB Flash and 16 MB PSRAM. ES8389 and GT11
 
 Audio follows the official guide's TDM requirement: 16 kHz, four 16-bit slots, 64 BCLK/frame, BCLK3/WS4/TX5/RX6, PA7. The codec takes BCLK with `use_mclk=false` and `no_dac_ref=false`; the CPU outputs no MCLK. The adapter checks STDM registers, maps playback slots and selects a microphone slot. The public SDK contract remains 16 kHz mono signed-16 PCM and 60 ms frames. Nominal BCLK/WS are 1.024 MHz/16 kHz; these are configured values, not instrument measurements.
 
-The pinned factory BSP uses standard stereo I2S; this port follows the official TDM requirement. Basic voice interoperability does not establish detailed microphone/reference slot mapping, acoustic quality, translation behavior or endurance. Local AEC, beamforming, wake word, video, SD/USB application paths and low-power work remain outside this port. Media translation retains the board microphone/speaker path; route subscription, Cloud AEC, language controls, local pause and recovery need their own hardware acceptance.
+The pinned factory BSP uses standard stereo I2S; this port follows the official TDM requirement. Basic voice interoperability does not establish detailed microphone/reference slot mapping, acoustic quality, translation behavior or endurance. Local AEC, beamforming, wake word, video, SD/USB audio application paths and low-power work remain outside this port. Native USB CDC has an optional link diagnostic, disabled by default. Media translation retains the board microphone/speaker path; route subscription, Cloud AEC, language controls, local pause and recovery need their own hardware acceptance.
 
 ## Conversation-start diagnostics
 

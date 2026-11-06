@@ -18,6 +18,12 @@
 #if CONFIG_MYBOT_DEBUG_RESOURCE_MONITOR
 #include "resource_monitor.h"
 #endif
+#if CONFIG_MYBOT_USB_CDC_PROBE
+#include "usb_cdc_probe.h"
+#endif
+#if CONFIG_MYBOT_USB_HOST_PROBE
+#include "usb_host_probe.h"
+#endif
 
 #include <inttypes.h>
 #include <stdio.h>
@@ -155,6 +161,21 @@ void app_main(void) {
     ESP_LOGI(TAG, "mybot %s, Agora RTSA %s, ESP-IDF %s, build %s %s", mybot_version_string(),
              agora_rtc_get_version(), esp_get_idf_version(), app_description->date,
              app_description->time);
+
+#if CONFIG_MYBOT_USB_HOST_PROBE
+    esp_err_t host_result = mybot_usb_host_probe_start();
+    if (host_result != ESP_OK)
+        ESP_LOGE(TAG, "USB Host probe task failed: %s", esp_err_to_name(host_result));
+    return;
+#endif
+
+#if CONFIG_MYBOT_USB_CDC_PROBE
+    ESP_LOGI(TAG, "event=usb_probe_boot scope=cdc_only");
+    esp_err_t usb_result = mybot_usb_cdc_probe_start();
+    if (usb_result != ESP_OK)
+        ESP_LOGE(TAG, "USB probe initialization failed: %s", esp_err_to_name(usb_result));
+    return;
+#endif
 
     if (init_nvs() < 0) {
         ESP_LOGE(TAG, "NVS initialization failed");

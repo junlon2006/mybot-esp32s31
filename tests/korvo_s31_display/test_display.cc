@@ -400,6 +400,11 @@ int main(int argc, char **argv) {
             content.screen = MYBOT_LCD_SCREEN_CLEANUP_PENDING;
             content.volume = 65;
             content.paused = true;
+            content.translation_mode = MYBOT_TRANSLATION_LISTEN_SPEAK;
+            content.input_direction = MYBOT_TRANSLATION_DIRECTION_SPEAK;
+            content.selection_revision = 8;
+            content.caption_latest_listen_sequence = 4;
+            content.caption_latest_speak_sequence = 5;
             content.caption_generation = 7;
             content.caption_revision = 11;
             content.caption_count = 4;
@@ -409,6 +414,10 @@ int main(int argc, char **argv) {
             CHECK(ops->render(ctx, &content) == 0);
             CHECK(lvgl_port_lock(100));
             timer.callback(&timer);
+            CHECK(applied.translation_mode == MYBOT_TRANSLATION_LISTEN_SPEAK &&
+                  applied.input_direction == MYBOT_TRANSLATION_DIRECTION_SPEAK &&
+                  applied.selection_revision == 8 && applied.caption_latest_listen_sequence == 4 &&
+                  applied.caption_latest_speak_sequence == 5);
             CHECK(applied.caption_generation == 7 && applied.caption_revision == 11 &&
                   applied.caption_count == 4 && applied.caption_first_sequence == 2 &&
                   applied.caption_latest_sequence == 5);

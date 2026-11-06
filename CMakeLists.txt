@@ -1,6 +1,23 @@
 cmake_minimum_required(VERSION 3.16)
 
-set(MYBOT_BOARD "esp32-s31-korvo-1" CACHE STRING "mybot target board")
+option(MYBOT_MOSAICO_UAC_TEST "Build only the Mosaico V1.2 USB audio diagnostic" OFF)
+if(MYBOT_MOSAICO_UAC_TEST)
+    set(IDF_TARGET "esp32s31" CACHE STRING "ESP-IDF target")
+    set(PROJECT_VER "0.1.0-uac-test")
+    set(COMPONENT_DIRS
+        "$ENV{IDF_PATH}/components"
+        "${CMAKE_CURRENT_LIST_DIR}/components/esp_codec_dev"
+        "${CMAKE_CURRENT_LIST_DIR}/diagnostics/mosaico_uac")
+    set(COMPONENTS mosaico_uac)
+    set(SDKCONFIG_DEFAULTS "${CMAKE_CURRENT_LIST_DIR}/diagnostics/mosaico_uac/sdkconfig.defaults")
+    include($ENV{IDF_PATH}/tools/cmake/project.cmake)
+    idf_build_set_property(DEPENDENCIES_LOCK
+        "${CMAKE_CURRENT_LIST_DIR}/diagnostics/mosaico_uac/dependencies.lock")
+    project(mosaico_uac_test)
+    return()
+endif()
+
+set(MYBOT_BOARD "esp-mosaico-v1.2" CACHE STRING "mybot target board")
 include("${CMAKE_CURRENT_LIST_DIR}/components/mybot_platform/boards/boards.cmake")
 set_property(CACHE MYBOT_BOARD PROPERTY STRINGS ${MYBOT_SUPPORTED_BOARDS})
 mybot_resolve_board("${MYBOT_BOARD}")

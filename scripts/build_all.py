@@ -291,7 +291,7 @@ def build_variant(
         run(idf, [*base_args, "size"], dry_run)
         # idf.py invokes merge-bin from build_dir: -o must be absolute.
         run(idf, [*base_args, "merge-bin", "-o", str(output_path)], dry_run)
-        if board.name == "esp32-s31-korvo-1":
+        if board.name in ("esp-mosaico-v1.2", "esp32-s31-korvo-1"):
             command = [
                 sys.executable, str(PROJECT_ROOT / "scripts/check_s31_build.py"),
                 "--build-dir", str(build_dir), "--language", language,

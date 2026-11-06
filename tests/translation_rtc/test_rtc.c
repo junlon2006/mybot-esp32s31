@@ -16,6 +16,15 @@ static queued_callback_t queue[64];
 static unsigned queued, allocations, audio_callbacks, errors, unmute_calls, leave_calls;
 static unsigned init_calls, fini_calls, destroy_calls, queue_creates, queue_destroys;
 static unsigned tests;
+static unsigned create_calls, join_calls, rtm_login_calls, rtm_logout_calls;
+static unsigned subscribe_calls, unsubscribe_calls, send_calls;
+static unsigned fail_create_call, fail_join_call;
+static bool defer_join, timer_failure;
+static int login_failure, subscription_failure;
+static aosl_timer_t live_timer = AOSL_MPQ_TIMER_INVALID;
+static connection_id_t sent_connection, last_unmuted_connection;
+static mybot_translation_direction_t last_audio_direction;
+static char join_accounts[2][64], join_tokens[2][MYBOT_DEVICE_CLIENT_MAX_RTC_TOKEN];
 static unsigned direct_messages, channel_messages;
 typedef struct {
     char uid[MYBOT_RTM_UID_MAX_LEN];
@@ -38,6 +47,24 @@ static int16_t last_audio;
 static uint64_t tick;
 static const char agent[] = "translation-agent";
 static const char publisher[] = "translation-publisher";
+static const char speak_publisher[] = "speak-publisher";
+static const char speak_agent[] = "speak-agent";
+static mybot_device_translation_route_t route_inputs[2];
+static const mybot_device_translation_route_t *input_routes(void) {
+    memset(route_inputs, 0, sizeof(route_inputs));
+    for (size_t i = 0; i < 2; ++i) {
+        mybot_device_translation_route_t *r = &route_inputs[i];
+        r->direction = i ? MYBOT_TRANSLATION_DIRECTION_SPEAK : MYBOT_TRANSLATION_DIRECTION_LISTEN;
+        snprintf(r->rtc_app_id, sizeof(r->rtc_app_id), "%s", s_rtc.app_id);
+        strcpy(r->rtc_channel, "translation-channel");
+        strcpy(r->rtc_uid, i ? "device-speak" : "device-input");
+        strcpy(r->rtc_token, i ? "speak-token" : "route-token");
+        strcpy(r->rtc_agent_uid, i ? speak_agent : agent);
+        strcpy(r->audio_publisher_uid, i ? speak_publisher : publisher);
+        r->tts_enabled = true;
+    }
+    return route_inputs;
+}
 static void drain(void);
 
 void test_log(const char *format, ...) {
@@ -116,6 +143,20 @@ int aosl_mpq_destroy_wait(aosl_mpq_t q) {
     return 0;
 }
 
+aosl_timer_t aosl_mpq_set_timer(uintptr_t interval, aosl_timer_func_t callback,
+                                aosl_obj_dtor_t destructor, uintptr_t argc, ...) {
+    assert(interval == 1000 && callback == ready_timeout && !destructor && argc == 0);
+    assert(live_timer == AOSL_MPQ_TIMER_INVALID);
+    if (timer_failure)
+        return AOSL_MPQ_TIMER_INVALID;
+    return live_timer = 7;
+}
+int aosl_mpq_kill_timer(aosl_timer_t timer) {
+    assert(timer == live_timer);
+    live_timer = AOSL_MPQ_TIMER_INVALID;
+    return 0;
+}
+
 const char *agora_rtc_get_version(void) {
     return "host";
 }
@@ -145,6 +186,9 @@ int agora_rtc_fini(void) {
     return fini_result;
 }
 int agora_rtc_create_connection(connection_id_t *connection) {
+    create_calls++;
+    if (fail_create_call == create_calls)
+        return -1;
     *connection = next_connection++;
     return 0;
 }
@@ -157,10 +201,16 @@ int agora_rtc_join_channel_with_user_account(connection_id_t connection, const c
                                              const char *account, const char *token,
                                              rtc_channel_options_t *options) {
     assert(strcmp(channel, "translation-channel") == 0);
-    assert(strcmp(account, "device-input") == 0);
-    assert(strcmp(token, "route-token") == 0);
+    unsigned index = join_calls++ % 2;
+    snprintf(join_accounts[index], sizeof(join_accounts[index]), "%s", account);
+    snprintf(join_tokens[index], sizeof(join_tokens[index]), "%s", token);
+    bool listen = strcmp(account, "device-input") == 0;
+    assert(listen || strcmp(account, "device-speak") == 0);
+    assert(strcmp(token, listen ? "route-token" : "speak-token") == 0);
+    if (fail_join_call == join_calls)
+        return -1;
     joined_options = *options;
-    if (join_result == 0)
+    if (join_result == 0 && !defer_join)
         on_join_channel_success(connection, 15, 20);
     return join_result;
 }
@@ -171,42 +221,55 @@ int agora_rtc_leave_channel(connection_id_t connection) {
 }
 int agora_rtc_get_user_info_by_user_account(connection_id_t connection, const char *account,
                                             user_info_t *user) {
-    assert(connection == s_rtc.conn_id);
-    assert(strcmp(account, publisher) == 0);
+    mybot_rtc_route_t *route = route_for_connection(connection);
+    assert(route && strcmp(account, route->publisher_account) == 0);
     if (!lookup_ready)
         return -1;
     memset(user, 0, sizeof(*user));
-    user->uid = 900;
+    user->uid = route->direction == MYBOT_TRANSLATION_DIRECTION_LISTEN ? 900 : 901;
     strcpy(user->user_account, account);
     return 0;
 }
 int agora_rtc_mute_remote_audio(connection_id_t connection, uint32_t uid, bool mute) {
-    assert(connection == s_rtc.conn_id && !mute);
+    assert(connection_is_active(connection) && !mute);
+    last_unmuted_connection = connection;
     last_unmuted = uid;
     unmute_calls++;
     return unmute_result;
 }
 int agora_rtc_send_audio_data(connection_id_t connection, const void *data, size_t length,
                               audio_frame_info_t *info) {
-    (void)connection;
-    (void)data;
-    (void)length;
-    (void)info;
+    assert(connection_is_active(connection) && data && length &&
+           info->data_type == AUDIO_DATA_TYPE_PCM);
+    sent_connection = connection;
+    send_calls++;
     return 0;
 }
 int agora_rtm_login(const char *uid, const char *token, const agora_rtm_handler_t *handler) {
+    rtm_login_calls++;
     assert(strcmp(uid, "device-input") == 0 && strcmp(token, "route-token") == 0);
-    handler->on_rtm_event(uid, RTM_EVENT_TYPE_LOGIN, ERR_RTM_OK);
+    if (login_failure == 1)
+        return -1;
+    if (login_failure != 2)
+        handler->on_rtm_event(uid, RTM_EVENT_TYPE_LOGIN,
+                              login_failure == 3 ? (rtm_err_code_e)1000 : ERR_RTM_OK);
     return 0;
 }
 int agora_rtm_logout(void) {
+    rtm_logout_calls++;
     return 0;
 }
 int agora_rtm_subscribe(const char *channel) {
-    on_rtm_subscribe_result(channel, ERR_RTM_OK);
+    subscribe_calls++;
+    if (subscription_failure == 1)
+        return -1;
+    if (subscription_failure != 2)
+        on_rtm_subscribe_result(channel,
+                                subscription_failure == 3 ? (rtm_err_code_e)1000 : ERR_RTM_OK);
     return 0;
 }
 int agora_rtm_unsubscribe(const char *channel) {
+    unsubscribe_calls++;
     (void)channel;
     return 0;
 }
@@ -219,9 +282,12 @@ static void drain(void) {
     }
     assert(allocations == 0);
 }
-static void audio_received(uint32_t uid, const void *data, size_t length, void *user) {
+static void audio_received(mybot_translation_direction_t direction, uint32_t uid, const void *data,
+                           size_t length, void *user) {
     (void)user;
-    assert(uid == s_rtc.publisher_uid && length == MYBOT_RTC_PCM_FRAME_BYTES);
+    mybot_rtc_route_t *route = route_for_direction(direction);
+    assert(route && uid == route->publisher_uid && length == MYBOT_RTC_PCM_FRAME_BYTES);
+    last_audio_direction = direction;
     last_audio = *(const int16_t *)data;
     audio_callbacks++;
 }
@@ -259,7 +325,9 @@ static void reset(void) {
     drain();
     memset(&s_rtc, 0, sizeof(s_rtc));
     s_rtc.state = MYBOT_RTC_STATE_INITIALIZED;
-    s_rtc.conn_id = CONNECTION_ID_INVALID;
+    s_rtc.routes[0].conn_id = s_rtc.routes[1].conn_id = CONNECTION_ID_INVALID;
+    strcpy(s_rtc.app_id, "test-project");
+    s_rtc.ready_timer = live_timer = AOSL_MPQ_TIMER_INVALID;
     s_rtc.callbacks.on_remote_audio = audio_received;
     s_rtc.callbacks.on_state_changed = state_changed;
     s_rtc_mpq_id = 1;
@@ -276,6 +344,12 @@ static void reset(void) {
     initialized_app_id[0] = '\0';
     callbacks_during_fini = false;
     lookup_ready = false;
+    create_calls = join_calls = rtm_login_calls = rtm_logout_calls = 0;
+    subscribe_calls = unsubscribe_calls = send_calls = 0;
+    fail_create_call = fail_join_call = 0;
+    defer_join = timer_failure = false;
+    login_failure = subscription_failure = 0;
+    tick = 0;
 }
 static void reset_public(void) {
     reset();
@@ -286,6 +360,7 @@ static void reset_public(void) {
     s_rtc_callbacks_enabled = 0;
 }
 static void init_public(const char *app_id) {
+    lookup_ready = true;
     const mybot_agora_rtc_callbacks_t callbacks = {.on_remote_audio = audio_received,
                                                    .on_state_changed = state_changed,
                                                    .on_rtm_data = direct_received,
@@ -296,16 +371,14 @@ static void init_public(const char *app_id) {
     assert(strcmp(initialized_app_id, app_id) == 0);
 }
 static void join_public(void) {
-    assert(mybot_agora_rtc_join("translation-channel", "route-token", "device-input", agent,
-                                publisher) == 0);
+    assert(mybot_agora_rtc_join(input_routes(), 1) == 0);
     drain();
     assert(s_rtc.state == MYBOT_RTC_STATE_CONNECTED);
 }
 static void join(void) {
-    assert(rtc_join_impl("translation-channel", "route-token", "device-input", agent, publisher) ==
-           0);
+    assert(rtc_join_impl(input_routes(), 1) == 0);
     drain();
-    assert(s_rtc.state == MYBOT_RTC_STATE_CONNECTED);
+    assert(s_rtc.state == (lookup_ready ? MYBOT_RTC_STATE_CONNECTED : MYBOT_RTC_STATE_CONNECTING));
 }
 static void send_audio(connection_id_t connection, uint32_t uid) {
     int16_t samples[MYBOT_RTC_PCM_FRAME_BYTES / sizeof(int16_t)] = {1234};
@@ -325,29 +398,29 @@ static void test_options(void) {
     assert(joined_options.audio_codec_opt.pcm_sample_rate == 16000);
     assert(joined_options.audio_codec_opt.pcm_channel_num == 1);
     assert(joined_options.audio_codec_opt.pcm_duration == 60);
-    assert(!s_rtc.publisher_subscribed && unmute_calls == 0);
+    assert(!s_rtc.routes[0].publisher_subscribed && unmute_calls == 0);
     tests++;
 }
 static void test_whitelist(void) {
     reset();
     join();
     user_info_t stranger = user(800, "untrusted-user"), target = user(900, publisher);
-    on_user_joined(s_rtc.conn_id, &stranger, 0);
+    on_user_joined(s_rtc.routes[0].conn_id, &stranger, 0);
     drain();
     assert(unmute_calls == 0);
-    send_audio(s_rtc.conn_id, 900);
+    send_audio(s_rtc.routes[0].conn_id, 900);
     drain();
     assert(audio_callbacks == 0);
-    on_user_info_updated(s_rtc.conn_id, &target);
+    on_user_info_updated(s_rtc.routes[0].conn_id, &target);
     drain();
-    assert(unmute_calls == 1 && last_unmuted == 900 && s_rtc.publisher_subscribed);
-    on_user_joined(s_rtc.conn_id, &target, 0);
+    assert(unmute_calls == 1 && last_unmuted == 900 && s_rtc.routes[0].publisher_subscribed);
+    on_user_joined(s_rtc.routes[0].conn_id, &target, 0);
     drain();
     assert(unmute_calls == 1);
-    send_audio(s_rtc.conn_id, 800);
+    send_audio(s_rtc.routes[0].conn_id, 800);
     drain();
     assert(audio_callbacks == 0);
-    send_audio(s_rtc.conn_id, 900);
+    send_audio(s_rtc.routes[0].conn_id, 900);
     drain();
     assert(audio_callbacks == 1 && last_audio == 1234);
     tests++;
@@ -366,13 +439,13 @@ static void test_offline(void) {
         lookup_ready = true;
         join();
         user_info_t irrelevant = user(800, "irrelevant"), lost = user(900, required[i]);
-        on_user_offline(s_rtc.conn_id, &irrelevant, 0);
+        on_user_offline(s_rtc.routes[0].conn_id, &irrelevant, 0);
         drain();
         assert(errors == 0);
-        on_user_offline(s_rtc.conn_id, &lost, 0);
+        on_user_offline(s_rtc.routes[0].conn_id, &lost, 0);
         drain();
         assert(errors == 1 && s_rtc.state == MYBOT_RTC_STATE_ERROR);
-        send_audio(s_rtc.conn_id, 900);
+        send_audio(s_rtc.routes[0].conn_id, 900);
         drain();
         assert(audio_callbacks == 0);
         tests++;
@@ -382,7 +455,7 @@ static void test_late_callbacks(void) {
     reset();
     lookup_ready = true;
     join();
-    connection_id_t old = s_rtc.conn_id;
+    connection_id_t old = s_rtc.routes[0].conn_id;
     user_info_t target = user(900, publisher);
     send_audio(old, 900);
     on_user_offline(old, &target, 0);
@@ -399,7 +472,7 @@ static void test_late_callbacks(void) {
     drain();
     assert(audio_callbacks == 0 && errors == 0 && unmute_calls == count);
     assert(s_rtc.state == MYBOT_RTC_STATE_CONNECTED);
-    send_audio(s_rtc.conn_id, 900);
+    send_audio(s_rtc.routes[0].conn_id, 900);
     drain();
     assert(audio_callbacks == 1);
     tests++;
@@ -410,8 +483,8 @@ static void test_disabled_callbacks(void) {
     join();
     set_callbacks_enabled(false);
     user_info_t target = user(900, publisher);
-    send_audio(s_rtc.conn_id, 900);
-    on_user_offline(s_rtc.conn_id, &target, 0);
+    send_audio(s_rtc.routes[0].conn_id, 900);
+    on_user_offline(s_rtc.routes[0].conn_id, &target, 0);
     assert(queued == 0 && allocations == 0 && errors == 0 && audio_callbacks == 0);
     tests++;
 }
@@ -420,10 +493,10 @@ static void test_unmute_failure(void) {
     join();
     unmute_result = -1;
     user_info_t target = user(900, publisher);
-    on_user_joined(s_rtc.conn_id, &target, 0);
+    on_user_joined(s_rtc.routes[0].conn_id, &target, 0);
     drain();
-    assert(errors == 1 && !s_rtc.publisher_subscribed);
-    send_audio(s_rtc.conn_id, 900);
+    assert(errors == 1 && !s_rtc.routes[0].publisher_subscribed);
+    send_audio(s_rtc.routes[0].conn_id, 900);
     drain();
     assert(audio_callbacks == 0);
     tests++;
@@ -431,11 +504,10 @@ static void test_unmute_failure(void) {
 static void test_join_failure(void) {
     reset();
     join_result = -1;
-    assert(rtc_join_impl("translation-channel", "route-token", "device-input", agent, publisher) <
-           0);
+    assert(rtc_join_impl(input_routes(), 1) < 0);
     drain();
-    assert(s_rtc.conn_id == CONNECTION_ID_INVALID);
-    assert(s_rtc.state == MYBOT_RTC_STATE_INITIALIZED);
+    assert(s_rtc.routes[0].conn_id == CONNECTION_ID_INVALID);
+    assert(s_rtc.state == MYBOT_RTC_STATE_ERROR);
     assert(!s_rtc.rtm_login_requested && !s_rtc.rtm_subscribe_requested);
     tests++;
 }
@@ -446,7 +518,7 @@ static void test_project_change_after_fini(void) {
     join_public();
     assert(mybot_agora_rtc_fini() == 0);
     assert(s_rtc.state == MYBOT_RTC_STATE_IDLE);
-    assert(s_rtc.conn_id == CONNECTION_ID_INVALID);
+    assert(s_rtc.routes[0].conn_id == CONNECTION_ID_INVALID);
     assert(s_rtc_mpq_id == AOSL_MPQ_INVALID && !s_rtc_callbacks_enabled);
     assert(fini_calls == 1 && destroy_calls == 1 && queue_destroys == 1);
     assert(mybot_agora_rtc_fini() == 0 && fini_calls == 1);
@@ -462,8 +534,7 @@ static void test_destroy_failure_recovered_by_fini(void) {
         init_public("project-A");
         if (failure == 2) {
             join_result = destroy_result = -1;
-            assert(mybot_agora_rtc_join("translation-channel", "route-token", "device-input", agent,
-                                        publisher) < 0);
+            assert(mybot_agora_rtc_join(input_routes(), 1) < 0);
             drain();
             assert(s_rtc.state == MYBOT_RTC_STATE_ERROR);
         } else {
@@ -518,7 +589,7 @@ static void test_fini_drains_old_session_callbacks(void) {
     init_public("project-A");
     lookup_ready = true;
     join_public();
-    connection_id_t old = s_rtc.conn_id;
+    connection_id_t old = s_rtc.routes[0].conn_id;
     send_audio(old, 900);
     assert(queued != 0);
     callbacks_during_fini = true;
@@ -536,8 +607,8 @@ static void test_fini_drains_old_session_callbacks(void) {
     next_connection = old;
     init_public("project-B");
     join_public();
-    assert(s_rtc.conn_id == old && errors == 0 && audio_callbacks == 0);
-    send_audio(s_rtc.conn_id, 900);
+    assert(s_rtc.routes[0].conn_id == old && errors == 0 && audio_callbacks == 0);
+    send_audio(s_rtc.routes[0].conn_id, 900);
     drain();
     assert(audio_callbacks == 1);
     assert(mybot_agora_rtc_fini() == 0);
@@ -655,8 +726,7 @@ static void test_rtm_stale_generations(void) {
     assert(queued == 2);
     /* Rejoin on the owner while old callback work is still deferred. */
     assert(rtc_leave_impl() == 0);
-    assert(rtc_join_impl("translation-channel", "route-token", "device-input", agent, publisher) ==
-           0);
+    assert(rtc_join_impl(input_routes(), 1) == 0);
     assert(s_rtc.rtm_login_generation != old_login);
     assert(s_rtc.rtm_subscribe_generation != old_subscription);
     drain();
@@ -688,7 +758,314 @@ static void test_rtm_callback_shutdown(void) {
     assert(direct_messages == 0 && channel_messages == 0);
     tests++;
 }
+static void test_two_routes_one_rtm(void) {
+    reset_public();
+    init_public("face-project");
+    defer_join = true;
+    assert(mybot_agora_rtc_join(input_routes(), 2) == 0);
+    drain();
+    assert(init_calls == 1 && create_calls == 2 && join_calls == 2);
+    assert(rtm_login_calls == 1 && subscribe_calls == 1);
+    assert(strcmp(join_accounts[0], "device-input") == 0);
+    assert(strcmp(join_accounts[1], "device-speak") == 0);
+    assert(strcmp(join_tokens[0], "route-token") == 0);
+    assert(strcmp(join_tokens[1], "speak-token") == 0);
+    connection_id_t listen = s_rtc.routes[0].conn_id, speak = s_rtc.routes[1].conn_id;
+    assert(listen != speak && s_rtc.state == MYBOT_RTC_STATE_CONNECTING);
+    int16_t pcm[960] = {12};
+    assert(mybot_agora_rtc_send_audio(MYBOT_TRANSLATION_DIRECTION_LISTEN, pcm, sizeof(pcm)) < 0);
+    on_join_channel_success(speak, 16, 1);
+    drain();
+    assert(s_rtc.routes[1].publisher_subscribed && !s_rtc.routes[0].joined);
+    assert(s_rtc.state == MYBOT_RTC_STATE_CONNECTING);
+    on_join_channel_success(listen, 15, 2);
+    drain();
+    assert(s_rtc.state == MYBOT_RTC_STATE_CONNECTED && unmute_calls == 2);
+    assert(mybot_agora_rtc_send_audio(MYBOT_TRANSLATION_DIRECTION_LISTEN, pcm, sizeof(pcm)) == 0);
+    assert(sent_connection == listen);
+    assert(mybot_agora_rtc_send_audio(MYBOT_TRANSLATION_DIRECTION_SPEAK, pcm, sizeof(pcm)) == 0);
+    assert(sent_connection == speak && send_calls == 2);
+    assert(mybot_agora_rtc_send_audio(MYBOT_TRANSLATION_DIRECTION_NONE, pcm, sizeof(pcm)) < 0);
+    assert(mybot_agora_rtc_send_audio((mybot_translation_direction_t)99, pcm, sizeof(pcm)) < 0);
+    send_audio(listen, 901);
+    send_audio(speak, 900);
+    send_audio(speak + 100, 901);
+    drain();
+    assert(audio_callbacks == 0);
+    send_audio(listen, 900);
+    drain();
+    assert(audio_callbacks == 1 && last_audio_direction == MYBOT_TRANSLATION_DIRECTION_LISTEN);
+    send_audio(speak, 901);
+    drain();
+    assert(audio_callbacks == 2 && last_audio_direction == MYBOT_TRANSLATION_DIRECTION_SPEAK);
+    on_rtm_subscribe_data("translation-channel", agent, caption_json, sizeof(caption_json),
+                          RTM_MESSAGE_TYPE_STRING, NULL);
+    drain();
+    assert(channel_messages == 1 && strcmp(channel_message.uid, agent) == 0);
+    on_rtm_subscribe_data("translation-channel", speak_agent, caption_json, sizeof(caption_json),
+                          RTM_MESSAGE_TYPE_BINARY, NULL);
+    drain();
+    assert(channel_messages == 2 && strcmp(channel_message.uid, speak_agent) == 0);
+    assert(mybot_agora_rtc_join(input_routes(), 2) < 0 && create_calls == 2);
+    assert(mybot_agora_rtc_fini() == 0);
+    assert(leave_calls == 2 && destroy_calls == 2 && fini_calls == 1);
+    assert(rtm_logout_calls == 1 && unsubscribe_calls == 1);
+    assert(live_timer == AOSL_MPQ_TIMER_INVALID && allocations == 0);
+    tests++;
+}
+
+static void test_two_route_readiness(void) {
+    reset_public();
+    init_public("face-project");
+    lookup_ready = false;
+    assert(mybot_agora_rtc_join(input_routes(), 2) == 0);
+    drain();
+    assert(s_rtc.routes[0].joined && s_rtc.routes[1].joined);
+    assert(s_rtc.state == MYBOT_RTC_STATE_CONNECTING);
+    user_info_t listen_publisher = user(900, publisher),
+                other_publisher = user(901, speak_publisher);
+    on_user_joined(s_rtc.routes[0].conn_id, &other_publisher, 0);
+    on_user_joined(s_rtc.routes[1].conn_id, &listen_publisher, 0);
+    drain();
+    assert(unmute_calls == 0);
+    on_user_joined(s_rtc.routes[1].conn_id, &other_publisher, 0);
+    drain();
+    assert(unmute_calls == 1 && s_rtc.state == MYBOT_RTC_STATE_CONNECTING);
+    on_user_joined(s_rtc.routes[0].conn_id, &listen_publisher, 0);
+    drain();
+    assert(unmute_calls == 2 && s_rtc.state == MYBOT_RTC_STATE_CONNECTED);
+    assert(mybot_agora_rtc_fini() == 0);
+    tests++;
+}
+
+static void test_text_only_listen(void) {
+    for (unsigned count = 1; count <= 2; ++count) {
+        reset_public();
+        init_public("text-project");
+        input_routes();
+        route_inputs[0].tts_enabled = false;
+        route_inputs[0].audio_publisher_uid[0] = 0;
+        assert(mybot_agora_rtc_join(route_inputs, count) == 0);
+        drain();
+        assert(s_rtc.state == MYBOT_RTC_STATE_CONNECTED);
+        assert(unmute_calls == count - 1 && !s_rtc.routes[0].publisher_subscribed);
+        send_audio(s_rtc.routes[0].conn_id, 900);
+        drain();
+        assert(audio_callbacks == 0);
+        /* Its caption agent remains required even without a TTS publisher. */
+        user_info_t gone = user(900, agent);
+        on_user_offline(s_rtc.routes[0].conn_id, &gone, 0);
+        drain();
+        assert(s_rtc.state == MYBOT_RTC_STATE_ERROR);
+        assert(mybot_agora_rtc_fini() == 0);
+        tests++;
+    }
+}
+
+static void test_route_ready_timeout(void) {
+    for (unsigned missing_join = 0; missing_join <= 1; ++missing_join) {
+        reset_public();
+        init_public("timeout-project");
+        lookup_ready = missing_join != 0;
+        defer_join = missing_join != 0;
+        assert(mybot_agora_rtc_join(input_routes(), 2) == 0);
+        drain();
+        tick = MYBOT_RTC_READY_TIMEOUT_MS - 1;
+        ready_timeout(live_timer, NULL, 0, NULL);
+        assert(s_rtc.state == MYBOT_RTC_STATE_CONNECTING);
+        tick++;
+        ready_timeout(live_timer, NULL, 0, NULL);
+        assert(s_rtc.state == MYBOT_RTC_STATE_ERROR && errors == 1);
+        lookup_ready = true;
+        on_join_channel_success(s_rtc.routes[0].conn_id, 15, 2);
+        on_join_channel_success(s_rtc.routes[1].conn_id, 16, 2);
+        drain();
+        assert(s_rtc.state == MYBOT_RTC_STATE_ERROR);
+        assert(mybot_agora_rtc_fini() == 0);
+        tests++;
+    }
+}
+
+static void test_two_route_reconnect(void) {
+    reset_public();
+    init_public("reconnect-project");
+    assert(mybot_agora_rtc_join(input_routes(), 2) == 0);
+    drain();
+    tick = 30000;
+    connection_id_t listen = s_rtc.routes[0].conn_id, speak = s_rtc.routes[1].conn_id;
+    on_reconnecting(speak);
+    drain();
+    assert(s_rtc.state == MYBOT_RTC_STATE_RECONNECTING);
+    assert(s_rtc.routes[0].joined && !s_rtc.routes[1].joined);
+    send_audio(listen, 900);
+    drain();
+    assert(audio_callbacks == 0);
+    tick += 10000;
+    on_reconnecting(listen);
+    drain();
+    assert(s_rtc.ready_started == 30000); /* Another route cannot extend the deadline. */
+    on_rejoin_channel_success(speak, 16, 1);
+    drain();
+    assert(s_rtc.state == MYBOT_RTC_STATE_RECONNECTING);
+    on_rejoin_channel_success(listen, 15, 1);
+    drain();
+    assert(s_rtc.state == MYBOT_RTC_STATE_CONNECTED);
+    assert(rtm_login_calls == 1 && subscribe_calls == 1 && create_calls == 2);
+    tick = 70000;
+    on_reconnecting(speak);
+    drain();
+    tick += MYBOT_RTC_READY_TIMEOUT_MS;
+    ready_timeout(live_timer, NULL, 0, NULL);
+    assert(s_rtc.state == MYBOT_RTC_STATE_ERROR);
+    assert(mybot_agora_rtc_fini() == 0);
+    tests++;
+}
+
+static void test_two_route_failures(void) {
+    for (unsigned failure = 0; failure < 7; ++failure) {
+        reset_public();
+        init_public("failure-project");
+        assert(mybot_agora_rtc_join(input_routes(), 2) == 0);
+        drain();
+        connection_id_t listen = s_rtc.routes[0].conn_id, speak = s_rtc.routes[1].conn_id;
+        user_info_t gone = user(901, failure == 0 ? speak_agent : speak_publisher);
+        switch (failure) {
+        case 0:
+        case 1:
+            on_user_offline(speak, &gone, 0);
+            break;
+        case 2:
+            on_error(speak, 1, "second route failed");
+            break;
+        case 3:
+            on_license_failed(speak, 1);
+            break;
+        case 4:
+            on_token_will_expire(speak, NULL);
+            break;
+        case 5:
+            on_connection_lost(speak);
+            break;
+        default:
+            on_user_offline(listen, &(user_info_t){.uid = 900, .user_account = "translation-agent"},
+                            0);
+            break;
+        }
+        drain();
+        assert(s_rtc.state ==
+               (failure == 5 ? MYBOT_RTC_STATE_DISCONNECTED : MYBOT_RTC_STATE_ERROR));
+        send_audio(listen, 900);
+        send_audio(speak, 901);
+        on_join_channel_success(speak, 16, 0);
+        drain();
+        assert(audio_callbacks == 0 && s_rtc.state != MYBOT_RTC_STATE_CONNECTED);
+        int16_t pcm[960] = {0};
+        assert(mybot_agora_rtc_send_audio(MYBOT_TRANSLATION_DIRECTION_LISTEN, pcm, sizeof(pcm)) <
+               0);
+        assert(mybot_agora_rtc_fini() == 0);
+        assert(leave_calls == 2 && destroy_calls == 2 && rtm_logout_calls == 1 && fini_calls == 1);
+        tests++;
+    }
+}
+
+static void test_partial_two_route_start(void) {
+    for (unsigned failure = 0; failure < 4; ++failure) {
+        reset_public();
+        init_public("partial-project");
+        if (failure == 0)
+            fail_create_call = 2;
+        else if (failure == 1 || failure == 2)
+            fail_join_call = 2;
+        else
+            timer_failure = true;
+        if (failure == 2)
+            destroy_result = -1;
+        assert(mybot_agora_rtc_join(input_routes(), 2) < 0);
+        drain();
+        assert(s_rtc.state == MYBOT_RTC_STATE_ERROR);
+        assert(rtm_login_calls == 1 && subscribe_calls == 1 && rtm_logout_calls == 1 &&
+               unsubscribe_calls == 1);
+        assert(destroy_calls == (failure == 0 ? 1U : failure == 3 ? 0U : 2U));
+        assert(mybot_agora_rtc_fini() == 0 && fini_calls == 1);
+        fail_create_call = fail_join_call = 0;
+        destroy_result = 0;
+        timer_failure = false;
+        init_public("new-project");
+        assert(mybot_agora_rtc_join(input_routes(), 2) == 0);
+        drain();
+        assert(s_rtc.state == MYBOT_RTC_STATE_CONNECTED);
+        assert(mybot_agora_rtc_fini() == 0 && fini_calls == 2);
+        tests++;
+    }
+}
+
+static void test_shared_rtm_failure(void) {
+    for (unsigned failure = 0; failure < 6; ++failure) {
+        reset_public();
+        init_public("rtm-failure-project");
+        if (failure < 3)
+            login_failure = (int)failure + 1;
+        else
+            subscription_failure = (int)failure - 2;
+        assert(mybot_agora_rtc_join(input_routes(), 2) < 0);
+        drain();
+        assert(s_rtc.state == MYBOT_RTC_STATE_ERROR);
+        assert(create_calls == 0 && join_calls == 0 && rtm_login_calls == 1);
+        assert(subscribe_calls == (failure < 3 ? 0U : 1U));
+        assert(live_timer == AOSL_MPQ_TIMER_INVALID);
+        assert(mybot_agora_rtc_fini() == 0 && fini_calls == 1 && allocations == 0);
+        tests++;
+    }
+}
+
+static void test_route_contract_validation(void) {
+    reset_public();
+    init_public("validation-project");
+    assert(mybot_agora_rtc_join(NULL, 1) < 0);
+    assert(mybot_agora_rtc_join(input_routes(), 0) < 0);
+    assert(mybot_agora_rtc_join(input_routes(), 3) < 0);
+    for (unsigned failure = 0; failure < 7; ++failure) {
+        input_routes();
+        switch (failure) {
+        case 0:
+            strcpy(route_inputs[1].rtc_app_id, "other-app");
+            break;
+        case 1:
+            strcpy(route_inputs[1].rtc_channel, "other-channel");
+            break;
+        case 2:
+            route_inputs[1].direction = MYBOT_TRANSLATION_DIRECTION_LISTEN;
+            break;
+        case 3:
+            strcpy(route_inputs[1].rtc_uid, route_inputs[0].rtc_uid);
+            break;
+        case 4:
+            strcpy(route_inputs[1].rtc_agent_uid, route_inputs[0].rtc_agent_uid);
+            break;
+        case 5:
+            route_inputs[1].audio_publisher_uid[0] = 0;
+            break;
+        default:
+            memset(route_inputs[1].rtc_token, 'a', sizeof(route_inputs[1].rtc_token));
+            break;
+        }
+        assert(mybot_agora_rtc_join(route_inputs, 2) < 0);
+    }
+    assert(create_calls == 0 && rtm_login_calls == 0 && subscribe_calls == 0);
+    assert(mybot_agora_rtc_fini() == 0);
+    tests++;
+}
+
 int main(void) {
+    test_shared_rtm_failure();
+    test_two_routes_one_rtm();
+    test_two_route_readiness();
+    test_text_only_listen();
+    test_route_ready_timeout();
+    test_two_route_reconnect();
+    test_two_route_failures();
+    test_partial_two_route_start();
+    test_route_contract_validation();
     test_options();
     test_whitelist();
     test_lookup();

@@ -29,3 +29,12 @@ filtering, borrowed payload ownership, the eight-message inbox and overflow,
 session generations, pause/end behavior, both nonblocking read gates, allocation
 failures and shutdown occurring between admission and copying. No live RTM
 service is used.
+
+The face-to-face tests exercise production app routing with both cloud-AEC
+configurations. They check one real microphone destination, shared playback
+reference samples, silent unselected routes, initial closed input, media-mode
+compatibility, selected-only playback, direction fences, stop races, bounded
+producer-gate contention, failed pause/resume and scratch allocation failure.
+Pipeline pause fencing itself is covered by `tests/media_pause`. UI command tests
+also verify mode/direction completion revisions, including repeated failures,
+successful retries and unrelated volume/caption refreshes.

@@ -5,9 +5,12 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
+import contextlib
+import io
 import json
 from pathlib import Path
 import shlex
+import sys
 import tempfile
 import unittest
 from unittest import mock
@@ -26,6 +29,7 @@ class S31DeliveryTests(unittest.TestCase):
         self.root = Path(self.temporary.name).resolve()
         self.build = self.root / "build"
         self.build.mkdir()
+        (self.build / "CMakeCache.txt").write_text("MYBOT_BOARD:STRING=esp32-s31-korvo-1\n")
         self.merged = self.root / "esp32-s31-korvo-1-zh-CN.bin"
         self.description = {
             "target": "esp32s31", "git_revision": "v6.1", "app_elf": "mybot_esp32s31.elf",
@@ -68,6 +72,29 @@ class S31DeliveryTests(unittest.TestCase):
 
     def write_flash(self) -> None:
         (self.build / "flasher_args.json").write_text(json.dumps(self.flash))
+
+    def test_mosaico_delivery_uses_selected_board_and_codec(self) -> None:
+        (self.build / "CMakeCache.txt").write_text("MYBOT_BOARD:STRING=esp-mosaico-v1.2\n")
+        with self.assertRaisesRegex(RuntimeError, "CONFIG_CODEC_ES8311_SUPPORT"):
+            checker.verify_build(self.build, "zh-CN")
+        (self.build / "sdkconfig").write_text(self.config.replace("ES8389", "ES8311"))
+        metadata = checker.package(self.build, self.merged, "zh-CN")
+        self.assertEqual(metadata["board"], "esp-mosaico-v1.2")
+        self.assertIn("Board: esp-mosaico-v1.2", self.merged.with_suffix(".flash.txt").read_text())
+
+    def test_delivery_rejects_unknown_board(self) -> None:
+        (self.build / "CMakeCache.txt").write_text("MYBOT_BOARD:STRING=unknown\n")
+        with self.assertRaisesRegex(RuntimeError, "unsupported or missing MYBOT_BOARD"):
+            checker.verify_build(self.build, "zh-CN")
+
+    def test_cli_reports_selected_board(self) -> None:
+        (self.build / "CMakeCache.txt").write_text("MYBOT_BOARD:STRING=esp-mosaico-v1.2\n")
+        (self.build / "sdkconfig").write_text(self.config.replace("ES8389", "ES8311"))
+        output = io.StringIO()
+        with mock.patch.object(sys, "argv", ["check_s31_build.py", "--build-dir", str(self.build),
+                                            "--language", "zh-CN"]), contextlib.redirect_stdout(output):
+            self.assertEqual(checker.main(), 0)
+        self.assertIn("Validated esp-mosaico-v1.2 zh-CN", output.getvalue())
 
     def test_delivery_has_exact_offsets_hashes_versions_and_no_vendor_inputs(self) -> None:
         with mock.patch.object(checker, "source_revision", return_value={"revision": "a" * 40, "dirty": False}):

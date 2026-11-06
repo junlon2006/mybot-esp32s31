@@ -16,7 +16,10 @@ import shlex
 import subprocess
 import sys
 
-BOARD = "esp32-s31-korvo-1"
+BOARD_CODECS = {
+    "esp-mosaico-v1.2": "CONFIG_CODEC_ES8311_SUPPORT",
+    "esp32-s31-korvo-1": "CONFIG_CODEC_ES8389_SUPPORT",
+}
 RTSA_SHA256 = "7c6a81ab91f3b44c0cd581f84f779d7a022dac159020c19bdddd07c95da31dea"
 RTSA_FILES = {
     "lib/riscv32/libagora-rtc-sdk.a": "573a00d58ad19cc0b66fc1e41f17e23ada34b77fe5c7a8c3e8fa8729f73fb6c5",
@@ -56,6 +59,13 @@ def verify_build(build_dir: Path, language: str) -> dict:
     description = json.loads(build_file(build_dir, "project_description.json").read_text())
     if description.get("target") != "esp32s31" or description.get("git_revision") != "v6.1":
         raise RuntimeError("firmware must target esp32s31 with ESP-IDF v6.1")
+    board_match = re.search(
+        r"^MYBOT_BOARD:[^=]+=(.+)$",
+        build_file(build_dir, "CMakeCache.txt").read_text(), re.MULTILINE,
+    )
+    board = board_match.group(1).strip() if board_match else None
+    if board not in BOARD_CODECS:
+        raise RuntimeError(f"unsupported or missing MYBOT_BOARD in build: {board}")
     config = dict(re.findall(
         r"^(CONFIG_\w+)=(.*)$", build_file(build_dir, "sdkconfig").read_text(), re.MULTILINE
     ))
@@ -64,7 +74,7 @@ def verify_build(build_dir: Path, language: str) -> dict:
         "CONFIG_ESPTOOLPY_FLASHSIZE_16MB": "y",
         "CONFIG_SPIRAM": "y",
         "CONFIG_SPIRAM_MODE_OCT": "y",
-        "CONFIG_CODEC_ES8389_SUPPORT": "y",
+        BOARD_CODECS[board]: "y",
         "CONFIG_MYBOT_LVGL_UI": "y",
         "CONFIG_MYBOT_AUDIO_PTIME_60": "y",
         "CONFIG_MYBOT_AUDIO_PTIME_MS": "60",
@@ -112,7 +122,7 @@ def verify_build(build_dir: Path, language: str) -> dict:
         raise RuntimeError("flash files must include the application")
     return {
         "schema_version": 1,
-        "board": BOARD,
+        "board": board,
         "target": "esp32s31",
         "language": language,
         "project_version": description["project_version"],
@@ -187,7 +197,7 @@ def package(build_dir: Path, merged: Path, language: str) -> dict:
     )
     checksum.write_text(f'{metadata["image"]["sha256"]}  {merged.name}\n', encoding="utf-8")
     instructions.write_text(
-        f'Board: {BOARD}\nLanguage: {language}\nESP-IDF: v6.1\n'
+        f'Board: {metadata["board"]}\nLanguage: {language}\nESP-IDF: v6.1\n'
         'Verify: ' + shlex.join(["shasum", "-a", "256", "-c", checksum.name]) + '\n'
         'Flash from this directory (replace PORT):\n'
         + shlex.join(flash_command) + '\n'
@@ -219,7 +229,7 @@ def main() -> int:
         package(args.build_dir, args.merged, args.language) if args.merged
         else verify_build(args.build_dir, args.language)
     )
-    print(f'Validated {BOARD} {args.language}: RISC-V, local AOSL, video off, '
+    print(f'Validated {metadata["board"]} {args.language}: RISC-V, local AOSL, video off, '
           f'{len(metadata["segments"])} flash segments')
     return 0
 

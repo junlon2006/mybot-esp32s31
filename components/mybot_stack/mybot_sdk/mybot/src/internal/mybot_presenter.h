@@ -22,6 +22,9 @@ typedef struct {
     int volume;
     bool media_ready;
     bool paused;
+    mybot_translation_mode_t translation_mode;
+    mybot_translation_direction_t input_direction;
+    uint32_t selection_revision;
     mybot_caption_state_t captions;
 } mybot_presenter_t;
 

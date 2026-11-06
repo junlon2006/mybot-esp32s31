@@ -37,6 +37,7 @@
 #define CAPTION_INBOX_CAPACITY 8
 typedef struct {
     uint32_t generation;
+    mybot_translation_direction_t direction;
     size_t length;
     char body[];
 } caption_message_t;
@@ -58,10 +59,16 @@ typedef struct {
 #endif
     aosl_atomic_t conversation_generation;
     aosl_atomic_t media_cancel_requested;
+    aosl_atomic_t audio_mode;
+    aosl_atomic_t input_direction;
+    /* Protect route selection through the remote PCM producer's admission. */
+    aosl_atomic_t remote_route_gate;
+    /* Sender-owned scratch, allocated in PSRAM only when face-to-face is used. */
+    int16_t *silent_audio;
     mybot_device_lifecycle_t lifecycle;
     /* Snapshots used to reject stale RTM events from a previous conversation. */
     char rtc_channel[128];
-    char rtc_agent_uid[MYBOT_RTM_UID_MAX_LEN];
+    char rtc_agent_uid[2][MYBOT_RTM_UID_MAX_LEN];
     mybot_captions_t *captions;
     aosl_atomic_t caption_model_gate;
     aosl_atomic_t caption_inbox_gate;
@@ -166,8 +173,8 @@ static bool drain_caption_inbox(mybot_runtime_t *runtime) {
         if (message->generation == (uint32_t)aosl_atomic_read(&runtime->conversation_generation)) {
             caption_lock(&runtime->caption_model_gate);
             if (runtime->captions) {
-                int result =
-                    mybot_captions_apply_json(runtime->captions, message->body, message->length);
+                int result = mybot_captions_apply_json(runtime->captions, message->direction,
+                                                       message->body, message->length);
                 changed |= result > 0;
                 invalid += result < 0;
             }
@@ -217,8 +224,13 @@ static void receive_caption(mybot_runtime_t *runtime, const char *channel, const
     if (!sender || !data || !length || length > MYBOT_CAPTION_MESSAGE_CAPACITY ||
         aosl_atomic_cmpxchg(&runtime->caption_inbox_gate, 0, 1) != 0)
         return;
+    mybot_translation_direction_t direction = MYBOT_TRANSLATION_DIRECTION_NONE;
+    for (unsigned i = 0; i < 2; ++i)
+        if (runtime->rtc_agent_uid[i][0] && strcmp(sender, runtime->rtc_agent_uid[i]) == 0)
+            direction =
+                i == 0 ? MYBOT_TRANSLATION_DIRECTION_LISTEN : MYBOT_TRANSLATION_DIRECTION_SPEAK;
     bool allowed = runtime_is_running(runtime) && runtime->caption_accepting &&
-                   runtime->rtc_agent_uid[0] && strcmp(sender, runtime->rtc_agent_uid) == 0 &&
+                   direction != MYBOT_TRANSLATION_DIRECTION_NONE &&
                    (!channel || strcmp(channel, runtime->rtc_channel) == 0);
     uint32_t generation = (uint32_t)aosl_atomic_read(&runtime->conversation_generation);
     if (!allowed && runtime->caption_accepting && runtime_is_running(runtime))
@@ -230,6 +242,7 @@ static void receive_caption(mybot_runtime_t *runtime, const char *channel, const
     if (!message)
         return;
     message->generation = generation;
+    message->direction = direction;
     message->length = length;
     memcpy(message->body, data, length);
     message->body[length] = '\0';
@@ -399,8 +412,8 @@ static void execute_service_request(const aosl_ts_t *ts, aosl_refobj_t ref, uint
     if (request->type == MYBOT_DEVICE_SERVICE_START) {
         request->result = mybot_device_client_start_conversation(
             request->server_base, request->device_id, request->credential,
-            request->payload.start.source_language, request->payload.start.target_language,
-            &request->payload.start.response);
+            request->payload.start.mode, request->payload.start.source_language,
+            request->payload.start.target_language, &request->payload.start.response);
     } else if (request->type == MYBOT_DEVICE_SERVICE_STOP) {
         request->result = mybot_device_client_stop_conversation(
             request->server_base, request->device_id, request->credential,
@@ -464,7 +477,28 @@ static int media_send_audio(const void *data, size_t len, void *user_data) {
     mybot_runtime_t *runtime = user_data;
     if (aosl_atomic_read(&runtime->media_cancel_requested))
         return 0;
-    return mybot_agora_rtc_send_audio(data, len);
+    if (aosl_atomic_read(&runtime->audio_mode) == MYBOT_TRANSLATION_LISTEN)
+        return mybot_agora_rtc_send_audio(MYBOT_TRANSLATION_DIRECTION_LISTEN, data, len);
+
+    const size_t samples = MYBOT_MEDIA_FRAME_SAMPLES * (MYBOT_CLOUD_AEC ? 2U : 1U);
+    if (!data || !runtime->silent_audio || len != samples * sizeof(int16_t))
+        return -1;
+    /* Consume the physical playback reference once in the pipeline, then give
+     * both agents that same reference. Only the selected agent receives MIC. */
+    const int16_t *pcm = data;
+    for (size_t i = 0; i < samples; ++i)
+        runtime->silent_audio[i] = MYBOT_CLOUD_AEC && (i & 1U) ? pcm[i] : 0;
+    mybot_translation_direction_t selected = aosl_atomic_read(&runtime->input_direction);
+    int result = 0;
+    for (mybot_translation_direction_t direction = MYBOT_TRANSLATION_DIRECTION_LISTEN;
+         direction <= MYBOT_TRANSLATION_DIRECTION_SPEAK; ++direction) {
+        if (aosl_atomic_read(&runtime->media_cancel_requested))
+            break;
+        const void *frame = direction == selected ? data : runtime->silent_audio;
+        if (mybot_agora_rtc_send_audio(direction, frame, len) < 0)
+            result = -1;
+    }
+    return result;
 }
 
 static void media_on_wake_word(const char *wake_word, void *user_data) {
@@ -536,12 +570,17 @@ static void queue_video_control(mybot_runtime_t *runtime, video_control_event_t 
 }
 #endif
 
-static void rtc_on_remote_audio(uint32_t uid, const void *data, size_t len, void *user_data) {
+static void rtc_on_remote_audio(mybot_translation_direction_t direction, uint32_t uid,
+                                const void *data, size_t len, void *user_data) {
     (void)uid;
     mybot_runtime_t *runtime = user_data;
-    if (!aosl_atomic_read(&runtime->media_cancel_requested)) {
+    if (aosl_atomic_cmpxchg(&runtime->remote_route_gate, 0, 1) != 0)
+        return;
+    if (!aosl_atomic_read(&runtime->media_cancel_requested) &&
+        direction == aosl_atomic_read(&runtime->input_direction)) {
         mybot_media_pipeline_push_remote_audio(&runtime->media, data, len);
     }
+    aosl_atomic_set(&runtime->remote_route_gate, 0);
 }
 
 static void rtc_on_state_changed(mybot_rtc_state_t state, void *user_data) {
@@ -622,7 +661,8 @@ static void dev_on_pair_code(const char *code, void *user_data) {
 
 static void dev_on_conversation_start(const mybot_device_conversation_t *params, void *user_data) {
     mybot_runtime_t *runtime = user_data;
-    if (!runtime_is_running(runtime) || aosl_atomic_read(&runtime->media_cancel_requested)) {
+    if (!runtime_is_running(runtime) || aosl_atomic_read(&runtime->media_cancel_requested) ||
+        !params || params->route_count < 1 || params->route_count > 2) {
         mybot_device_lifecycle_notify_conversation_ended(&runtime->lifecycle);
         return;
     }
@@ -638,17 +678,35 @@ static void dev_on_conversation_start(const mybot_device_conversation_t *params,
         mybot_device_lifecycle_notify_conversation_ended(&runtime->lifecycle);
         return;
     }
+    if (params->mode == MYBOT_TRANSLATION_LISTEN_SPEAK && !runtime->silent_audio) {
+        runtime->silent_audio =
+            aosl_hal_malloc(MYBOT_MEDIA_FRAME_BYTES * (MYBOT_CLOUD_AEC ? 2U : 1U));
+        if (!runtime->silent_audio) {
+            snprintf(runtime->lifecycle.error_code, sizeof(runtime->lifecycle.error_code),
+                     "MEDIA_NOT_READY");
+            mybot_device_lifecycle_notify_conversation_ended(&runtime->lifecycle);
+            return;
+        }
+    }
+    aosl_atomic_set(&runtime->audio_mode, params->mode);
+    aosl_atomic_set(&runtime->input_direction, params->mode == MYBOT_TRANSLATION_LISTEN
+                                                   ? MYBOT_TRANSLATION_DIRECTION_LISTEN
+                                                   : MYBOT_TRANSLATION_DIRECTION_NONE);
 
     mybot_agora_rtc_callbacks_t callbacks;
     memset(&callbacks, 0, sizeof(callbacks));
-    if (!params || params->rtc_agent_uid[0] == '\0') {
+    if (params->routes[0].rtc_agent_uid[0] == '\0') {
         AOSL_LOG_ERR("conversation response missing RTM agent UID");
         mybot_device_lifecycle_notify_conversation_ended(&runtime->lifecycle);
         return;
     }
     caption_lock(&runtime->caption_inbox_gate);
-    snprintf(runtime->rtc_channel, sizeof(runtime->rtc_channel), "%s", params->rtc_channel);
-    snprintf(runtime->rtc_agent_uid, sizeof(runtime->rtc_agent_uid), "%s", params->rtc_agent_uid);
+    snprintf(runtime->rtc_channel, sizeof(runtime->rtc_channel), "%s",
+             params->routes[0].rtc_channel);
+    memset(runtime->rtc_agent_uid, 0, sizeof(runtime->rtc_agent_uid));
+    for (unsigned i = 0; i < params->route_count; ++i)
+        snprintf(runtime->rtc_agent_uid[i], sizeof(runtime->rtc_agent_uid[i]), "%s",
+                 params->routes[i].rtc_agent_uid);
     runtime->caption_accepting = runtime->captions != NULL;
     aosl_atomic_set(&runtime->caption_inbox_gate, 0);
     callbacks.on_remote_audio = rtc_on_remote_audio;
@@ -664,15 +722,14 @@ static void dev_on_conversation_start(const mybot_device_conversation_t *params,
 #endif
     callbacks.user_data = runtime;
 
-    if (mybot_agora_rtc_init(params->rtc_app_id, &callbacks) < 0) {
+    if (mybot_agora_rtc_init(params->routes[0].rtc_app_id, &callbacks) < 0) {
         AOSL_LOG_ERR("failed to initialize Agora RTC");
         mybot_device_lifecycle_notify_conversation_ended(&runtime->lifecycle);
         return;
     }
 
-    AOSL_LOG_NTC("joining RTC channel=%s uid=%s", params->rtc_channel, params->rtc_uid);
-    if (mybot_agora_rtc_join(params->rtc_channel, params->rtc_token, params->rtc_uid,
-                             params->rtc_agent_uid, params->audio_publisher_uid) < 0) {
+    AOSL_LOG_NTC("joining translation RTC routes=%u", params->route_count);
+    if (mybot_agora_rtc_join(params->routes, params->route_count) < 0) {
         AOSL_LOG_ERR("failed to join Agora RTC channel");
         mybot_device_lifecycle_notify_conversation_ended(&runtime->lifecycle);
         return;
@@ -683,12 +740,16 @@ static void dev_on_conversation_start(const mybot_device_conversation_t *params,
 static void dev_on_conversation_stop(void *user_data) {
     mybot_runtime_t *runtime = user_data;
     aosl_atomic_set(&runtime->media_cancel_requested, true);
+    aosl_atomic_set(&runtime->input_direction, MYBOT_TRANSLATION_DIRECTION_NONE);
+    if (strcmp(runtime->lifecycle.error_code, "MODE_CHANGE_FAILED") == 0 ||
+        strcmp(runtime->lifecycle.error_code, "DIRECTION_CHANGE_FAILED") == 0)
+        runtime->lifecycle.error_code[0] = '\0';
     close_caption_inbox(runtime, true);
     refresh_caption_metadata(runtime);
     aosl_atomic_inc(&runtime->conversation_generation);
     caption_lock(&runtime->caption_inbox_gate);
     runtime->rtc_channel[0] = '\0';
-    runtime->rtc_agent_uid[0] = '\0';
+    memset(runtime->rtc_agent_uid, 0, sizeof(runtime->rtc_agent_uid));
     aosl_atomic_set(&runtime->caption_inbox_gate, 0);
 #if MYBOT_ENABLE_VIDEO
     if (mybot_video_stop(&runtime->video) < 0) {
@@ -722,6 +783,8 @@ static void refresh_translation_view(mybot_runtime_t *runtime) {
                                     runtime->lifecycle.error_code, volume);
     runtime->presenter.media_ready = aosl_atomic_read(&runtime->media.rtc_connected) != 0;
     runtime->presenter.paused = mybot_media_pipeline_is_paused(&runtime->media);
+    runtime->presenter.translation_mode = runtime->lifecycle.mode;
+    runtime->presenter.input_direction = aosl_atomic_read(&runtime->input_direction);
 }
 
 static bool ui_command_valid(const mybot_ui_command_t *command) {
@@ -732,6 +795,12 @@ static bool ui_command_valid(const mybot_ui_command_t *command) {
         return command->value >= 0 && command->value <= 100;
     case MYBOT_UI_SET_PAUSED:
         return command->value == 0 || command->value == 1;
+    case MYBOT_UI_SET_MODE:
+        return command->value == MYBOT_TRANSLATION_LISTEN ||
+               command->value == MYBOT_TRANSLATION_LISTEN_SPEAK;
+    case MYBOT_UI_SET_DIRECTION:
+        return command->value == MYBOT_TRANSLATION_DIRECTION_LISTEN ||
+               command->value == MYBOT_TRANSLATION_DIRECTION_SPEAK;
     case MYBOT_UI_SET_LANGUAGES: {
         if (!memchr(command->source_language, '\0', sizeof(command->source_language)) ||
             !memchr(command->target_language, '\0', sizeof(command->target_language)) ||
@@ -761,6 +830,45 @@ static void close_ui_commands(mybot_runtime_t *runtime) {
     lock_ui_commands(runtime);
     runtime->ui_head = runtime->ui_count = 0;
     aosl_atomic_set(&runtime->ui_gate, 0);
+}
+
+static bool media_controls_allowed(mybot_runtime_t *runtime) {
+    return runtime_get_state(runtime) == MYBOT_STATE_IN_CONVERSATION &&
+           aosl_atomic_read(&runtime->media.rtc_connected) &&
+           !aosl_atomic_read(&runtime->media_cancel_requested) &&
+           !aosl_atomic_read(&runtime->lifecycle.stop_request);
+}
+
+static int control_set_direction(mybot_runtime_t *runtime,
+                                 mybot_translation_direction_t direction) {
+    if (!media_controls_allowed(runtime) ||
+        runtime->lifecycle.mode != MYBOT_TRANSLATION_LISTEN_SPEAK)
+        return -1;
+    mybot_translation_direction_t previous = aosl_atomic_read(&runtime->input_direction);
+    if (previous == direction && !mybot_media_pipeline_is_paused(&runtime->media))
+        return 0;
+
+    /* Remote producers never wait. Fence their route check as well as the
+     * pipeline queues so a callback admitted before the switch cannot publish
+     * old-direction audio after playback resumes. */
+    unsigned attempts = 0;
+    while (aosl_atomic_cmpxchg(&runtime->remote_route_gate, 0, 1) != 0) {
+        if (++attempts >= 50)
+            return -1;
+        aosl_msleep(1);
+    }
+    int result = -1;
+    if (media_controls_allowed(runtime) &&
+        mybot_media_pipeline_set_paused(&runtime->media, true) == 0) {
+        if (media_controls_allowed(runtime)) {
+            aosl_atomic_set(&runtime->input_direction, direction);
+            result = mybot_media_pipeline_set_paused(&runtime->media, false);
+            if (result < 0)
+                aosl_atomic_set(&runtime->input_direction, previous);
+        }
+    }
+    aosl_atomic_set(&runtime->remote_route_gate, 0);
+    return result;
 }
 
 static void handle_ui_command(const aosl_ts_t *ts, aosl_refobj_t ref, uintptr_t argc,
@@ -794,12 +902,33 @@ static void handle_ui_command(const aosl_ts_t *ts, aosl_refobj_t ref, uintptr_t 
         result = mybot_media_pipeline_set_volume(&runtime->media, command.value);
         break;
     case MYBOT_UI_SET_PAUSED:
-        if (runtime_get_state(runtime) == MYBOT_STATE_IN_CONVERSATION &&
-            aosl_atomic_read(&runtime->media.rtc_connected) &&
-            !aosl_atomic_read(&runtime->media_cancel_requested) &&
-            !aosl_atomic_read(&runtime->lifecycle.stop_request))
+        if (media_controls_allowed(runtime) &&
+            (runtime->lifecycle.mode == MYBOT_TRANSLATION_LISTEN ||
+             aosl_atomic_read(&runtime->input_direction) != MYBOT_TRANSLATION_DIRECTION_NONE))
             result = mybot_media_pipeline_set_paused(&runtime->media, command.value != 0);
         break;
+    case MYBOT_UI_SET_MODE:
+        result = mybot_device_lifecycle_set_mode(&runtime->lifecycle, command.value);
+        if (result == 0)
+            aosl_atomic_set(&runtime->input_direction, MYBOT_TRANSLATION_DIRECTION_NONE);
+        break;
+    case MYBOT_UI_SET_DIRECTION:
+        result = control_set_direction(runtime, command.value);
+        break;
+    }
+    if (command.type == MYBOT_UI_SET_MODE || command.type == MYBOT_UI_SET_DIRECTION) {
+        if (++runtime->presenter.selection_revision == 0)
+            ++runtime->presenter.selection_revision;
+        if (result < 0 && !aosl_atomic_read(&runtime->media_cancel_requested) &&
+            !aosl_atomic_read(&runtime->lifecycle.stop_request)) {
+            snprintf(runtime->lifecycle.error_code, sizeof(runtime->lifecycle.error_code), "%s",
+                     command.type == MYBOT_UI_SET_MODE ? "MODE_CHANGE_FAILED"
+                                                       : "DIRECTION_CHANGE_FAILED");
+        } else if (result == 0 &&
+                   (strcmp(runtime->lifecycle.error_code, "MODE_CHANGE_FAILED") == 0 ||
+                    strcmp(runtime->lifecycle.error_code, "DIRECTION_CHANGE_FAILED") == 0)) {
+            runtime->lifecycle.error_code[0] = '\0';
+        }
     }
     if (result < 0)
         AOSL_LOG_WRN("event=ui_command type=%d result=rejected", (int)command.type);
@@ -1061,6 +1190,9 @@ fail:
 #endif
     if (mybot_media_pipeline_destroy(&runtime->media) < 0) {
         AOSL_LOG_ERR("media pipeline destroy skipped because stop was incomplete");
+    } else {
+        aosl_hal_free(runtime->silent_audio);
+        runtime->silent_audio = NULL;
     }
     caption_lock(&runtime->caption_model_gate);
     mybot_captions_destroy(runtime->captions);
@@ -1246,6 +1378,9 @@ static void control_stop_runtime(mybot_runtime_t *runtime) {
 #endif
     if (mybot_media_pipeline_destroy(&runtime->media) < 0) {
         AOSL_LOG_ERR("media pipeline destroy skipped because stop was incomplete");
+    } else {
+        aosl_hal_free(runtime->silent_audio);
+        runtime->silent_audio = NULL;
     }
 
     caption_lock(&runtime->caption_model_gate);
