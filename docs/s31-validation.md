@@ -1079,3 +1079,38 @@ The descriptor suite initially lacked its UAC header prerequisite while the Korv
 matrix was active, then passed using the existing pinned 1.3.1 header cache.
 Evidence is retained in /private/tmp/mybot-gcc-bool-fix-dxdyf7sk/full-gcc-results.json.
 This is local compiler validation, not a remote Ubuntu CI result.
+
+## Final review-series board/language matrix (2026-11-06)
+
+All four variants pass direct ESP-IDF v6.1 preview builds, merge-bin delivery and
+the source/link/partition checks at eec75e64ddcbe7e7e5e59383d01795a6f3e3edfd:
+
+| Board | Language | Application bytes | Minimum OTA free bytes | Source dirty |
+| --- | --- | ---: | ---: | --- |
+| esp32-s31-korvo-1 | zh-CN | 3,545,168 | 583,600 | true |
+| esp32-s31-korvo-1 | en-US | 3,626,128 | 502,640 | true |
+| esp-mosaico-v1.2 | en-US | 3,748,752 | 380,016 | false |
+| esp-mosaico-v1.2 | zh-CN | 3,667,776 | 460,992 | false |
+
+Korvo's dirty flag records IDF's board-specific regeneration of dependencies.lock;
+the manifests retain the actual input hashes. Returning to Mosaico restored the
+committed lock contents. Every OTA slot exceeds the required 307,200 free bytes.
+Checks cover RISC-V/local AOSL, pinned RTSA and link members, video disabled,
+embedded/frozen source provenance, flash segments, partition layout and merged
+image hashes. Korvo has no UAC/Mosaico wrapper component. Mosaico's UAC component
+is CONFIG_ONLY, and no variant compiles usb_device_uac.c. The earlier Chinese
+build/ELF inspection remains the evidence for six live callbacks, DWC2 patches,
+PIO configuration and internal reaper placement; those inspections were not repeated
+for every matrix variant.
+
+With explicit user authorization, inactive contexts were atomically archived
+under build/validation-archives/review-matrix-21fc3v5r. All compilation and active
+sdkconfig use remained at build/korvo-s31. Results, full application/merged SHA-256
+values, manifests and logs are retained in that archive's results.json and
+deliveries directory. The original Mosaico Chinese context was restored; its
+application SHA-256 remained
+99f2890d90c4ab02b9bd7ed1f30197eb816cec289b03c996d5fdac4b7ae0ae38.
+Hash inventories confirm all eight mosaico-uac-passed and nine meeting-listen-passed
+backup files are unchanged. No device was flashed. The subsequent GCC fixture
+correction changes test setup only; these matrix results remain firmware-source
+evidence rather than hardware acceptance of the review fixes.
