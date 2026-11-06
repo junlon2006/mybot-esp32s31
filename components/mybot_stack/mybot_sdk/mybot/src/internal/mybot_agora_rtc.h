@@ -56,7 +56,8 @@ typedef struct {
 } mybot_agora_rtc_callbacks_t;
 
 /** Initialize a fresh RTSA service and forwarding queue for one conversation.
- * The previous conversation must have completed mybot_agora_rtc_fini(). */
+ * The previous conversation must have completed mybot_agora_rtc_fini(). A
+ * vendor init failure is terminal until device restart in the pinned RTSA. */
 int mybot_agora_rtc_init(const char *app_id, const mybot_agora_rtc_callbacks_t *callbacks);
 
 /**
@@ -79,7 +80,7 @@ int mybot_agora_rtc_join(const mybot_device_translation_route_t *routes, size_t 
 /** End the conversation, finalize RTSA and join the forwarding queue.
  * Cancel media sends before calling. A successful global RTSA fini supersedes
  * intermediate leave/destroy errors. Queue teardown can be retried; a failed
- * vendor global fini is terminal until device restart and is never repeated.
+ * vendor init or global fini is terminal until device restart and is never repeated.
  * Returns zero only when both vendor and forwarding resources were released. */
 int mybot_agora_rtc_fini(void);
 

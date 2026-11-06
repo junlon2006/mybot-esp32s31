@@ -7,6 +7,7 @@
 #include "mybot_kv_store_internal.h"
 
 #include <api/aosl_atomic.h>
+#include <mybot/platform/mybot_audio.h>
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -72,6 +73,7 @@ typedef struct {
     char target_language[33];
     /** Session selection is volatile; boot always starts with media/listen. */
     mybot_translation_mode_t mode;
+    mybot_audio_source_t audio_source;
     char error_code[64];
     mybot_device_lifecycle_callbacks_t cbs;
     mybot_kv_store_t *kv_store;
@@ -145,6 +147,13 @@ void mybot_device_lifecycle_notify_credentials_expiring(mybot_device_lifecycle_t
 int mybot_device_lifecycle_cycle_language(mybot_device_lifecycle_t *lifecycle, bool source);
 /** Set both supported languages in one durable record while idle. */
 int mybot_device_lifecycle_set_languages(mybot_device_lifecycle_t *lifecycle, const char *source,
+                                         const char *target);
+/** Select mode, audio source and an optional language pair while idle. Persist
+ * changed languages before publishing any selection changes. NULL languages
+ * preserve the pair. Audio source and mode are not persisted. */
+int mybot_device_lifecycle_set_selection(mybot_device_lifecycle_t *lifecycle,
+                                         mybot_translation_mode_t mode,
+                                         mybot_audio_source_t audio_source, const char *source,
                                          const char *target);
 /** Select media or face-to-face only while idle; does not write KV. */
 int mybot_device_lifecycle_set_mode(mybot_device_lifecycle_t *lifecycle,

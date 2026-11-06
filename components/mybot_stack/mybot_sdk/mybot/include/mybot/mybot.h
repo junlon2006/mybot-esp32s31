@@ -35,7 +35,7 @@ typedef struct {
      *  may be empty. */
     char hw_model[32];
     /** Initial input/output languages for media, or my/other languages for
-     *  face-to-face. Startup defaults to media. Persisted device
+     *  face-to-face and meeting. Startup defaults to media. Persisted device
      *  selections take precedence. Both must be non-empty, distinct identifiers
      *  containing only ASCII letters, digits and '-'. Supported languages depend
      *  on the service; the UI list is exposed by mybot_ui_languages(). */
@@ -116,8 +116,9 @@ typedef enum {
  * - Register one complete mybot_platform_descriptor_t first. Wi-Fi, KV, key,
  *   audio capture/playback and HTTPS are required by this S31 product.
  * - Plain "http://" is rejected unless MYBOT_ALLOW_INSECURE_HTTP=ON is set for
- *   development builds. This product supports V2VT media and face-to-face
- *   translation; it has no video.
+ *   development builds. This product supports V2VT media, face-to-face and
+ *   USB meeting translation (when the platform supplies USB capture/playback);
+ *   it has no video.
  *
  * The configuration is validated (non-NULL cfg, NUL-terminated strings,
  * non-empty server_base / device_id, supported URL scheme). Calling

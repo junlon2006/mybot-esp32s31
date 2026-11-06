@@ -36,7 +36,7 @@ and current limitations.
 - A native 480×480 LVGL layout for Mosaico CO5300 QSPI / CST9220 touch; the earlier Korvo keeps its 800×480 layout.
 - Native media and face-to-face controls for languages, start/stop, local pause and actual volume;
   The AI key also starts/stops translation. Face-to-face shares one parent session, two RTC connections
-  and one RTM channel subscription. Meeting remains a settings preview.
+  and one RTM channel subscription. Mosaico meetings translate PC English to the device speaker in Chinese while translating the device microphone to English on the PC USB input.
 - Localized pairing and Wi-Fi provisioning prompts, with the actual hotspot name shown during
   provisioning.
 
@@ -94,7 +94,11 @@ translation, cancels a pending start or retries cleanup. Hold AI for 3 seconds t
 On-screen volume is saved in NVS. Live captions, scrollable full text and session history share RTM text.
 See the [translation UI](docs/PLATFORM_UI.md).
 
-Mosaico translation firmware exposes a native Type-C CDC log console. USB audio routing is deferred.
+Mosaico translation firmware exposes one native Type-C UAC2/CDC composite device. Meetings
+send PC playback to the LISTEN Agent and the physical microphone to the SPEAK Agent concurrently.
+LISTEN output plays on the device speaker; SPEAK output returns through the USB microphone.
+Boundary filters convert between USB 48 kHz stereo and SDK 16 kHz mono.
+See the [USB integration guide](docs/MOSAICO_USB_AUDIO.zh-CN.md).
 The passed [standalone UAC diagnostic](diagnostics/mosaico_uac/README.zh-CN.md) is preserved for future meeting work.
 Korvo-only [CDC](docs/USB_CDC_PROBE.zh-CN.md) and [Host](docs/USB_HOST_PROBE.zh-CN.md) probes remain opt-in.
 

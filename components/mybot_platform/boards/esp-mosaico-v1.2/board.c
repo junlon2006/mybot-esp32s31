@@ -6,6 +6,7 @@
 #include "mosaico_usb_console.h"
 #include "announcement/embedded_pcm_prompt.h"
 #include "network/wifi_control.h"
+#include "usb/mosaico_usb_audio.h"
 #include "esp_log.h"
 
 const mybot_audio_capture_ops_t *mybot_mosaico_audio_capture_ops(void);
@@ -61,6 +62,8 @@ static int register_platform(void) {
         .kv_store = mybot_esp_idf_kv_store_ops(),
         .key = mybot_mosaico_key_ops(),
         .audio_capture = mybot_mosaico_audio_capture_ops(),
+        .audio_usb_capture = mosaico_usb_audio_capture_ops(),
+        .audio_usb_playback = mosaico_usb_audio_playback_ops(),
         .audio_playback = mybot_mosaico_audio_playback_ops(),
         .audio_volume = mybot_mosaico_audio_volume_ops(),
         .announce = mybot_korvo_s31_announce_ops(),

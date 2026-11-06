@@ -38,3 +38,11 @@ producer-gate contention, failed pause/resume and scratch allocation failure.
 Pipeline pause fencing itself is covered by `tests/media_pause`. UI command tests
 also verify mode/direction completion revisions, including repeated failures,
 successful retries and unrelated volume/caption refreshes.
+
+Meeting selects USB capture/playback together with LISTEN_SPEAK and local/remote
+languages. Control tests require both USB capabilities, reject the obsolete USB+LISTEN
+topology, prevent cloud start when USB cannot start, and release prepared USB media
+after a failed/cancelled start. Both cloud-AEC configurations exercise simultaneous
+MIC→SPEAK and USB→LISTEN uplink with isolated remote destinations, meeting pause,
+USB disconnect admission closure, and retained resources after worker/RTC teardown
+failure. The USB pipeline is freed only after both RTC callbacks and workers drain.

@@ -13,3 +13,7 @@ The runner also compiles the production CST9220 adapter with a fake interrupt/pa
 It checks idle polls without duplicate I2C reads, short IRQ pulses and level fallback, an IRQ
 during level sampling, cached held contacts, explicit release, invalid reads, coordinate
 bounds, cleanup retries and fresh-owner state. Controller protocol bytes are not emulated.
+
+Snapshot delivery checks exercise capability-only and audio-source-only changes through
+the real adapter and its refresh timer, including queued value ownership and clearing
+back to the default codec source. This catches fields lost between presenter and view.

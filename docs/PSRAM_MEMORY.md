@@ -11,3 +11,18 @@ Synchronization objects, task control blocks, ISR state and stacks that perform 
 PSRAM task stacks use IDF capability-aware task allocation. Owners wait for I/O/callback completion and worker suspension before deleting the task and freeing its stack. Timeout preserves ownership for later cleanup. The shared PCM tests cover failure, partial cleanup, timeout and repeated lifecycle operations.
 
 Video and its S3 DMA-buffer workaround are absent. Do not tune memory based on removed camera code or copy S3 cache/heap reserves blindly. The [validation record](s31-validation.md) separates configuration/build checks from measured hardware results.
+
+
+The S31 AOSL adapter places audited PCM capture/playback/send task stacks (`cap_mpq`,
+`pb_mpq`, `mybot_mpq`), the HTTP/JSON worker (`service_mpq`), and the project RTC
+forwarding worker (`mybot_rtc`) in PSRAM. Duplex media uses six 16 KiB audio stacks;
+with the 16 KiB HTTP and 8 KiB forwarding stacks, this reduces internal-stack demand
+by about 120 KiB without shrinking any stack or changing priority.
+
+The NVS-writing control worker and opaque vendor RTSA tasks retain internal stacks.
+Creation/deletion use matching IDF WithCaps APIs, selected at deletion from the
+actual stack address. Allocation logs report placement and, on failure, the requested
+size and free/largest internal and PSRAM blocks. Existing PCM queues, USB media objects,
+captions, RTC event copies, TLS and codec scratch already use PSRAM. USB ISR-visible
+rings/packets remain internal. This change retains static application layout and does
+not enable the global external-BSS option, which also relocates Wi-Fi/lwIP state.

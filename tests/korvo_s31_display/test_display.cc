@@ -388,12 +388,37 @@ int main(int argc, char **argv) {
         CHECK(ops->init(&ctx) == 0 && ctx);
         if (scenario == "normal" || scenario == "touch_read") {
             mybot_lcd_content_t content{};
+            content.screen = MYBOT_LCD_SCREEN_READY;
+            CHECK(ops->render(ctx, &content) == 0);
+            CHECK(lvgl_port_lock(100));
+            timer.callback(&timer);
+            CHECK(!applied.usb_audio_available && applied.audio_source == MYBOT_AUDIO_SOURCE_CODEC);
+            lvgl_port_unlock();
+            // Capability-only updates must reach the view before entering Meeting.
+            content.usb_audio_available = true;
+            CHECK(ops->render(ctx, &content) == 0);
+            content.usb_audio_available = false; // queued snapshot owns its values
+            CHECK(lvgl_port_lock(100));
+            timer.callback(&timer);
+            CHECK(applied.usb_audio_available && applied.audio_source == MYBOT_AUDIO_SOURCE_CODEC);
+            lvgl_port_unlock();
+            // LISTEN stays unchanged when switching from media to USB meeting input.
+            content.usb_audio_available = true;
+            content.audio_source = MYBOT_AUDIO_SOURCE_USB;
+            CHECK(ops->render(ctx, &content) == 0);
+            content.audio_source = MYBOT_AUDIO_SOURCE_CODEC;
+            CHECK(lvgl_port_lock(100));
+            timer.callback(&timer);
+            CHECK(applied.usb_audio_available && applied.audio_source == MYBOT_AUDIO_SOURCE_USB);
+            lvgl_port_unlock();
+            content = {};
             content.screen = MYBOT_LCD_SCREEN_PAIR_CODE;
             std::strcpy(content.pair_code, "123456");
             CHECK(ops->render(ctx, &content) == 0);
             CHECK(lvgl_port_lock(100));
             timer.callback(&timer);
             CHECK(applied.screen == content.screen && !std::strcmp(applied.pair_code, "123456"));
+            CHECK(!applied.usb_audio_available && applied.audio_source == MYBOT_AUDIO_SOURCE_CODEC);
             std::strcpy(content.source_language, "en-US");
             std::strcpy(content.target_language, "zh-CN");
             std::strcpy(content.error_code, "stop_pending");

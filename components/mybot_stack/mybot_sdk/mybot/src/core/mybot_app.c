@@ -53,6 +53,10 @@ typedef struct {
     mybot_presenter_t presenter;
     unsigned volume_retry_ticks;
     mybot_media_pipeline_t media;
+    /* Allocated only for meetings; retained until RTC and I/O workers drain. */
+    mybot_media_pipeline_t *usb_media;
+    aosl_atomic_t meeting_active;
+    aosl_atomic_t meeting_control_busy;
     bool media_recovery_required;
 #if MYBOT_ENABLE_VIDEO
     mybot_video_t video;
@@ -283,6 +287,52 @@ static void rtc_on_caption_channel(const char *channel, const char *sender, cons
         receive_caption(user_data, channel, sender, data, len);
 }
 
+static void refresh_translation_view(mybot_runtime_t *runtime);
+
+static int usb_media_send_audio(const void *data, size_t len, void *user_data);
+static void usb_media_error(void *user_data);
+
+/* Called with RTC callbacks drained, or release=false while shutdown is pending. */
+static int stop_usb_media(mybot_runtime_t *runtime, bool release) {
+    aosl_atomic_set(&runtime->meeting_active, false);
+    if (!runtime->usb_media)
+        return 0;
+    if (mybot_media_pipeline_stop(runtime->usb_media) < 0 || !release)
+        return -1;
+    if (mybot_media_pipeline_destroy(runtime->usb_media) < 0)
+        return -1;
+    aosl_hal_free(runtime->usb_media);
+    runtime->usb_media = NULL;
+    return 0;
+}
+
+static bool end_session_media(mybot_runtime_t *runtime, bool rtc_stopped) {
+    int physical = mybot_media_pipeline_end_session(&runtime->media);
+    int usb = stop_usb_media(runtime, rtc_stopped);
+    return physical < 0 || usb < 0;
+}
+
+static int start_usb_media(mybot_runtime_t *runtime) {
+    const mybot_platform_descriptor_t *platform = mybot_platform_registry_get();
+    if (!platform->audio_usb_capture || !platform->audio_usb_playback || runtime->usb_media)
+        return -1;
+    runtime->usb_media = aosl_hal_malloc(sizeof(*runtime->usb_media));
+    if (!runtime->usb_media)
+        return -1;
+    mybot_media_pipeline_init(runtime->usb_media);
+    mybot_media_pipeline_callbacks_t callbacks = {
+        .send_audio = usb_media_send_audio,
+        .on_audio_error = usb_media_error,
+        .user_data = runtime,
+    };
+    if (mybot_media_pipeline_start_usb(runtime->usb_media, &callbacks) < 0) {
+        runtime->media_recovery_required = stop_usb_media(runtime, true) < 0;
+        return -1;
+    }
+    aosl_atomic_set(&runtime->meeting_active, true);
+    return 0;
+}
+
 static void control_start_conversation(mybot_runtime_t *runtime) {
     if (runtime_get_state(runtime) == MYBOT_STATE_READY ||
         runtime_get_state(runtime) == MYBOT_STATE_TRANSLATION_ERROR) {
@@ -298,9 +348,9 @@ static void control_start_conversation(mybot_runtime_t *runtime) {
             AOSL_LOG_ERR("local RTC cleanup incomplete; cloud translation start rejected");
             return;
         }
-        if (runtime->media_recovery_required || mybot_media_pipeline_is_paused(&runtime->media)) {
-            runtime->media_recovery_required =
-                mybot_media_pipeline_end_session(&runtime->media) < 0;
+        if (runtime->media_recovery_required || runtime->usb_media ||
+            mybot_media_pipeline_is_paused(&runtime->media)) {
+            runtime->media_recovery_required = end_session_media(runtime, true);
             if (runtime->media_recovery_required) {
                 snprintf(runtime->lifecycle.error_code, sizeof(runtime->lifecycle.error_code),
                          "MEDIA_NOT_READY");
@@ -311,7 +361,22 @@ static void control_start_conversation(mybot_runtime_t *runtime) {
                 runtime->lifecycle.error_code[0] = '\0';
         }
         aosl_atomic_set(&runtime->media_cancel_requested, false);
+        if (runtime->lifecycle.audio_source == MYBOT_AUDIO_SOURCE_USB &&
+            start_usb_media(runtime) < 0) {
+            snprintf(runtime->lifecycle.error_code, sizeof(runtime->lifecycle.error_code),
+                     "USB_AUDIO_NOT_READY");
+            refresh_translation_view(runtime);
+            mybot_presenter_render_state(&runtime->presenter, &runtime->state_model);
+            return;
+        }
+        if (aosl_atomic_read(&runtime->media_cancel_requested)) {
+            runtime->media_recovery_required = end_session_media(runtime, true);
+            return;
+        }
         mybot_device_lifecycle_request_start(&runtime->lifecycle);
+        if (!runtime->lifecycle.conversation_requested &&
+            runtime->lifecycle.audio_source == MYBOT_AUDIO_SOURCE_USB)
+            runtime->media_recovery_required = end_session_media(runtime, true);
     }
 }
 
@@ -475,8 +540,11 @@ static void sync_wake_words(mybot_runtime_t *runtime) {
 
 static int media_send_audio(const void *data, size_t len, void *user_data) {
     mybot_runtime_t *runtime = user_data;
-    if (aosl_atomic_read(&runtime->media_cancel_requested))
+    if (aosl_atomic_read(&runtime->media_cancel_requested) ||
+        aosl_atomic_read(&runtime->meeting_control_busy))
         return 0;
+    if (aosl_atomic_read(&runtime->meeting_active))
+        return mybot_agora_rtc_send_audio(MYBOT_TRANSLATION_DIRECTION_SPEAK, data, len);
     if (aosl_atomic_read(&runtime->audio_mode) == MYBOT_TRANSLATION_LISTEN)
         return mybot_agora_rtc_send_audio(MYBOT_TRANSLATION_DIRECTION_LISTEN, data, len);
 
@@ -499,6 +567,25 @@ static int media_send_audio(const void *data, size_t len, void *user_data) {
             result = -1;
     }
     return result;
+}
+
+static int usb_media_send_audio(const void *data, size_t len, void *user_data) {
+    mybot_runtime_t *runtime = user_data;
+    if (aosl_atomic_read(&runtime->media_cancel_requested) ||
+        aosl_atomic_read(&runtime->meeting_control_busy) ||
+        !aosl_atomic_read(&runtime->meeting_active))
+        return 0;
+    return mybot_agora_rtc_send_audio(MYBOT_TRANSLATION_DIRECTION_LISTEN, data, len);
+}
+
+static void usb_media_error(void *user_data) {
+    mybot_runtime_t *runtime = user_data;
+    /* I/O workers only close admission and notify the control worker. */
+    aosl_atomic_set(&runtime->media_cancel_requested, true);
+    mybot_media_pipeline_set_rtc_connected(&runtime->media, false);
+    if (runtime->usb_media)
+        mybot_media_pipeline_set_rtc_connected(runtime->usb_media, false);
+    mybot_device_lifecycle_notify_conversation_ended(&runtime->lifecycle);
 }
 
 static void media_on_wake_word(const char *wake_word, void *user_data) {
@@ -576,9 +663,15 @@ static void rtc_on_remote_audio(mybot_translation_direction_t direction, uint32_
     mybot_runtime_t *runtime = user_data;
     if (aosl_atomic_cmpxchg(&runtime->remote_route_gate, 0, 1) != 0)
         return;
-    if (!aosl_atomic_read(&runtime->media_cancel_requested) &&
-        direction == aosl_atomic_read(&runtime->input_direction)) {
-        mybot_media_pipeline_push_remote_audio(&runtime->media, data, len);
+    if (!aosl_atomic_read(&runtime->media_cancel_requested)) {
+        if (aosl_atomic_read(&runtime->meeting_active)) {
+            if (direction == MYBOT_TRANSLATION_DIRECTION_LISTEN)
+                mybot_media_pipeline_push_remote_audio(&runtime->media, data, len);
+            else if (direction == MYBOT_TRANSLATION_DIRECTION_SPEAK && runtime->usb_media)
+                mybot_media_pipeline_push_remote_audio(runtime->usb_media, data, len);
+        } else if (direction == aosl_atomic_read(&runtime->input_direction)) {
+            mybot_media_pipeline_push_remote_audio(&runtime->media, data, len);
+        }
     }
     aosl_atomic_set(&runtime->remote_route_gate, 0);
 }
@@ -588,6 +681,8 @@ static void rtc_on_state_changed(mybot_rtc_state_t state, void *user_data) {
     bool connected =
         state == MYBOT_RTC_STATE_CONNECTED && !aosl_atomic_read(&runtime->media_cancel_requested);
     mybot_media_pipeline_set_rtc_connected(&runtime->media, connected);
+    if (runtime->usb_media)
+        mybot_media_pipeline_set_rtc_connected(runtime->usb_media, connected);
 #if MYBOT_ENABLE_VIDEO
     if (connected) {
         queue_video_control(runtime, VIDEO_CONTROL_START, 0);
@@ -673,12 +768,14 @@ static void dev_on_conversation_start(const mybot_device_conversation_t *params,
                          (uint32_t)aosl_atomic_read(&runtime->conversation_generation));
     aosl_atomic_set(&runtime->caption_model_gate, 0);
     refresh_caption_metadata(runtime);
-    if (mybot_media_pipeline_flush_session(&runtime->media) < 0) {
+    if (mybot_media_pipeline_flush_session(&runtime->media) < 0 ||
+        (runtime->usb_media && mybot_media_pipeline_flush_session(runtime->usb_media) < 0)) {
         AOSL_LOG_ERR("failed to flush media session before RTC join");
         mybot_device_lifecycle_notify_conversation_ended(&runtime->lifecycle);
         return;
     }
-    if (params->mode == MYBOT_TRANSLATION_LISTEN_SPEAK && !runtime->silent_audio) {
+    if (params->mode == MYBOT_TRANSLATION_LISTEN_SPEAK &&
+        !aosl_atomic_read(&runtime->meeting_active) && !runtime->silent_audio) {
         runtime->silent_audio =
             aosl_hal_malloc(MYBOT_MEDIA_FRAME_BYTES * (MYBOT_CLOUD_AEC ? 2U : 1U));
         if (!runtime->silent_audio) {
@@ -741,6 +838,18 @@ static void dev_on_conversation_stop(void *user_data) {
     mybot_runtime_t *runtime = user_data;
     aosl_atomic_set(&runtime->media_cancel_requested, true);
     aosl_atomic_set(&runtime->input_direction, MYBOT_TRANSLATION_DIRECTION_NONE);
+    if (runtime->usb_media) {
+        /* Clear both device queues before any potentially slow RTC finalization.
+         * A disconnect already closed rtc_connected; quiesce still owns playback. */
+        int physical = aosl_atomic_read(&runtime->media.running)
+                           ? mybot_media_pipeline_quiesce(&runtime->media)
+                           : 0;
+        int usb = aosl_atomic_read(&runtime->usb_media->running)
+                      ? mybot_media_pipeline_quiesce(runtime->usb_media)
+                      : 0;
+        if (physical < 0 || usb < 0)
+            AOSL_LOG_WRN("meeting audio quiesce incomplete; session cleanup will retry");
+    }
     if (strcmp(runtime->lifecycle.error_code, "MODE_CHANGE_FAILED") == 0 ||
         strcmp(runtime->lifecycle.error_code, "DIRECTION_CHANGE_FAILED") == 0)
         runtime->lifecycle.error_code[0] = '\0';
@@ -760,7 +869,8 @@ static void dev_on_conversation_stop(void *user_data) {
      * next device state, so the old conversation overlay cannot win a race. */
     mybot_presenter_render_state(&runtime->presenter, &runtime->state_model);
     /* RTSA belongs to this conversation, including its App ID and callback queue. */
-    if (mybot_agora_rtc_fini() < 0) {
+    bool rtc_stopped = mybot_agora_rtc_fini() == 0;
+    if (!rtc_stopped) {
         const char *error = runtime->lifecycle.error_code;
         if (!error[0] || strcmp(error, "START_UNKNOWN") == 0 ||
             strcmp(error, "CLEANUP_PENDING") == 0 || strcmp(error, "CLEANUP_AUTH_REJECTED") == 0)
@@ -768,7 +878,7 @@ static void dev_on_conversation_stop(void *user_data) {
                      "RTC_NOT_READY");
         AOSL_LOG_ERR("failed to finalize RTC conversation");
     }
-    runtime->media_recovery_required = mybot_media_pipeline_end_session(&runtime->media) < 0;
+    runtime->media_recovery_required = end_session_media(runtime, rtc_stopped);
     if (runtime->media_recovery_required)
         AOSL_LOG_ERR("local media teardown incomplete; the next start must recover audio first");
 }
@@ -784,6 +894,10 @@ static void refresh_translation_view(mybot_runtime_t *runtime) {
     runtime->presenter.media_ready = aosl_atomic_read(&runtime->media.rtc_connected) != 0;
     runtime->presenter.paused = mybot_media_pipeline_is_paused(&runtime->media);
     runtime->presenter.translation_mode = runtime->lifecycle.mode;
+    runtime->presenter.audio_source = runtime->lifecycle.audio_source;
+    runtime->presenter.usb_audio_available =
+        mybot_platform_registry_get()->audio_usb_capture != NULL &&
+        mybot_platform_registry_get()->audio_usb_playback != NULL;
     runtime->presenter.input_direction = aosl_atomic_read(&runtime->input_direction);
 }
 
@@ -796,8 +910,23 @@ static bool ui_command_valid(const mybot_ui_command_t *command) {
     case MYBOT_UI_SET_PAUSED:
         return command->value == 0 || command->value == 1;
     case MYBOT_UI_SET_MODE:
-        return command->value == MYBOT_TRANSLATION_LISTEN ||
-               command->value == MYBOT_TRANSLATION_LISTEN_SPEAK;
+        if ((command->value != MYBOT_TRANSLATION_LISTEN &&
+             command->value != MYBOT_TRANSLATION_LISTEN_SPEAK) ||
+            (command->audio_source != MYBOT_AUDIO_SOURCE_CODEC &&
+             command->audio_source != MYBOT_AUDIO_SOURCE_USB) ||
+            (command->audio_source == MYBOT_AUDIO_SOURCE_USB &&
+             (command->value != MYBOT_TRANSLATION_LISTEN_SPEAK ||
+              !mybot_platform_registry_get()->audio_usb_capture ||
+              !mybot_platform_registry_get()->audio_usb_playback)))
+            return false;
+        if (!command->source_language[0] && !command->target_language[0])
+            return true;
+        /* The optional pair is validated by the same rule as language edits. */
+        {
+            mybot_ui_command_t languages = *command;
+            languages.type = MYBOT_UI_SET_LANGUAGES;
+            return ui_command_valid(&languages);
+        }
     case MYBOT_UI_SET_DIRECTION:
         return command->value == MYBOT_TRANSLATION_DIRECTION_LISTEN ||
                command->value == MYBOT_TRANSLATION_DIRECTION_SPEAK;
@@ -842,7 +971,8 @@ static bool media_controls_allowed(mybot_runtime_t *runtime) {
 static int control_set_direction(mybot_runtime_t *runtime,
                                  mybot_translation_direction_t direction) {
     if (!media_controls_allowed(runtime) ||
-        runtime->lifecycle.mode != MYBOT_TRANSLATION_LISTEN_SPEAK)
+        runtime->lifecycle.mode != MYBOT_TRANSLATION_LISTEN_SPEAK ||
+        aosl_atomic_read(&runtime->meeting_active))
         return -1;
     mybot_translation_direction_t previous = aosl_atomic_read(&runtime->input_direction);
     if (previous == direction && !mybot_media_pipeline_is_paused(&runtime->media))
@@ -867,6 +997,39 @@ static int control_set_direction(mybot_runtime_t *runtime,
                 aosl_atomic_set(&runtime->input_direction, previous);
         }
     }
+    aosl_atomic_set(&runtime->remote_route_gate, 0);
+    return result;
+}
+
+static int control_set_paused(mybot_runtime_t *runtime, bool paused) {
+    if (!media_controls_allowed(runtime))
+        return -1;
+    if (!aosl_atomic_read(&runtime->meeting_active)) {
+        if (runtime->lifecycle.mode != MYBOT_TRANSLATION_LISTEN &&
+            aosl_atomic_read(&runtime->input_direction) == MYBOT_TRANSLATION_DIRECTION_NONE)
+            return -1;
+        return mybot_media_pipeline_set_paused(&runtime->media, paused);
+    }
+    unsigned attempts = 0;
+    while (aosl_atomic_cmpxchg(&runtime->remote_route_gate, 0, 1) != 0) {
+        if (++attempts >= 50)
+            return -1;
+        aosl_msleep(1);
+    }
+    aosl_atomic_set(&runtime->meeting_control_busy, true);
+    int result = -1;
+    if (media_controls_allowed(runtime) && runtime->usb_media) {
+        int physical = mybot_media_pipeline_set_paused(&runtime->media, paused);
+        int usb = mybot_media_pipeline_set_paused(runtime->usb_media, paused);
+        if (physical == 0 && usb == 0 && media_controls_allowed(runtime)) {
+            result = 0;
+        } else {
+            /* A partial resume never leaves one direction audible. */
+            (void)mybot_media_pipeline_set_paused(&runtime->media, true);
+            (void)mybot_media_pipeline_set_paused(runtime->usb_media, true);
+        }
+    }
+    aosl_atomic_set(&runtime->meeting_control_busy, false);
     aosl_atomic_set(&runtime->remote_route_gate, 0);
     return result;
 }
@@ -902,13 +1065,13 @@ static void handle_ui_command(const aosl_ts_t *ts, aosl_refobj_t ref, uintptr_t 
         result = mybot_media_pipeline_set_volume(&runtime->media, command.value);
         break;
     case MYBOT_UI_SET_PAUSED:
-        if (media_controls_allowed(runtime) &&
-            (runtime->lifecycle.mode == MYBOT_TRANSLATION_LISTEN ||
-             aosl_atomic_read(&runtime->input_direction) != MYBOT_TRANSLATION_DIRECTION_NONE))
-            result = mybot_media_pipeline_set_paused(&runtime->media, command.value != 0);
+        result = control_set_paused(runtime, command.value != 0);
         break;
     case MYBOT_UI_SET_MODE:
-        result = mybot_device_lifecycle_set_mode(&runtime->lifecycle, command.value);
+        result = mybot_device_lifecycle_set_selection(
+            &runtime->lifecycle, command.value, command.audio_source,
+            command.source_language[0] ? command.source_language : NULL,
+            command.target_language[0] ? command.target_language : NULL);
         if (result == 0)
             aosl_atomic_set(&runtime->input_direction, MYBOT_TRANSLATION_DIRECTION_NONE);
         break;
@@ -975,12 +1138,21 @@ static void dev_on_configuration_changed(const char *source, const char *target,
     mybot_presenter_render_state(&runtime->presenter, &runtime->state_model);
 }
 
+static void release_unclaimed_usb_media(mybot_runtime_t *runtime) {
+    /* Includes allocation/queue failures before STARTING and rejected/unknown
+     * HTTP starts which never acquire a local RTC session. */
+    if (!runtime->lifecycle.conversation_requested && !runtime->lifecycle.start_pending &&
+        !runtime->lifecycle.local_media_active && runtime->usb_media)
+        runtime->media_recovery_required = end_session_media(runtime, mybot_agora_rtc_fini() == 0);
+}
+
 static void dev_on_state_changed(mybot_device_state_t state, void *user_data) {
     mybot_runtime_t *runtime = user_data;
     if (!runtime_is_running(runtime)) {
         return;
     }
     (void)mybot_state_model_set_device_state(&runtime->state_model, state);
+    release_unclaimed_usb_media(runtime);
     refresh_translation_view(runtime);
 
     if (state != MYBOT_DEVICE_STATE_AWAITING_CLAIM) {
@@ -1062,6 +1234,7 @@ static void control_tick_timer(aosl_timer_t id, const aosl_ts_t *now, uintptr_t 
     mybot_runtime_t *runtime = (mybot_runtime_t *)argv[0];
     if (runtime_is_running(runtime)) {
         mybot_device_lifecycle_tick(&runtime->lifecycle);
+        release_unclaimed_usb_media(runtime);
         bool captions_changed = drain_caption_inbox(runtime);
         bool ready = aosl_atomic_read(&runtime->media.rtc_connected) != 0;
         bool media_changed = ready != runtime->presenter.media_ready;
@@ -1094,6 +1267,8 @@ static void cleanup_services(mybot_runtime_t *runtime) {
     if (mybot_media_pipeline_stop(&runtime->media) < 0) {
         AOSL_LOG_ERR("media pipeline stop incomplete");
     }
+    if (runtime->usb_media && mybot_media_pipeline_stop(runtime->usb_media) < 0)
+        AOSL_LOG_ERR("USB media pipeline stop incomplete");
 #if MYBOT_ENABLE_VIDEO
     if (mybot_video_stop(&runtime->video) < 0) {
         AOSL_LOG_ERR("video source stop incomplete");
@@ -1368,9 +1543,12 @@ static void control_stop_runtime(mybot_runtime_t *runtime) {
                                                          : MYBOT_LCD_SCREEN_STOPPING);
     mybot_presenter_deinit(&runtime->presenter);
 
-    if (mybot_agora_rtc_fini() < 0) {
+    bool rtc_stopped = mybot_agora_rtc_fini() == 0;
+    if (!rtc_stopped) {
         AOSL_LOG_ERR("RTC fini incomplete; RTSA reported terminal cleanup failure");
     }
+    if (stop_usb_media(runtime, rtc_stopped) < 0)
+        AOSL_LOG_ERR("USB media destroy pending; resources retained");
 #if MYBOT_ENABLE_VIDEO
     if (mybot_video_destroy(&runtime->video) < 0) {
         AOSL_LOG_ERR("video source destroy incomplete");
@@ -1458,6 +1636,10 @@ static bool destroy_control_queue(mybot_runtime_t *runtime) {
         runtime->lifecycle_initialized = false;
         mybot_kv_store_deinit(&runtime->kv_store);
     }
+    /* Do not release AOSL or permit another start while USB workers still own
+     * callbacks into this runtime. A repeated stop retries retained teardown. */
+    if (runtime->usb_media && (mybot_agora_rtc_fini() < 0 || stop_usb_media(runtime, true) < 0))
+        return false;
     return true;
 }
 

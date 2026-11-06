@@ -16,7 +16,8 @@ list(REMOVE_ITEM AOSL_ADD_INCLUDES_PUBLIC
      "${AOSL_DIR}/platform/src/esp32-s3/config")
 list(PREPEND AOSL_ADD_INCLUDES_PUBLIC "${COMPONENT_PATH}/s31_port/config")
 list(APPEND AOSL_ADD_SOURCES
-     "${COMPONENT_PATH}/s31_port/aosl_hal_os_version.c")
+     "${COMPONENT_PATH}/s31_port/aosl_hal_os_version.c"
+     "${COMPONENT_PATH}/s31_port/aosl_task_stack.c")
 
 idf_component_register(SRCS ${AOSL_ADD_SOURCES}
                        INCLUDE_DIRS ${AOSL_ADD_INCLUDES_PUBLIC}
@@ -27,5 +28,10 @@ idf_component_register(SRCS ${AOSL_ADD_SOURCES}
 set_source_files_properties("${AOSL_DIR}/platform/src/esp32-s3/aosl_hal_utils.c"
     PROPERTIES COMPILE_DEFINITIONS
     "aosl_hal_os_version=mybot_aosl_legacy_os_version")
+# Restrict the task-stack adapter to this upstream translation unit. Other
+# FreeRTOS users retain their own allocation and deletion contracts.
+set_property(SOURCE "${AOSL_DIR}/platform/src/esp32-s3/aosl_hal_thread.c"
+    APPEND PROPERTY COMPILE_OPTIONS
+    "-include" "${COMPONENT_PATH}/s31_port/aosl_task_stack_redirect.h")
 target_compile_options(${COMPONENT_LIB} PRIVATE ${AOSL_ADD_OPTIONS})
 target_compile_definitions(${COMPONENT_LIB} PRIVATE ${AOSL_ADD_DEFINITIONS})

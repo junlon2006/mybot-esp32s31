@@ -1193,7 +1193,42 @@ static void face_partial_start_cleans_one_parent(void) {
     dispose(&fixture);
 }
 
+static void usb_selection_is_atomic_and_idle_only(void) {
+    fixture_t fixture;
+    bound(&fixture);
+    unsigned before = fixture.configurations;
+    assert(mybot_device_lifecycle_set_selection(&fixture.lifecycle, MYBOT_TRANSLATION_LISTEN_SPEAK,
+                                                MYBOT_AUDIO_SOURCE_USB, "zh-CN", "en-US") == 0);
+    assert(fixture.lifecycle.audio_source == MYBOT_AUDIO_SOURCE_USB);
+    assert(fixture.lifecycle.mode == MYBOT_TRANSLATION_LISTEN_SPEAK);
+    assert(!strcmp(fixture.lifecycle.source_language, "zh-CN"));
+    assert(!strcmp(fixture.lifecycle.target_language, "en-US"));
+    assert(fixture.configurations == before + 1);
+    assert(mybot_device_lifecycle_set_mode(&fixture.lifecycle, MYBOT_TRANSLATION_LISTEN) < 0);
+    mybot_device_service_request_t *request = starting(&fixture);
+    assert(request->payload.start.mode == MYBOT_TRANSLATION_LISTEN_SPEAK);
+    assert(!strcmp(request->payload.start.source_language, "zh-CN"));
+    assert(mybot_device_lifecycle_set_selection(&fixture.lifecycle, MYBOT_TRANSLATION_LISTEN_SPEAK,
+                                                MYBOT_AUDIO_SOURCE_CODEC, "zh-CN", "en-US") < 0);
+    success_response(request, 80);
+    deliver(&fixture, request);
+    assert(fixture.starts == 1);
+    assert(mybot_device_lifecycle_set_languages(&fixture.lifecycle, "ja-JP", "ko-KR") < 0);
+    request = stopping(&fixture);
+    deliver(&fixture, request);
+    strcpy(fixture.fail_set, "tr_languages");
+    before = fixture.configurations;
+    assert(mybot_device_lifecycle_set_selection(&fixture.lifecycle, MYBOT_TRANSLATION_LISTEN_SPEAK,
+                                                MYBOT_AUDIO_SOURCE_CODEC, "ja-JP", "ko-KR") < 0);
+    assert(fixture.lifecycle.mode == MYBOT_TRANSLATION_LISTEN_SPEAK);
+    assert(fixture.lifecycle.audio_source == MYBOT_AUDIO_SOURCE_USB);
+    assert(!strcmp(fixture.lifecycle.source_language, "zh-CN"));
+    assert(fixture.configurations == before);
+    dispose(&fixture);
+}
+
 int main(void) {
+    usb_selection_is_atomic_and_idle_only();
     face_mode_is_volatile_and_idle_only();
     face_partial_start_cleans_one_parent();
     successful_stop_clears_cleanup_status();
@@ -1229,6 +1264,6 @@ int main(void) {
     unsynchronized_start_allows_retry_after_sync();
     shutdown_confirmed_stop_does_not_duplicate();
     invalid_initial_configuration();
-    puts("translation lifecycle: 35 fault/lifecycle scenarios passed (UBSan)");
+    puts("translation lifecycle: 36 fault/lifecycle scenarios passed (UBSan)");
     return 0;
 }

@@ -27,6 +27,7 @@ RTSA_FILES = {
     "include/global_config.cmake": "acf697baa23c6b11143bf35b06564c0b924ef78e9d803f91d664e7673e014c21",
 }
 AOSL_SYMBOLS = ("aosl_malloc_impl", "aosl_mpq_create", "aosl_hal_thread_create", "aosl_hal_os_version")
+USB_WRAPPED_SYMBOLS = ("dcd_edpt_xfer", "dcd_event_handler", "usbd_edpt_xfer_fifo")
 
 
 def sha256(path: Path) -> str:
@@ -52,6 +53,36 @@ def verify_bundled_rtsa(project_root: Path) -> None:
         path = component / name
         if not path.is_file() or sha256(path) != expected:
             raise RuntimeError(f"bundled S31 RTSA fingerprint mismatch: {name}")
+
+
+def verify_usb_wrappers(build_dir: Path, app_elf: str, map_text: str) -> None:
+    # IDF copies LINK_OPTIONS to the ELF during project(). A later build-property
+    # append can leave valid-looking wrapper source completely unreferenced.
+    ninja = build_file(build_dir, "build.ninja").read_text()
+    ninja = re.sub(r"\$\r?\n[ \t]*", "", ninja)
+    target = app_elf.replace("$", "$$").replace(" ", "$ ").replace(":", "$:")
+    link = re.search(
+        rf"^build {re.escape(target)}: \S*EXECUTABLE_LINKER\S*[^\n]*\n"
+        r"((?:[ \t]+[^\n]*(?:\n|$))*)", ninja, re.MULTILINE,
+    )
+    flags = re.search(r"^[ \t]+LINK_FLAGS = (.*)$", link.group(1), re.MULTILINE) if link else None
+    link_flags = flags.group(1) if flags else ""
+    for symbol in USB_WRAPPED_SYMBOLS:
+        if not re.search(rf"(?:^|[,\s])--wrap={symbol}(?=$|[,\s])", link_flags):
+            raise RuntimeError(f"Mosaico UAC link must include --wrap={symbol} on {app_elf}")
+
+    # Both the discarded-input section and the cross-reference table contain
+    # symbol names even when --gc-sections removed the wrappers from the ELF.
+    marker = re.search(r"^Linker script and memory map\s*$", map_text, re.MULTILINE)
+    live_map = map_text[marker.end():] if marker else ""
+    live_map = re.split(r"^Cross Reference Table\s*$", live_map, maxsplit=1, flags=re.MULTILINE)[0]
+    for symbol in USB_WRAPPED_SYMBOLS:
+        addresses = re.findall(
+            rf"^[ \t]+0x([0-9a-fA-F]+)[ \t]+__wrap_{symbol}[ \t]*$",
+            live_map, re.MULTILINE,
+        )
+        if not any(int(address, 16) for address in addresses):
+            raise RuntimeError(f"Mosaico UAC wrapper __wrap_{symbol} must have a nonzero live map symbol")
 
 
 def verify_build(build_dir: Path, language: str) -> dict:
@@ -97,6 +128,8 @@ def verify_build(build_dir: Path, language: str) -> dict:
     for symbol in AOSL_SYMBOLS:
         if not re.search(rf"^{symbol}\s+esp-idf/aosl/libaosl\.a\(", map_text, re.MULTILINE):
             raise RuntimeError(f"{symbol} must come from local S31 AOSL")
+    if board == "esp-mosaico-v1.2" and config.get("CONFIG_USB_DEVICE_UAC_AS_PART") == "y":
+        verify_usb_wrappers(build_dir, description["app_elf"], map_text)
     flash = json.loads(build_file(build_dir, "flasher_args.json").read_text())
     if flash.get("extra_esptool_args", {}).get("chip") != "esp32s31":
         raise RuntimeError("flash configuration must target esp32s31")

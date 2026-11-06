@@ -4,7 +4,7 @@ Run `./tests/translation_lifecycle/run.sh` from any directory. The runner compil
 lifecycle implementation with a deterministic KV store, HTTP completion queue, allocator and UTC
 clock, enables UBSan, and enforces a 30-second execution deadline.
 
-The 35 scenarios exercise cancellation before dispatch and after HTTP start, late start results
+The 36 scenarios exercise cancellation before dispatch and after HTTP start, late start results
 across disconnect/reconnect and shutdown, durable unknown outcomes, partial starts carrying cleanup
 IDs, exact original server/device/credential cleanup after endpoint changes or re-pair requests,
 1/2/4/8/16/30-second stop retry intervals, revoked credentials, expiry without renewal, stale and
@@ -33,3 +33,7 @@ bytes. Rejected records remain stored and block another cloud start. A constrain
 one extra chunk header for the page split seen on hardware. It reproduces the old 1456-byte record's
 49-entry first write and failed replacement, then verifies compact start/stop cycles with a 511-byte
 synthetic credential. This is an entry-budget model, not an emulator of the NVS filesystem.
+
+Meeting selection tests commit LISTEN_SPEAK mode, USB source and languages together,
+keep the previous selection on language persistence failure, reject changes once
+a start is requested, and ensure meeting creates two routes under the existing single parent.

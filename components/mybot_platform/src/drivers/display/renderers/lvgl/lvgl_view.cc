@@ -134,6 +134,7 @@ struct View {
     bool failed = false;
     bool command_pending = false;
     int pending_mode = -1;
+    int pending_audio_source = -1;
     int pending_direction = -1;
     uint32_t pending_selection_revision = 0;
     bool start_requested = false;
@@ -172,18 +173,28 @@ bool languages_pending() {
     return s_view.pending_source[0] != '\0';
 }
 bool face_session() {
-    return s_view.content.translation_mode == MYBOT_TRANSLATION_LISTEN_SPEAK;
+    return s_view.content.translation_mode == MYBOT_TRANSLATION_LISTEN_SPEAK &&
+           s_view.content.audio_source == MYBOT_AUDIO_SOURCE_CODEC;
+}
+bool meeting_session() {
+    return s_view.content.audio_source == MYBOT_AUDIO_SOURCE_USB;
+}
+bool meeting_preview() {
+    return s_view.scene == Scene::Meeting && !s_view.content.usb_audio_available;
 }
 mybot_translation_mode_t scene_mode() {
-    return s_view.scene == Scene::Face ? MYBOT_TRANSLATION_LISTEN_SPEAK : MYBOT_TRANSLATION_LISTEN;
+    return s_view.scene == Scene::Media ? MYBOT_TRANSLATION_LISTEN : MYBOT_TRANSLATION_LISTEN_SPEAK;
+}
+mybot_audio_source_t scene_audio_source() {
+    return s_view.scene == Scene::Meeting ? MYBOT_AUDIO_SOURCE_USB : MYBOT_AUDIO_SOURCE_CODEC;
 }
 bool mode_ready() {
-    return s_view.scene != Scene::Meeting && s_view.pending_mode < 0 &&
-           s_view.content.translation_mode == scene_mode();
+    return !meeting_preview() && s_view.pending_mode < 0 &&
+           s_view.content.translation_mode == scene_mode() &&
+           s_view.content.audio_source == scene_audio_source();
 }
 bool languages_allowed() {
-    return s_view.scene == Scene::Meeting ||
-           (mode_ready() && !s_view.command_pending && !languages_pending());
+    return meeting_preview() || (mode_ready() && !s_view.command_pending && !languages_pending());
 }
 uint32_t live_caption_sequence() {
     if (!face_session())
@@ -297,10 +308,10 @@ const char *language_name(const char *code) {
     return code[0] ? code : "--";
 }
 const char *source_code() {
-    return s_view.scene != Scene::Meeting ? s_view.content.source_language : s_view.preview_source;
+    return meeting_preview() ? s_view.preview_source : s_view.content.source_language;
 }
 const char *target_code() {
-    return s_view.scene != Scene::Meeting ? s_view.content.target_language : s_view.preview_target;
+    return meeting_preview() ? s_view.preview_target : s_view.content.target_language;
 }
 const char *scene_name() {
     return s_view.scene == Scene::Media  ? tr("媒体翻译", "Media translation")
@@ -465,13 +476,16 @@ void entry() {
     const char *names[] = {tr("媒体翻译", "Listen"), tr("面对面", "In person"),
                            tr("会议互译", "Meeting")};
     const char *notes[] = {tr("单向听译", "One way"), tr("轮流交流", "Take turns"),
-                           tr("听译与发言 · 待开放", "Two way · Soon")};
+                           s_view.content.usb_audio_available
+                               ? tr("双向会议翻译", "Two-way meeting audio")
+                               : tr("听译与发言 · 待开放", "Two way · Soon")};
     const Action actions[] = {Media, Face, Meeting};
     const uint32_t colors[] = {kTeal, kPurple, kYellow};
     for (unsigned i = 0; i < 3; ++i) {
-        auto *card = button(compact() ? margin() : 24 + i * 256, compact() ? 78 + i * 112 : 108,
-                            compact() ? content_width() : 240, compact() ? 100 : 212, "",
-                            actions[i], colors[i], s_view.pending_mode < 0);
+        auto *card = button(
+            compact() ? margin() : 24 + i * 256, compact() ? 78 + i * 112 : 108,
+            compact() ? content_width() : 240, compact() ? 100 : 212, "", actions[i], colors[i],
+            s_view.pending_mode < 0 && !s_view.command_pending && !languages_pending());
         label(card, 12, compact() ? 12 : 54, compact() ? content_width() - 24 : 216, 40, names[i],
               &mybot_lvgl_font_28);
         label(card, 12, compact() ? 58 : 116, compact() ? content_width() - 24 : 216,
@@ -506,12 +520,15 @@ void setup() {
           : s_view.scene == Scene::Face
               ? tr("连接后选择发言语言，双方轮流交流",
                    "Connect, then select each speaker's language to take turns")
+          : !meeting_preview()
+              ? tr("电脑选择设备输入与输出，双方可同时发言",
+                   "Select this device for computer input and output. Both sides can speak.")
               : tr("界面预览，业务待实现", "UI preview. This scene is not available yet."),
           &mybot_lvgl_font_20, LV_TEXT_ALIGN_CENTER, kMuted);
     button((s_view.width - 364) / 2, 328, 364, 64,
-           s_view.scene != Scene::Meeting ? tr("开始翻译  >", "Start translation  >")
-                                          : tr("待开放", "Coming soon"),
-           Start, s_view.scene != Scene::Meeting ? kTeal : kSoft,
+           !meeting_preview() ? tr("开始翻译  >", "Start translation  >")
+                              : tr("待开放", "Coming soon"),
+           Start, !meeting_preview() ? kTeal : kSoft,
            mode_ready() && idle() && !s_view.command_pending && !languages_pending());
 }
 void languages() {
@@ -544,7 +561,8 @@ void languages() {
            tr("下一页 >", "Next >"), LanguageNext, kSoft, begin + kLanguagesPerPage < count);
 }
 void format_route(char *text, size_t capacity, mybot_translation_direction_t direction) {
-    const bool reverse = face_session() && direction == MYBOT_TRANSLATION_DIRECTION_LISTEN;
+    const bool reverse = s_view.content.translation_mode == MYBOT_TRANSLATION_LISTEN_SPEAK &&
+                         direction == MYBOT_TRANSLATION_DIRECTION_LISTEN;
     std::snprintf(
         text, capacity, "%s  >  %s",
         language_name(reverse ? s_view.content.target_language : s_view.content.source_language),
@@ -560,17 +578,24 @@ void route_label(int y) {
     else if (face_session() && s_view.content.input_direction == MYBOT_TRANSLATION_DIRECTION_NONE)
         std::snprintf(text, sizeof(text), "%s",
                       tr("请选择发言语言", "Choose the speaking language"));
+    else if (meeting_session())
+        std::snprintf(text, sizeof(text), "%s  <>  %s",
+                      language_name(s_view.content.source_language),
+                      language_name(s_view.content.target_language));
     else
         format_route(text, sizeof(text), s_view.content.input_direction);
     auto *route = label(s_view.body, margin(), y, compact() ? content_width() - 116 : 570,
                         compact() ? 52 : 36, text, &mybot_lvgl_font_20, LV_TEXT_ALIGN_LEFT);
     if (route)
         lv_label_set_long_mode(route, LV_LABEL_LONG_DOT);
+    if (meeting_session())
+        s_view.caption_route = route;
 }
 void live() {
     const bool face = face_session();
-    heading(face ? tr("面对面翻译", "Face-to-face translation")
-                 : tr("媒体翻译", "Media translation"),
+    heading(face                ? tr("面对面翻译", "Face-to-face translation")
+            : meeting_session() ? tr("会议互译", "Meeting translation")
+                                : tr("媒体翻译", "Media translation"),
             NoAction, tr("更多 ...", "More ..."), Menu);
     auto *card = button(margin(), compact() ? 74 : 82, content_width(), compact() ? 204 : 202, "",
                         Full, kWhite);
@@ -699,7 +724,9 @@ void refresh_captions() {
         const char *notice = state.caption_generation ? tr("等待字幕", "Waiting for captions")
                                                       : tr("字幕暂不可用", "Captions unavailable");
         caption_text(s_view.caption_target, notice);
-        caption_text(s_view.caption_source, "");
+        caption_text(s_view.caption_source, s_view.page == Page::Live && meeting_session()
+                                                ? tr("双方可同时发言", "Both sides can speak")
+                                                : "");
         caption_text(s_view.caption_notice, "");
         for (unsigned i = 0; i < kCaptionsPerPage; ++i) {
             s_view.history_sequences[i] = 0;
@@ -821,6 +848,11 @@ Message service_message() {
         return {tr("正在结束翻译", "Ending translation"),
                 tr("等待服务端确认停止", "Waiting for the service to confirm stop")};
     if (idle_error()) {
+        if (std::strcmp(s_view.content.error_code, "USB_AUDIO_NOT_READY") == 0)
+            return {tr("电脑音频未开启", "Computer audio is not ready"),
+                    tr("请连接电脑，选择设备输入与输出并播放音频",
+                       "Connect the computer, select this device as input and output, and play "
+                       "audio.")};
         if (std::strcmp(s_view.content.error_code, "RTC_NOT_READY") == 0)
             return {tr("本地连接未恢复", "Local RTC is not ready"),
                     tr("请重试或重启设备", "Retry, or restart the device if this persists.")};
@@ -1027,7 +1059,7 @@ void clicked(lv_event_t *event) {
         const char *destination = s_view.pick_target ? list[index].code : target_code();
         if (std::strcmp(source, destination) == 0)
             return;
-        if (s_view.scene != Scene::Meeting) {
+        if (!meeting_preview()) {
             mybot_ui_command_t request{};
             request.type = MYBOT_UI_SET_LANGUAGES;
             std::snprintf(request.source_language, sizeof(request.source_language), "%s", source);
@@ -1064,20 +1096,32 @@ void clicked(lv_event_t *event) {
     case Media:
     case Face:
     case Meeting: {
-        if (!idle() || s_view.pending_mode >= 0)
+        if (!idle() || s_view.pending_mode >= 0 || s_view.command_pending || languages_pending())
             return;
         const Scene scene = action == Media  ? Scene::Media
                             : action == Face ? Scene::Face
                                              : Scene::Meeting;
         const auto mode =
-            scene == Scene::Face ? MYBOT_TRANSLATION_LISTEN_SPEAK : MYBOT_TRANSLATION_LISTEN;
-        if (scene != Scene::Meeting && s_view.content.translation_mode != mode) {
+            scene == Scene::Media ? MYBOT_TRANSLATION_LISTEN : MYBOT_TRANSLATION_LISTEN_SPEAK;
+        const auto audio_source =
+            scene == Scene::Meeting ? MYBOT_AUDIO_SOURCE_USB : MYBOT_AUDIO_SOURCE_CODEC;
+        const bool preview = scene == Scene::Meeting && !s_view.content.usb_audio_available;
+        if (!preview && (s_view.content.translation_mode != mode ||
+                         s_view.content.audio_source != audio_source)) {
             mybot_ui_command_t request{};
             request.type = MYBOT_UI_SET_MODE;
             request.value = mode;
+            request.audio_source = audio_source;
+            if (s_view.content.audio_source != audio_source) {
+                std::snprintf(request.source_language, sizeof(request.source_language), "%s",
+                              "zh-CN");
+                std::snprintf(request.target_language, sizeof(request.target_language), "%s",
+                              "en-US");
+            }
             if (mybot_ui_submit(&request) < 0)
                 return;
             s_view.pending_mode = mode;
+            s_view.pending_audio_source = audio_source;
             s_view.pending_selection_revision = s_view.content.selection_revision;
         }
         s_view.scene = scene;
@@ -1271,18 +1315,20 @@ void mybot_lvgl_view_update(const mybot_lcd_content_t *content) {
         std::strcmp(previous.source_language, content->source_language) != 0 ||
         std::strcmp(previous.target_language, content->target_language) != 0;
     const bool paused_changed = previous.paused != content->paused;
-    const bool mode_changed = previous.translation_mode != content->translation_mode;
+    const bool mode_changed = previous.translation_mode != content->translation_mode ||
+                              previous.audio_source != content->audio_source;
+    const bool capability_changed = previous.usb_audio_available != content->usb_audio_available;
     const bool direction_changed = previous.input_direction != content->input_direction;
     const bool error_changed = std::strcmp(previous.error_code, content->error_code) != 0;
     const bool detail_changed =
         error_changed || std::strcmp(previous.pair_code, content->pair_code) != 0;
     const bool captions_changed = previous.caption_generation != content->caption_generation ||
                                   previous.caption_revision != content->caption_revision;
-    const bool captions_only = captions_changed && !changed && !language_changed &&
-                               !paused_changed && !mode_changed && !direction_changed &&
-                               !detail_changed && previous.volume == content->volume &&
-                               previous.indicators == content->indicators &&
-                               previous.selection_revision == content->selection_revision;
+    const bool captions_only =
+        captions_changed && !changed && !language_changed && !paused_changed && !mode_changed &&
+        !capability_changed && !direction_changed && !detail_changed &&
+        previous.volume == content->volume && previous.indicators == content->indicators &&
+        previous.selection_revision == content->selection_revision;
     const bool was_pending = s_view.command_pending || languages_pending();
     const int previous_pending_mode = s_view.pending_mode;
     const int previous_pending_direction = s_view.pending_direction;
@@ -1290,9 +1336,13 @@ void mybot_lvgl_view_update(const mybot_lcd_content_t *content) {
     const bool selection_finished =
         content->selection_revision != s_view.pending_selection_revision;
     if (s_view.pending_mode >= 0 &&
-        (!idle() || (selection_finished &&
-                     (content->translation_mode == s_view.pending_mode || content->error_code[0]))))
+        (!idle() ||
+         (selection_finished && ((content->translation_mode == s_view.pending_mode &&
+                                  content->audio_source == s_view.pending_audio_source) ||
+                                 content->error_code[0])))) {
         s_view.pending_mode = -1;
+        s_view.pending_audio_source = -1;
+    }
     if (s_view.pending_direction >= 0 &&
         (!active() ||
          (selection_finished &&
@@ -1342,7 +1392,9 @@ void mybot_lvgl_view_update(const mybot_lcd_content_t *content) {
             if (idle_error())
                 s_view.page = Page::Service;
         } else if (content->screen == MYBOT_LCD_SCREEN_IN_CONVERSATION) {
-            s_view.scene = face_session() ? Scene::Face : Scene::Media;
+            s_view.scene = face_session()      ? Scene::Face
+                           : meeting_session() ? Scene::Meeting
+                                               : Scene::Media;
             s_view.page = s_view.stop_requested ? Page::Service : Page::Live;
         } else {
             s_view.page = Page::Service;
@@ -1353,8 +1405,8 @@ void mybot_lvgl_view_update(const mybot_lcd_content_t *content) {
         s_view.page = Page::Service;
     s_view.start_requested = false;
     if (changed || language_changed || paused_changed || detail_changed || mode_changed ||
-        selection_acknowledged || (direction_changed && s_view.page == Page::Live) ||
-        (was_pending && !captions_only) ||
+        capability_changed || selection_acknowledged ||
+        (direction_changed && s_view.page == Page::Live) || (was_pending && !captions_only) ||
         (s_view.page == Page::Setup || s_view.page == Page::Service))
         redraw();
     else {

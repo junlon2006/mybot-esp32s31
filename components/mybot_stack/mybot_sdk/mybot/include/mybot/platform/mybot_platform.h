@@ -44,6 +44,15 @@ typedef struct {
     const mybot_key_ops_t *key;
     /** Capture operations; required. */
     const mybot_audio_capture_ops_t *audio_capture;
+    /** Optional PC USB playback capture, with the same 16 kHz mono PCM contract.
+     * start() rejects unavailable/disconnected USB playback. It must not alter
+     * the physical codec playback or the process-wide USB device lifetime. */
+    const mybot_audio_capture_ops_t *audio_usb_capture;
+    /** Optional USB microphone return, with 16 kHz mono PCM frame counts.
+     * Register together with audio_usb_capture for meeting translation. start()
+     * permits the host microphone interface to open later; stop() discards
+     * queued PCM without disconnecting the process-wide USB device. */
+    const mybot_audio_playback_ops_t *audio_usb_playback;
     /** Playback operations; required. */
     const mybot_audio_playback_ops_t *audio_playback;
     /** Optional hardware-volume operations. */

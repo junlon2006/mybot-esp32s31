@@ -8,12 +8,14 @@ User instructions take precedence. Preserve unrelated changes; do not commit or 
 The MyBot SDK under `components/mybot_stack/mybot_sdk/mybot/` is a project-maintained
 translation fork. Keep its cloud-AEC MIC/reference PCM contract and 60 ms cadence.
 Media uses `v2vt/listen`; face-to-face uses `listen_speak` with two RTC connections
-and one RTM login/channel subscription. Meeting remains a UI preview. There is no
+and one RTM login/channel subscription. Mosaico meetings also use listen_speak:
+USB capture feeds LISTEN with zero AEC reference; physical MIC feeds SPEAK with the
+physical speaker reference. LISTEN plays on the codec; SPEAK returns through USB IN. There is no
 assistant compatibility runtime. Keep the supplied RTSA library unchanged.
 
 An optional `MYBOT_USB_CDC_PROBE` diagnostic uses native USB Device CDC and leaves
-UART0 as the console/flash path. It is off by default; USB audio/meeting routing
-is not implemented. CDC diagnostic boots skip NVS, network, display, audio and
+UART0 as the console/flash path. It is off by default; this Korvo probe does not
+provide USB audio or meeting routing. CDC diagnostic boots skip NVS, network, display, audio and
 translation startup. J2's host VBUS is hardwired on: firmware does not control or
 validate its power connection. See `docs/USB_CDC_PROBE.zh-CN.md` for its scope.
 The mutually exclusive `MYBOT_USB_HOST_PROBE` runs a diagnostic-only boot with a
@@ -23,7 +25,9 @@ The separate CMake option `MYBOT_MOSAICO_UAC_TEST` builds only the V1.2 diagnost
 under `diagnostics/mosaico_uac`, still in `build/korvo-s31`. It is not a Korvo image
 or the Mosaico translation image. Its passed UAC firmware is a separate hardware
 baseline; the production Mosaico profile currently runs media/face-to-face translation
-with a 480x480 LVGL UI and a USB CDC log console, without USB audio routing.
+with a 480x480 LVGL UI and one composite UAC2/CDC USB device. Meeting converts USB OUT
+48 kHz stereo to SDK 16 kHz mono and interpolates SPEAK PCM back to USB IN. USB IN
+transfers follow the host cadence and return silence outside active translated output. See `docs/MOSAICO_USB_AUDIO.zh-CN.md`.
 
 Keep these other source inputs immutable:
 
@@ -56,6 +60,9 @@ later reclamation, never requiring callers to retry an invalid pointer.
 Large application buffers/stacks use PSRAM as appropriate; keep ISR/kernel state,
 required descriptors and flash-writing stacks in internal memory. Respect S31 DMA
 alignment/cache rules. Do not copy S3 DMA assumptions or link Xtensa binaries.
+The S31 AOSL task adapter puts audited media, service_mpq (HTTP/JSON) and mybot_rtc
+(forwarding) stacks in PSRAM. Keep control_mpq (NVS) and opaque RTSA stacks internal;
+creation/deletion must use matching APIs selected from actual stack placement.
 
 Do not hand-edit generated sdkconfig/build/managed_components/cache files. Edit
 defaults/Kconfig/CMake and regenerate. The user-approved pinned RTSA header/library are versioned immutable inputs.
@@ -71,7 +78,9 @@ Python environment. Record binary/config/map checks separately from real hardwar
 results. Update board docs, validation, source provenance and license notices when
 inputs or hardware facts change. The Korvo media/face-to-face baseline and Mosaico diagnostic USB microphone/speaker
 have user-reported confirmation. The user also confirmed normal Mosaico 480x480
-caption display after changing partial buffers to 40 rows; keep that display baseline.
+caption display after changing partial buffers to 40 rows; keep that display baseline. The user
+confirmed PC-audio meeting listening plays translated Chinese on the device and reported
+bidirectional meeting tests passing after the PSRAM task-stack revision.
 Translation audio quality, AEC and long-duration behavior require their own results.
 Translation route subscription, language controls, cloud AEC and recovery require
 their own hardware results. The development service is https://mybot.sh3t.agoralab.co/api.

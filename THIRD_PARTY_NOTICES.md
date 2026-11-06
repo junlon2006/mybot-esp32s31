@@ -16,7 +16,7 @@ The root Apache-2.0 license applies to project-maintained code unless a file sta
 | Espressif TinyUSB driver 2.4.0 | Apache-2.0 | generated `managed_components/espressif__esp_tinyusb/LICENSE` and file notices |
 | TinyUSB 0.19.0~3 | MIT plus retained file notices | generated `managed_components/espressif__tinyusb/LICENSE` and package file notices |
 | Espressif USB Host library 1.6.0 | Apache-2.0 plus retained file notices | generated `managed_components/espressif__usb/LICENSE` and package file notices |
-| Espressif USB Device UAC 1.3.1 and CMake Utilities 1.3.0 | Apache-2.0 plus retained file notices | diagnostic dependencies; generated `managed_components/espressif__usb_device_uac/license.txt` and `espressif__cmake_utilities/license.txt` |
+| Espressif USB Device UAC 1.3.1 and CMake Utilities 1.3.0 | Apache-2.0 plus retained file notices | production Mosaico and diagnostic dependencies; generated `managed_components/espressif__usb_device_uac/license.txt` and `espressif__cmake_utilities/license.txt` |
 | Official S31 ADC calibration source | Apache-2.0; copyright 2026 Espressif Systems (Shanghai) CO LTD | `components/mybot_platform/boards/esp32-s31-korvo-1/reference/esp32_s31_adc_calibration.c` |
 | Pairing prompt and digit recordings | Apache-2.0, SDK asset provenance | `components/mybot_platform/assets/locales/`, `SOURCES.json` and the retained MyBot license |
 | Noto Sans SC UI glyph subset | SIL Open Font License 1.1 | `components/mybot_platform/src/drivers/display/assets/licenses/LVGL_VIEW_FONT_LICENSE.txt` |
@@ -47,7 +47,7 @@ The four local state emoji are rasterized Noto Color Emoji glyphs supplied by th
 
 The upstream MyBot baseline's own notices may describe packages used by other targets. Those notices remain part of the snapshot and do not define this S31 firmware's active dependency set. Every retained package license and file-level copyright/SPDX notice remains in force.
 
-MyBot SDK modifications for V2VT media and face-to-face translation are maintained by this project under its existing Apache-2.0 license. Upstream copyright and license notices remain intact. The supplied Agora RTSA and official codec sources are unchanged.
+MyBot SDK modifications for V2VT media, face-to-face and bidirectional USB meetings are maintained by this project under its existing Apache-2.0 license. Upstream copyright and license notices remain intact. The supplied Agora RTSA and official codec sources are unchanged.
 
 ## Mosaico hardware integration
 

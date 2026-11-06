@@ -30,6 +30,8 @@ extern "C" {
 
 typedef struct {
     int (*send_audio)(const void *data, size_t len, void *user_data);
+    /* Optional notification from an I/O worker; must not block or tear down. */
+    void (*on_audio_error)(void *user_data);
     void (*on_wake_word)(const char *wake_word, void *user_data);
     void *user_data;
 } mybot_media_pipeline_callbacks_t;
@@ -69,6 +71,7 @@ typedef struct {
 
     void *cap_ctx;
     bool cap_started;
+    bool usb;
     aosl_mpq_t cap_mpq;
     aosl_timer_t cap_timer;
     mybot_ringbuf_t cap_ringbuf;
@@ -105,6 +108,9 @@ typedef struct {
 void mybot_media_pipeline_init(mybot_media_pipeline_t *pipeline);
 int mybot_media_pipeline_start(mybot_media_pipeline_t *pipeline,
                                const mybot_media_pipeline_callbacks_t *callbacks);
+/** USB meeting pipeline: no codec volume, prompts or wake words; zero AEC reference. */
+int mybot_media_pipeline_start_usb(mybot_media_pipeline_t *pipeline,
+                                   const mybot_media_pipeline_callbacks_t *callbacks);
 /**
  * Stop workers, device I/O, and prompts; retain buffers and prompt state until destroy.
  * Returns -1 while any worker remains live.
@@ -116,7 +122,7 @@ int mybot_media_pipeline_destroy(mybot_media_pipeline_t *pipeline);
 void mybot_media_pipeline_set_rtc_connected(mybot_media_pipeline_t *pipeline, bool connected);
 /** Flush all session-owned PCM through the consumer workers. */
 int mybot_media_pipeline_flush_session(mybot_media_pipeline_t *pipeline);
-/** Mark the RTC session ended and synchronously drain its PCM buffers. */
+/** Mark the RTC session ended and drain its PCM. */
 int mybot_media_pipeline_end_session(mybot_media_pipeline_t *pipeline);
 /**
  * Pause/resume local session audio without leaving RTC or changing saved volume.
@@ -128,6 +134,10 @@ int mybot_media_pipeline_end_session(mybot_media_pipeline_t *pipeline);
  * after timeout. On failure query is_paused(); a failed resume stays paused.
  */
 int mybot_media_pipeline_set_paused(mybot_media_pipeline_t *pipeline, bool paused);
+/** Close media admission, stop playback and fence workers even after RTC disconnects.
+ * Meeting teardown uses this before RTC finalization. Retains paused/suspended state
+ * on failure; end_session() retries playback cleanup and restores idle prompts. */
+int mybot_media_pipeline_quiesce(mybot_media_pipeline_t *pipeline);
 bool mybot_media_pipeline_is_paused(const mybot_media_pipeline_t *pipeline);
 #if MYBOT_WAKE_WORDS
 void mybot_media_pipeline_set_wake_words_enabled(mybot_media_pipeline_t *pipeline, bool enabled);
