@@ -1029,3 +1029,14 @@ their generators/tests and license notices remain. The four board/language UI
 variants and font checks pass; Chinese build, source/OTA delivery checks and whitespace
 checks pass. The app size remains 3,671,632 bytes: these assets were never linked,
 so this is a repository cleanup rather than a firmware memory reduction. No flash.
+
+## Review fix 18: simplify the S31 automation builder
+
+The builder accepts the two registered S31 profiles, defaults to Mosaico and validates
+their declared target. Removed obsolete video options/defaults/naming, camera/display
+source-name guesses, generic profile objects and conditional S31 delivery checks.
+All seven ownership/path/FD-anchored cleanup functions remain unchanged. The Python
+3.11 suite passes 83 tests, with two obsolete capability/video tests removed. A real
+CLI dry-run plans four board/language variants using preview/60 ms and four checker
+calls; output roots remain absent. Whitespace checks pass. No firmware was built
+outside the fixed local directory, and no device was flashed.

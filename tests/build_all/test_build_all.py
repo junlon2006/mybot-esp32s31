@@ -20,50 +20,60 @@ SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "build_all.py"
 SPEC = importlib.util.spec_from_file_location("mybot_build_all_under_test", SCRIPT)
 assert SPEC is not None and SPEC.loader is not None
 builder = importlib.util.module_from_spec(SPEC)
-sys.modules[SPEC.name] = builder
 SPEC.loader.exec_module(builder)
 
 MARKER = ".mybot-generated-root.json"
 SAFE_CLEANUP = sys.version_info >= (3, 11) and builder.shutil.rmtree.avoids_symlink_attacks
 
 
-class BoardCapabilityTests(unittest.TestCase):
-    def test_s31_profile_declares_display_and_no_video(self) -> None:
-        profiles = {profile.name: profile for profile in builder.supported_boards()}
-        for name in ("esp-mosaico-v1.2", "esp32-s31-korvo-1"):
-            with self.subTest(board=name):
-                self.assertTrue(profiles[name].has_display)
-                self.assertFalse(profiles[name].video_capable)
+class BoardSelectionTests(unittest.TestCase):
+    def test_only_current_registered_s31_profiles_are_supported(self) -> None:
+        self.assertEqual(builder.supported_boards(), ["esp-mosaico-v1.2", "esp32-s31-korvo-1"])
 
-    def test_explicit_false_overrides_legacy_source_detection(self) -> None:
-        profile = """
-set(MYBOT_BOARD_HAS_DISPLAY OFF)
-set(MYBOT_BOARD_HAS_VIDEO OFF)
-mybot_display_add_panel(...)
-set(MYBOT_BOARD_SOURCES cores3_camera_video.c)
-"""
-        self.assertFalse(builder.board_capability(profile, "MYBOT_BOARD_HAS_DISPLAY", True))
-        self.assertFalse(builder.board_capability(profile, "MYBOT_BOARD_HAS_VIDEO", True))
+    def test_registered_profiles_must_exist_and_explicitly_target_s31(self) -> None:
+        names = ("esp-mosaico-v1.2", "esp32-s31-korvo-1")
+        with tempfile.TemporaryDirectory(prefix="mybot-profile-") as temporary:
+            project = Path(temporary)
+            boards = project / "components/mybot_platform/boards"
+            boards.mkdir(parents=True)
+            registry = boards / "boards.cmake"
+            registry.write_text(builder.BOARDS_CMAKE.read_text())
+            originals = {}
+            for name in names:
+                path = boards / name / "board.cmake"
+                path.parent.mkdir()
+                text = (builder.PROJECT_ROOT / "components/mybot_platform/boards" / name / "board.cmake").read_text()
+                path.write_text(text)
+                originals[name] = text
+            with mock.patch.object(builder, "PROJECT_ROOT", project), mock.patch.object(builder, "BOARDS_CMAKE", registry):
+                self.assertEqual(builder.supported_boards(), list(names))
+                for name in names:
+                    path = boards / name / "board.cmake"
+                    with self.subTest(board=name, missing=True):
+                        path.unlink()
+                        with self.assertRaisesRegex(RuntimeError, "profile is missing"):
+                            builder.supported_boards()
+                    for text in (originals[name].replace('"esp32s31"', '"esp32s3"'),
+                                 '# set(MYBOT_BOARD_TARGET "esp32s31")\n',
+                                 originals[name] + '\nset(MYBOT_BOARD_TARGET "esp32s3")\n'):
+                        with self.subTest(board=name, invalid_target=text[:80]):
+                            path.write_text(text)
+                            with self.assertRaisesRegex(RuntimeError, "must declare the esp32s31 target"):
+                                builder.supported_boards()
+                    path.write_text(originals[name])
 
-    def test_explicit_capabilities_do_not_depend_on_driver_names(self) -> None:
-        profile = """
-set(MYBOT_BOARD_HAS_DISPLAY ON)
-set(MYBOT_BOARD_HAS_VIDEO TRUE)
-set(MYBOT_BOARD_SOURCES another_board_camera.c)
-"""
-        self.assertTrue(builder.board_capability(profile, "MYBOT_BOARD_HAS_DISPLAY", False))
-        self.assertTrue(builder.board_capability(profile, "MYBOT_BOARD_HAS_VIDEO", False))
-
-    def test_old_profiles_keep_fallback_and_commented_values_do_not_override(self) -> None:
-        profile = "# set(MYBOT_BOARD_HAS_VIDEO OFF)\nset(MYBOT_BOARD_SOURCES old_camera.c)"
-        self.assertTrue(builder.board_capability(profile, "MYBOT_BOARD_HAS_VIDEO", True))
-        self.assertFalse(builder.board_capability(profile, "MYBOT_BOARD_HAS_VIDEO", False))
-
-    def test_invalid_explicit_capability_fails_closed(self) -> None:
-        with self.assertRaisesRegex(RuntimeError, "literal CMake boolean"):
-            builder.board_capability(
-                "set(MYBOT_BOARD_HAS_VIDEO ${OTHER_BOARD_VIDEO})", "MYBOT_BOARD_HAS_VIDEO", True
-            )
+    def test_invalid_registered_board_lists_are_rejected(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="mybot-registry-") as temporary:
+            registry = Path(temporary) / "boards.cmake"
+            with mock.patch.object(builder, "BOARDS_CMAKE", registry):
+                for body in ('"esp32-s3-box"', '"esp-mosaico-v1.2" "esp-mosaico-v1.2"', ''):
+                    with self.subTest(body=body):
+                        registry.write_text("set(MYBOT_SUPPORTED_BOARDS " + body + ")\n")
+                        with self.assertRaises(RuntimeError):
+                            builder.supported_boards()
+                registry.write_text('# set(MYBOT_SUPPORTED_BOARDS "esp-mosaico-v1.2")\n')
+                with self.assertRaises(RuntimeError):
+                    builder.supported_boards()
 
     def test_every_executed_idf_command_uses_preview(self) -> None:
         with (
@@ -83,7 +93,7 @@ set(MYBOT_BOARD_SOURCES another_board_camera.c)
 
 
 class S31DryRunTests(unittest.TestCase):
-    def test_both_languages_have_no_video_and_leave_outputs_untouched(self) -> None:
+    def test_both_boards_and_languages_are_isolated_and_leave_outputs_untouched(self) -> None:
         with tempfile.TemporaryDirectory(prefix="mybot-s31-dry-run-") as temporary:
             workspace = Path(temporary).resolve()
             build = workspace / "build"
@@ -97,7 +107,7 @@ class S31DryRunTests(unittest.TestCase):
             sentinel = build / "existing-firmware.bin"
             sentinel.write_bytes(b"preserve")
             args = argparse.Namespace(
-                board=["esp32-s31-korvo-1"], language="both", video="auto",
+                board=["esp-mosaico-v1.2", "esp32-s31-korvo-1"], language="both",
                 build_root=build, output_root=output, dry_run=True, no_clean=False,
             )
             printed = io.StringIO()
@@ -115,31 +125,35 @@ class S31DryRunTests(unittest.TestCase):
             self.assertEqual({path.name for path in build.iterdir()}, {MARKER, sentinel.name})
             self.assertFalse(output.exists())
             commands = [line for line in printed.getvalue().splitlines() if line.startswith(">>> idf.py")]
-            self.assertEqual(len(commands), 8)
+            self.assertEqual(len(commands), 16)
             self.assertTrue(all(line.startswith(">>> idf.py --preview ") for line in commands))
-            self.assertFalse(any("ci/video.defaults" in line for line in commands))
-            self.assertEqual(sum("ci/en-us.defaults" in line for line in commands), 4)
-            self.assertIn("display=yes, video=no", printed.getvalue())
-            self.assertIn("esp32-s31-korvo-1-zh-CN.bin", printed.getvalue())
-            self.assertIn("esp32-s31-korvo-1-en-US.bin", printed.getvalue())
+            self.assertTrue(all("ci/ptime60.defaults" in line for line in commands))
+            self.assertEqual(sum("ci/en-us.defaults" in line for line in commands), 8)
             packaging = [line for line in printed.getvalue().splitlines() if "check_s31_build.py" in line]
-            self.assertEqual(len(packaging), 2)
-            for language in ("zh-CN", "en-US"):
-                image = str(output / f"esp32-s31-korvo-1-{language}.bin")
-                self.assertTrue(any(f"merge-bin -o {image}" in line for line in commands))
-                self.assertTrue(any(f"--merged {image}" in line for line in packaging))
+            self.assertEqual(len(packaging), 4)
+            for board in ("esp-mosaico-v1.2", "esp32-s31-korvo-1"):
+                for language in ("zh-CN", "en-US"):
+                    variant = f"{board}-{language}"
+                    image = str(output / f"{variant}.bin")
+                    config = str(build / f"build-{variant}" / "sdkconfig")
+                    self.assertEqual(sum(f"-DSDKCONFIG={config} " in line for line in commands), 4)
+                    self.assertTrue(any(f"merge-bin -o {image}" in line for line in commands))
+                    self.assertTrue(any(f"--merged {image}" in line for line in packaging))
 
-    def test_video_on_is_rejected_before_output_preparation_or_idf(self) -> None:
-        args = argparse.Namespace(board=["esp32-s31-korvo-1"], video="on", language="both")
-        with (
-            mock.patch.object(builder, "parse_args", return_value=args),
-            mock.patch.object(builder, "prepare_generated_root") as prepare,
-            mock.patch.object(builder, "idf_command") as idf,
-            self.assertRaisesRegex(RuntimeError, "video is unsupported"),
-        ):
-            builder.main()
-        prepare.assert_not_called()
-        idf.assert_not_called()
+    def test_unknown_or_unregistered_default_board_is_rejected_before_outputs_or_idf(self) -> None:
+        for selected, registered in ((["esp32-s3-box"], list(builder.S31_BOARDS)),
+                                     (None, ["esp32-s31-korvo-1"])):
+            with (
+                self.subTest(selected=selected, registered=registered),
+                mock.patch.object(builder, "parse_args", return_value=argparse.Namespace(board=selected)),
+                mock.patch.object(builder, "supported_boards", return_value=registered),
+                mock.patch.object(builder, "prepare_generated_root") as prepare,
+                mock.patch.object(builder, "idf_command") as idf,
+                self.assertRaisesRegex(RuntimeError, "unsupported board"),
+            ):
+                builder.main()
+            prepare.assert_not_called()
+            idf.assert_not_called()
 
 
 class GeneratedRootTests(unittest.TestCase):
@@ -176,7 +190,6 @@ class GeneratedRootTests(unittest.TestCase):
         values = {
             "board": None,
             "language": "en-US",
-            "video": "off",
             "build_root": build,
             "output_root": output,
             "dry_run": False,
@@ -186,7 +199,7 @@ class GeneratedRootTests(unittest.TestCase):
         return argparse.Namespace(**values)
 
     def run_main(self, args: argparse.Namespace) -> tuple[int, mock.Mock, mock.Mock]:
-        profile = builder.BoardProfile("test-board", False, False)
+        profile = "esp-mosaico-v1.2"
         with (
             mock.patch.object(builder, "parse_args", return_value=args),
             mock.patch.object(builder, "supported_boards", return_value=[profile]),
@@ -482,7 +495,7 @@ class GeneratedRootTests(unittest.TestCase):
         output = self.workspace / "unowned-output"
         output.mkdir()
         (output / "source.txt").write_text("preserve", encoding="utf-8")
-        profile = builder.BoardProfile("test-board", False, False)
+        profile = "esp-mosaico-v1.2"
         for options in ({}, {"dry_run": True}, {"no_clean": True}):
             with (
                 self.subTest(options=options),
@@ -498,7 +511,7 @@ class GeneratedRootTests(unittest.TestCase):
             self.assertEqual(artifact.read_bytes(), b"preserve")
 
     def test_main_rejects_workspace_parent_even_without_clean(self) -> None:
-        profile = builder.BoardProfile("test-board", False, False)
+        profile = "esp-mosaico-v1.2"
         for options in ({}, {"dry_run": True}, {"no_clean": True}):
             with (
                 self.subTest(options=options),
@@ -522,6 +535,7 @@ class GeneratedRootTests(unittest.TestCase):
         self.assertEqual(result, 0)
         idf.assert_called_once()
         compile_variant.assert_called_once()
+        self.assertEqual(compile_variant.call_args.args[1], "esp-mosaico-v1.2")
         builder.validate_generated_root(build, "build")
         builder.validate_generated_root(output, "output")
         self.assertTrue((build / MARKER).is_file())

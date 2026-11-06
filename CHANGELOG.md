@@ -2,6 +2,8 @@
 
 ## Unreleased — standalone S31 translation
 
+- Simplify the automation builder to registered S31 profiles, default to Mosaico, and remove unused video/S3 fallbacks.
+
 - Remove the unused emoji arrays, PNG inputs and generator while retaining the fonts used by the translation UI.
 
 - Align build/release instructions, board capabilities and validation status with the current Mosaico target and fixed local build directory.

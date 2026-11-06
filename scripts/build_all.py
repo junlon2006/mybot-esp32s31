@@ -1,13 +1,11 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
-"""Build firmware for all supported mybot ESP-IDF board profiles.
+"""Build the registered ESP32-S31 firmware profiles for isolated automation.
 
-Explicit MYBOT_BOARD_HAS_DISPLAY and MYBOT_BOARD_HAS_VIDEO values determine
-board capabilities. Older profiles retain display-helper/camera-source detection.
-
-Build directories are kept under the repository's ``build/`` directory and
-merged firmware images and verified delivery manifests are written to
-``releases/`` by default.
+Mosaico V1.2 is the default; Korvo remains available through --board. Both use
+60 ms audio without video. Each board/language has its own build and sdkconfig;
+merged images and verified delivery metadata are written to releases/ by default.
+Local development uses idf.py directly in build/korvo-s31.
 """
 
 from __future__ import annotations
@@ -22,7 +20,6 @@ import stat
 import subprocess
 import sys
 import time
-from dataclasses import dataclass
 from pathlib import Path
 
 
@@ -30,6 +27,8 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 BOARDS_CMAKE = PROJECT_ROOT / "components/mybot_platform/boards/boards.cmake"
 RELEASES_DIR = PROJECT_ROOT / "releases"
 GENERATED_ROOT_MARKER = ".mybot-generated-root.json"
+DEFAULT_BOARD = "esp-mosaico-v1.2"
+S31_BOARDS = (DEFAULT_BOARD, "esp32-s31-korvo-1")
 
 
 def format_elapsed(seconds: float) -> str:
@@ -39,50 +38,24 @@ def format_elapsed(seconds: float) -> str:
     return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
 
-@dataclass(frozen=True)
-class BoardProfile:
-    name: str
-    has_display: bool
-    video_capable: bool
-
-
-def board_capability(profile: str, symbol: str, fallback: bool) -> bool:
-    values = re.findall(rf"^\s*set\s*\(\s*{symbol}\s+([^)]*)\)", profile, re.MULTILINE)
-    if not values:
-        return fallback
-    value = re.sub(r"#[^\n]*", "", values[-1]).strip().strip('"').upper()
-    if value in ("ON", "TRUE", "YES", "Y", "1"):
-        return True
-    if value in ("OFF", "FALSE", "NO", "N", "0", ""):
-        return False
-    raise RuntimeError(f"{symbol} must be a literal CMake boolean, got {value!r}")
-
-
-def supported_boards() -> list[BoardProfile]:
-    text = BOARDS_CMAKE.read_text(encoding="utf-8")
-    names = re.findall(r'^\s+"([^"\n]+)"\s*$', text, re.MULTILINE)
-    profiles: list[BoardProfile] = []
+def supported_boards() -> list[str]:
+    text = re.sub(r"#[^\n]*", "", BOARDS_CMAKE.read_text(encoding="utf-8"))
+    declaration = re.search(r"\bset\s*\(\s*MYBOT_SUPPORTED_BOARDS\b([^)]*)\)", text, re.DOTALL)
+    body = declaration.group(1) if declaration else ""
+    names = re.findall(r'"([^"\n]+)"', body)
+    if not names or len(names) != len(set(names)):
+        raise RuntimeError(f"missing or duplicate registered S31 boards in {BOARDS_CMAKE}")
     for name in names:
+        if name not in S31_BOARDS:
+            raise RuntimeError(f"unsupported registered S31 board: {name}")
         profile_path = PROJECT_ROOT / "components/mybot_platform/boards" / name / "board.cmake"
         if not profile_path.is_file():
             raise RuntimeError(f"board profile is missing: {profile_path}")
-        profile = profile_path.read_text(encoding="utf-8")
-        profiles.append(
-            BoardProfile(
-                name=name,
-                has_display=board_capability(
-                    profile,
-                    "MYBOT_BOARD_HAS_DISPLAY",
-                    "mybot_display_add_" in profile or "set(MYBOT_GENERIC_DISPLAY " in profile,
-                ),
-                video_capable=board_capability(
-                    profile, "MYBOT_BOARD_HAS_VIDEO", "cores3_camera_video.c" in profile
-                ),
-            )
-        )
-    if not profiles:
-        raise RuntimeError(f"no boards found in {BOARDS_CMAKE}")
-    return profiles
+        profile = re.sub(r"#[^\n]*", "", profile_path.read_text(encoding="utf-8"))
+        targets = re.findall(r'\bset\s*\(\s*MYBOT_BOARD_TARGET\s+"?([^"\s)]+)"?\s*\)', profile)
+        if targets != ["esp32s31"]:
+            raise RuntimeError(f"board profile must declare the esp32s31 target: {profile_path}")
+    return names
 
 
 def idf_command() -> str:
@@ -250,56 +223,46 @@ def prepare_generated_root(path: Path, label: str, dry_run: bool, *, clean: bool
         os.close(directory)
 
 
-def variant_name(board: BoardProfile, language: str, video: bool) -> str:
-    suffix = "-video" if video else ""
-    return f"{board.name}-{language}{suffix}"
-
-
 def build_variant(
     idf: str,
-    board: BoardProfile,
+    board: str,
     language: str,
-    video: bool,
     build_root: Path,
     output_root: Path,
     dry_run: bool,
 ) -> Path:
     started_at = time.perf_counter()
-    name = variant_name(board, language, video)
+    name = f"{board}-{language}"
     build_dir = build_root / f"build-{name}"
     sdkconfig = build_dir / "sdkconfig"
     output_path = output_root / f"{name}.bin"
     defaults = ["sdkconfig.defaults", "ci/ptime60.defaults"]
     if language == "en-US":
         defaults.append("ci/en-us.defaults")
-    if video:
-        defaults.append("ci/video.defaults")
     defaults_value = ";".join(defaults)
 
     base_args = [
         "-B",
         str(build_dir),
-        f"-DMYBOT_BOARD={board.name}",
+        f"-DMYBOT_BOARD={board}",
         f"-DSDKCONFIG={sdkconfig}",
         f"-DSDKCONFIG_DEFAULTS={defaults_value}",
     ]
-    print(f"\nBuilding {name} (display={'yes' if board.has_display else 'no'}, "
-          f"video={'yes' if video else 'no'})")
+    print(f"\nBuilding {name} (60 ms audio)")
     try:
         run(idf, [*base_args, "reconfigure"], dry_run)
         run(idf, [*base_args, "build"], dry_run)
         run(idf, [*base_args, "size"], dry_run)
         # idf.py invokes merge-bin from build_dir: -o must be absolute.
         run(idf, [*base_args, "merge-bin", "-o", str(output_path)], dry_run)
-        if board.name in ("esp-mosaico-v1.2", "esp32-s31-korvo-1"):
-            command = [
-                sys.executable, str(PROJECT_ROOT / "scripts/check_s31_build.py"),
-                "--build-dir", str(build_dir), "--language", language,
-                "--merged", str(output_path),
-            ]
-            print(">>>", shlex.join(command))
-            if not dry_run:
-                subprocess.run(command, cwd=PROJECT_ROOT, check=True)
+        command = [
+            sys.executable, str(PROJECT_ROOT / "scripts/check_s31_build.py"),
+            "--build-dir", str(build_dir), "--language", language,
+            "--merged", str(output_path),
+        ]
+        print(">>>", shlex.join(command))
+        if not dry_run:
+            subprocess.run(command, cwd=PROJECT_ROOT, check=True)
     except Exception:
         print(f"[FAIL] {name} elapsed={format_elapsed(time.perf_counter() - started_at)}")
         raise
@@ -313,19 +276,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--board",
         action="append",
-        help="board profile to build; repeat for multiple boards (default: all)",
+        help=f"registered S31 board; repeat for multiple boards (default: {DEFAULT_BOARD})",
     )
     parser.add_argument(
         "--language",
         choices=("zh-CN", "en-US", "both"),
         default="both",
         help="firmware language (default: both)",
-    )
-    parser.add_argument(
-        "--video",
-        choices=("auto", "on", "off"),
-        default="auto",
-        help="video policy: auto enables it on capable boards (default: auto)",
     )
     parser.add_argument(
         "--build-root",
@@ -350,18 +307,12 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    profiles = supported_boards()
-    by_name = {profile.name: profile for profile in profiles}
-    selected_names = args.board or [profile.name for profile in profiles]
-    unknown = sorted(set(selected_names) - set(by_name))
+    registered = supported_boards()
+    selected = args.board or [DEFAULT_BOARD]
+    unknown = sorted(set(selected) - set(registered))
     if unknown:
         raise RuntimeError(f"unsupported board(s): {', '.join(unknown)}")
-    selected = [by_name[name] for name in selected_names]
     languages = ("zh-CN", "en-US") if args.language == "both" else (args.language,)
-
-    if args.video == "on" and any(not board.video_capable for board in selected):
-        invalid = [board.name for board in selected if not board.video_capable]
-        raise RuntimeError(f"video is unsupported on: {', '.join(invalid)}")
 
     build_root, output_root = validate_output_roots(args.build_root, args.output_root)
     idf = idf_command()
@@ -373,9 +324,8 @@ def main() -> int:
     try:
         for board in selected:
             for language in languages:
-                video = board.video_capable and args.video != "off"
                 outputs.append(
-                    build_variant(idf, board, language, video, build_root, output_root, args.dry_run)
+                    build_variant(idf, board, language, build_root, output_root, args.dry_run)
                 )
     finally:
         print(f"\nTotal elapsed: {format_elapsed(time.perf_counter() - batch_started_at)}")
