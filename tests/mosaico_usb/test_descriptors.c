@@ -25,6 +25,7 @@ static uint16_t le16(const uint8_t *p) {
 static void validate(const uint8_t *configuration, bool high_speed) {
     assert(configuration[0] == 9 && configuration[1] == TUSB_DESC_CONFIGURATION);
     assert(configuration[4] == 5 && configuration[5] == 1);
+    assert(configuration[7] == 0x80 && configuration[8] == 250); /* Bus-powered, 500 mA. */
     size_t total = le16(configuration + 2);
     unsigned interfaces[5] = {0};
     unsigned endpoints[256] = {0};

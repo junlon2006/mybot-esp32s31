@@ -12,6 +12,9 @@ typedef struct {
 } tinyusb_event_t;
 typedef struct {
     struct {
+        bool self_powered;
+    } phy;
+    struct {
         int xCoreID;
     } task;
     void (*event_cb)(tinyusb_event_t *, void *);

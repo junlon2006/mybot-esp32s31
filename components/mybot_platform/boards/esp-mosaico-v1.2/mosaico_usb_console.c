@@ -30,6 +30,7 @@ esp_err_t mosaico_usb_console_init(void) {
     attempted = true;
     /* One owner for the native HS UTMI PHY, USB task and both classes. */
     tinyusb_config_t config = TINYUSB_DEFAULT_CONFIG(mosaico_usb_audio_event, NULL);
+    config.phy.self_powered = false; /* USB 2.0 bus-powered policy, matching both descriptors. */
     config.task.xCoreID = 0;
     result = mybot_mosaico_usb_descriptors_configure(&config);
     if (result != ESP_OK)

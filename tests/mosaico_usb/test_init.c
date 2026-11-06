@@ -47,6 +47,7 @@ esp_err_t mosaico_usb_audio_prepare(void) {
 esp_err_t tinyusb_driver_install(const tinyusb_config_t *config) {
     assert(calls[AUDIO] == 1 && config->descriptors_configured && !calls[CDC_CLASS]);
     assert(config->task.xCoreID == 0 && config->event_cb == mosaico_usb_audio_event);
+    assert(!config->phy.self_powered); /* Board policy overrides defaults explicitly. */
     assert(!mosaico_usb_audio_initialized());
     ++calls[CONTROLLER];
     if (fails("controller"))

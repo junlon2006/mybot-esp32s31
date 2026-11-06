@@ -7,13 +7,15 @@
 #include <stddef.h>
 #include <stdio.h>
 
+#define MOSAICO_USB_MAX_POWER_MA 500
 #define MYBOT_USB_CONFIGURATION_BYTES                                                              \
     (TUD_CONFIG_DESC_LEN + TUD_AUDIO_DEVICE_DESC_LEN + TUD_CDC_DESC_LEN)
 
 /* Audio endpoints keep the addresses verified by the standalone UAC test.
  * CDC adds independent endpoints and does not start another USB controller. */
 #define MYBOT_USB_CONFIGURATION(cdc_packet)                                                        \
-    TUD_CONFIG_DESCRIPTOR(1, MYBOT_USB_ITF_COUNT, 0, MYBOT_USB_CONFIGURATION_BYTES, 0, 100),       \
+    TUD_CONFIG_DESCRIPTOR(1, MYBOT_USB_ITF_COUNT, 0, MYBOT_USB_CONFIGURATION_BYTES, 0,             \
+                          MOSAICO_USB_MAX_POWER_MA),                                               \
         TUD_AUDIO_DESCRIPTOR(MYBOT_USB_ITF_AUDIO_CONTROL, 4, MYBOT_USB_EP_AUDIO_OUT,               \
                              MYBOT_USB_EP_AUDIO_IN, MYBOT_USB_EP_AUDIO_FEEDBACK),                  \
         TUD_CDC_DESCRIPTOR(MYBOT_USB_ITF_CDC, 7, MYBOT_USB_EP_CDC_NOTIF, 8, MYBOT_USB_EP_CDC_OUT,  \

@@ -2,6 +2,8 @@
 
 ## Unreleased — standalone S31 translation
 
+- Declare Mosaico's explicit 500 mA USB 2.0 bus-powered budget in both USB speeds, with measured-load validation kept separate.
+
 - Reclaim PSRAM AOSL task stacks through a static internal reaper, avoiding allocation of temporary cleanup tasks during worker exit.
 
 - Bind delivery provenance to the source captured during the firmware build and verify its artifact hashes when packaging.

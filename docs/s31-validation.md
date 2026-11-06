@@ -953,3 +953,14 @@ and 24 worker exits with allocation denied and 16-slot queue backpressure. All p
 formatting/SPDX and whitespace checks pass. Chinese firmware and final S31 checks
 pass, and ELF inspection places every reaper resource in internal DRAM. No device
 was flashed; host mocks do not establish real SMP shutdown timing or stack headroom.
+
+## Review fix 12: explicit USB bus-power budget
+
+Mosaico FS/HS descriptors now request 500 mA after configuration and the native PHY
+configuration explicitly declares bus-powered operation. Pinned-header descriptor
+tests verify bmAttributes=0x80 and bMaxPower=250 at both speeds; initialization tests
+verify the explicit self_powered=false override. These tests pass under UBSan, with
+formatting/SPDX and whitespace checks. This is a declared budget, not a measured
+load or a hardware current limit; charging, inrush, preconfiguration/suspend and
+full-volume load remain unmeasured. Chinese build and final S31 checks pass. No
+device was flashed.
