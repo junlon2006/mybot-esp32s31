@@ -31,6 +31,20 @@
 可在会话开始后由录音/会议 App 打开；未打开时不积压旧译音，打开后接收后续内容。
 未注册完整 USB 采集与播放能力的板卡保留会议预览。
 
+## USB 供电声明与验证边界
+
+Mosaico V1.2 固件采用固定的 USB 2.0 总线供电策略：FS/HS 配置描述符均为
+`bmAttributes=0x80`、`bMaxPower=250`，按每单位 2 mA 声明配置后最多请求 500 mA；
+原生 USB 配置显式设置 `self_powered=false`，沿用默认的无 VBUS 监测 GPIO 配置。
+
+500 mA 是固件向主机声明的供电预算。修改描述符不会实施硬件限流，也不能证明板卡在
+所有负载下都低于该预算。板卡 USB Host 的向外供电额定值不能用于推算 Type-C
+设备模式的实际取电。
+
+当前没有 USB 电流及浪涌测量结果。配置前、挂起、电池充电、启动及 Wi-Fi 工作、
+双向会议和满音量播放等状态的取电仍需测量；已有双向音频功能验证不能代替这些结果，
+也不据此宣称 USB 电气符合性或确认板卡充电与供电路径。
+
 ## 音频与资源边界
 
 - USB 保持 48 kHz stereo S16，SDK、Codec 和 RTSA 保持 16 kHz mono S16、60 ms。
@@ -47,6 +61,10 @@
   USB 控制器的单个包无法撤回，其音频载荷最多为 HS 6 帧 / FS 48 帧；重试可能延后完成。
 - `esp_tinyusb` 统一持有 USB PHY、任务、UAC2 与 CDC 描述符；会话启停不销毁 USB
   设备。保留已验证的 PIO/FIFO、DWC2 修正和高速 1 ms 反馈间隔；ISR 缓冲位于内部 RAM。
+- 生产固件只复用固定 UAC 1.3.1 的描述符、配置头与 Kconfig。时钟、主/左右声道音量与
+  静音、音频接口和 PCM 处理由项目适配层直接持有静态状态，不创建原包的两条音频
+  任务或其 PCM 暂存区。USB 控制请求保持 48 kHz 时钟及 -50～0 dB 扬声器音量协议。
+  独立诊断仍使用完整原包运行时，其已通过的镜像保持独立验证基线。
 - 第二条媒体管线与大缓冲按项目 PSRAM 策略分配。失败的任务退出保留资源供后续清理，
   不会在工作任务或 RTC 回调仍引用时释放。
 - 设备音量独立调节喇叭中文译音。电脑输出的主/左右声道音量及静音作用于 LISTEN
@@ -55,7 +73,11 @@
 ## 构建与烧录
 
 ```sh
-idf.py --preview -B build/korvo-s31 build
+idf.py --preview -B build/korvo-s31 \
+  -DMYBOT_BOARD=esp-mosaico-v1.2 \
+  -DMYBOT_MOSAICO_UAC_TEST=OFF \
+  -DSDKCONFIG=build/korvo-s31/sdkconfig \
+  -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;ci/ptime60.defaults" build
 ```
 
 固件仍为 `build/korvo-s31/mybot_esp32s31.bin`。按住 BOOT 开机进入下载模式，使用实际
@@ -75,10 +97,11 @@ idf.py --preview -B build/korvo-s31 -p 实际运行时串口 monitor
 
 ## 日志与验收范围
 
-运行时 CDC 通常为 `/dev/cu.usbmodemMOSAICO_V124`，以本机实际枚举为准：
+运行时 USB 序列号为 `MOSAICO-` 加这台设备的 MAC，macOS 端口随设备身份枚举。
+使用 `ls /dev/cu.usbmodem*` 查询，选取当前应用 CDC；它与 ROM 下载端口不同：
 
 ```sh
-idf.py --preview -B build/korvo-s31 -p /dev/cu.usbmodemMOSAICO_V124 monitor
+idf.py --preview -B build/korvo-s31 -p RUNTIME_PORT monitor
 ```
 
 `ready=1` 只表示 USB 已配置且未挂起。`speaker_open=1` 表示电脑输出流已打开，
@@ -106,6 +129,7 @@ RTC 转发任务应使用 PSRAM，`AgoraRtc` 保留内部栈。若 vendor RTC �
 期间持续新增的错误。不要把收发字节数等同于音质或长稳验证。
 
 2026-11-06 用户先确认会议听译能播放中文译音，随后在 PSRAM 任务栈修正版上报告
-双向会议测试通过，记录为当前固件的功能实机验证。量化音质、AEC 和长时间运行仍需
-各自验证。先前单向听译镜像保存在 `build/korvo-s31/meeting-listen-passed/`，验证细节见
+双向会议测试通过，对应功能验收基线 `e279926`。此后的 review 修复只有 host 测试和
+中文构建结果，尚未重新真机验收。量化音质、AEC、重连、长稳、USB 电流与 VCC 软启动
+仍需各自验证。先前单向听译镜像保存在 `build/korvo-s31/meeting-listen-passed/`，验证细节见
 [s31-validation.md](s31-validation.md)。独立诊断的 `read_status.py` 不适用于本固件。

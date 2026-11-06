@@ -28,7 +28,7 @@
 开发只构建中文，所有本地编译固定使用 `build/korvo-s31`，生成配置固定为 `build/korvo-s31/sdkconfig`：
 
 ```sh
-. /Users/shangjinlong/esp/esp-idf/export.sh
+. /path/to/esp-idf/export.sh
 idf.py --preview -B build/korvo-s31 \
   -DMYBOT_BOARD=esp-mosaico-v1.2 \
   -DMYBOT_MOSAICO_UAC_TEST=OFF \
@@ -36,14 +36,14 @@ idf.py --preview -B build/korvo-s31 \
   -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;ci/ptime60.defaults" build
 idf.py --preview -B build/korvo-s31 -p DOWNLOAD_PORT flash
 # Mosaico 启动后使用运行时 CDC 端口查看日志
-idf.py --preview -B build/korvo-s31 -p /dev/cu.usbmodemMOSAICO_V124 monitor
+idf.py --preview -B build/korvo-s31 -p RUNTIME_PORT monitor
 ```
 
 保留现有 G.722、16 kHz mono S16、60 ms RTSA 配置和 cloud AEC。AI QoS 默认关闭（`CONFIG_MYBOT_AI_QOS=n`），可在 menuconfig 中显式开启；关闭时启动请求发送 `ai_qos=false` 且不附带快发倍率。已有 sdkconfig 中的显式配置优先于默认值。云 AEC 上行是 MIC/播放参考交错，RTSA 的 PCM channel 数仍为 1，不能改成普通立体声。先检查最终 sdkconfig 的服务器、语种和 AI QoS 设置，再烧录。
 
 ## 验收
 
-主机测试验证路由/父 ID/清理/回调所有权、字幕归并和界面；编译验证 RISC-V 链接与配置。实机需要分别验证媒体与面对面的真实服务授权、两个方向译音、指定 UID 订阅、单 RTM 接收双 Agent 字幕、方向快速切换与闲置一路、RTM 原文/译文消息与流式修订、长字幕/历史滚动、播放同时讲话时云 AEC、音量变化、连接中取消、断网与反复启停。既有普通对话音频实测不能替代这些结果。
+Korvo 媒体／面对面已有用户实机基线；Mosaico 用户确认了 40 行字幕显示及 PSRAM 栈修正版（`e279926`）的基础双向会议。主机测试验证路由／父 ID／清理／回调所有权、字幕归并和界面；编译验证 RISC-V 链接与配置。后续 review 修复尚未重新真机验收。实机需要分别验证媒体与面对面的真实服务授权、两个方向译音、指定 UID 订阅、单 RTM 接收双 Agent 字幕、方向快速切换与闲置一路、RTM 原文/译文消息与流式修订、长字幕/历史滚动、播放同时讲话时云 AEC、音量变化、连接中取消、断网与反复启停。既有普通对话音频实测不能替代这些结果。
 
 ## 启动排查与恢复
 

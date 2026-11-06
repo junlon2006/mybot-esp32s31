@@ -2,13 +2,13 @@
 
 [English](CONTRIBUTING.md) · [简体中文](CONTRIBUTING.zh-CN.md)
 
-This repository supports ESP32-S31-Korvo-1 V1.1 only, using ESP-IDF v6.1 and 60 ms RTSA audio frames. Keep changes focused and preserve unrelated work.
+The default and future target is ESP-Mosaico CoreBoard V1.2; the earlier ESP32-S31-Korvo-1 V1.1 profile remains available. Both use ESP-IDF v6.1 preview and 60 ms RTSA audio frames. Keep changes focused and preserve unrelated work.
 
 ## Boundaries
 
 Application startup and MyBot lifecycle belong in `main/`; board hardware, drivers and services belong in `components/mybot_platform/`. Use only the MyBot public headers under `components/mybot_stack/mybot_sdk/mybot/include/mybot/`.
 
-The MyBot SDK is a project-maintained V2VT media/face-to-face fork. Preserve its Cloud AEC MIC/reference PCM contract and 60 ms cadence. Keep AOSL, esp_codec_dev, LVGL, esp_lvgl_port and the pinned RTSA header/library unchanged, except for AOSL's component CMake wrapper and `s31_port/` adapter. The `mybot_sdk`, `aosl` and `agora_rtc` runtime components live directly under `components/mybot_stack/`. The legacy-named AOSL `esp32-s3` HAL is portable code and remains part of the immutable source input.
+The MyBot SDK is a project-maintained V2VT media/face-to-face/meeting fork. Preserve its Cloud AEC MIC/reference PCM contract and 60 ms cadence. Keep AOSL, esp_codec_dev, LVGL, esp_lvgl_port and the pinned RTSA header/library unchanged, except for AOSL's component CMake wrapper and `s31_port/` adapter. The `mybot_sdk`, `aosl` and `agora_rtc` runtime components live directly under `components/mybot_stack/`. The legacy-named AOSL `esp32-s3` HAL is portable code and remains part of the immutable source input.
 
 Never commit credentials, device identifiers, Wi-Fi passwords, original RTSA archives, generated configurations or firmware. Add SPDX headers to maintained C/C++ files and format changed files with `.clang-format` using exactly clang-format 18.1.8, matching CI. Install it with `python -m pip install clang-format==18.1.8` and confirm `clang-format --version`; distro packages named `clang-format-18` can contain a different patch release. Use the same version for generated LVGL sources. Update user documentation, `CHANGELOG.md`, source provenance and license notices when applicable.
 
@@ -20,14 +20,15 @@ Install ffmpeg and ESP-IDF v6.1. The pinned RTSA payload is bundled. Build Chine
 . /path/to/esp-idf/export.sh
 test "$(idf.py --preview --version)" = "ESP-IDF v6.1"
 idf.py --preview -B build/korvo-s31 \
-  -DMYBOT_BOARD=esp32-s31-korvo-1 \
+  -DMYBOT_BOARD=esp-mosaico-v1.2 \
+  -DMYBOT_MOSAICO_UAC_TEST=OFF \
   -DSDKCONFIG=build/korvo-s31/sdkconfig \
   -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;ci/ptime60.defaults" build size
 python3 scripts/check_s31_build.py --build-dir build/korvo-s31 --language zh-CN
 git diff --check
 ```
 
-CI retains isolated job directories and covers English using `ci/en-us.defaults`; the fixed local directory does not change CI's matrix. The [workflow](.github/workflows/ci.yml) defines the source checks, host tests and firmware variants. Run affected host tests under `tests/`; lifecycle or callback changes require fault-injection coverage for failures, timeout, repeated start/stop and resource ownership. The [release guide](docs/RELEASING.md) covers both-language packaging.
+CI retains isolated job directories and covers English using `ci/en-us.defaults`; the fixed local directory does not change CI's matrix. The [workflow](.github/workflows/ci.yml) defines the source checks, host tests and firmware variants. Run affected host tests under `tests/`; lifecycle or callback changes require fault-injection coverage for failures, timeout, repeated start/stop and resource ownership. The [release guide](docs/RELEASING.md) covers merging and delivery checks in the same local build directory.
 
 Record source checks, host tests, target builds and physical-board results separately in [s31-validation.md](docs/s31-validation.md). Successful compilation does not validate touch interaction, acoustic quality or long-term stability. The S31 target requires `--preview`. Video stays disabled.
 

@@ -20,3 +20,7 @@ and a playback write interrupted by intentional pause does not end the session.
 
 Meeting teardown also exercises RTC disconnect before quiesce, a failed playback
 stop retaining PCM ownership, then successful quiesce and restoration of idle playback.
+
+Physical playback faults notify control and require a successful device stop/start
+before another session. Fault injection covers retained errors, failed recovery,
+successful later playback, and writes interrupted by intentional pause or stop.

@@ -8,21 +8,36 @@ The default delivery board is `esp-mosaico-v1.2`; the earlier Korvo profile is r
 
 ```sh
 . /path/to/esp-idf/export.sh
-test "$(idf.py --version)" = "ESP-IDF v6.1"
-python3 scripts/build_all.py --board esp-mosaico-v1.2 --language both
+test "$(idf.py --preview --version)" = "ESP-IDF v6.1"
+idf.py --preview -B build/korvo-s31 \
+  -DMYBOT_BOARD=esp-mosaico-v1.2 \
+  -DMYBOT_MOSAICO_UAC_TEST=OFF \
+  -DSDKCONFIG=build/korvo-s31/sdkconfig \
+  -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;ci/ptime60.defaults" build size
+python3 scripts/check_s31_build.py --build-dir build/korvo-s31 --language zh-CN
 ```
 
-A normal builder run cleans `build/` and `releases/`; use `--no-clean` for incremental work. Python 3.11+ is required for the safe cleanup path. Development can continue to use [direct idf.py commands](esp-mosaico-v1.2.zh-CN.md).
+All local firmware builds use `build/korvo-s31` and its `sdkconfig`, including incremental builds.
+When changing board or switching from a diagnostic, save any required firmware first and follow
+the [board guide](esp-mosaico-v1.2.zh-CN.md) for cleaning and regenerating configuration.
+CI keeps separate directories for each board/language job.
 
-The builder runs reconfigure/build/size/merge-bin for each language and validates the resulting image and build metadata. To inspect an existing direct build or package its merged image:
+To merge this build and write its delivery metadata:
 
 ```sh
-python3 scripts/check_s31_build.py --build-dir build/korvo-s31 --language zh-CN
+mkdir -p releases
+idf.py --preview -B build/korvo-s31 merge-bin \
+  -o "$PWD/releases/esp-mosaico-v1.2-zh-CN.bin"
 python3 scripts/check_s31_build.py --build-dir build/korvo-s31 --language zh-CN \
   --merged releases/esp-mosaico-v1.2-zh-CN.bin
 ```
 
-`--merged` validates an existing merged image and writes companion metadata; it does not compile or merge firmware itself. The checker validates target/configuration, the bundled RTSA payload, final link provenance, partition/image bounds and exact embedded flash segments.
+`--merged` validates an existing merged image and writes companion metadata; it does not compile or merge firmware itself. The checker validates target/configuration, pinned RTSA inputs, final links and exact flash segments. It reads the built partition table and requires at least **300 KiB** free in every OTA application slot.
+
+The build captures its Git revision, dirty state and project-input/configuration digest before
+compilation, embeds that identity, then binds it to the completed ELF/BIN and flash segments.
+Packaging uses this frozen record even after a checkout change. A missing or mismatched record
+requires rebuilding; reconfiguring or editing delivery metadata cannot establish provenance.
 
 ## Delivery files
 
@@ -35,13 +50,13 @@ esp-mosaico-v1.2-zh-CN.sha256
 esp-mosaico-v1.2-zh-CN.flash.txt
 ```
 
-The manifest records project/IDF versions, source revision and dirty state, language, board/target, RTSA package/hash, merged-image hash and actual segment offsets/hashes. It records build provenance, not hardware acceptance. Keep all four files together.
+The manifest records project/IDF versions, build-bound source revision/dirty state, language, board/target, RTSA package/hash, artifact and merged-image hashes, segment offsets and OTA free space. It records build provenance, not hardware acceptance. Keep all four files together.
 
-Merged images are flashed at **0x0**. They include padding over NVS and OTA state; provisioning is required afterwards. For daily development use `idf.py --preview -B <build-dir> -p PORT flash monitor` to preserve NVS.
+Merged images are flashed at **0x0**. They include padding over NVS and OTA state; provisioning is required afterwards. For daily development use `idf.py --preview -B build/korvo-s31 -p PORT flash` to preserve NVS. Mosaico's runtime CDC port differs from its ROM download port; select the current port before running `idf.py --preview -B build/korvo-s31 -p RUNTIME_PORT monitor`.
 
 ## CI
 
-Pushes and pull requests run source checks/host tests and automatically build the Chinese and English firmware using the bundled pinned RTSA input. Each language has its own artifact containing the four delivery files. The workflow uploads no original tgz, sdkconfig, link map or NVS data and creates no GitHub Release automatically.
+Pushes and pull requests run source checks/host tests and build the Mosaico/Korvo × Chinese/English matrix using the bundled pinned RTSA input. Each job has isolated build/configuration paths and uploads the four delivery files. The workflow uploads no original tgz, sdkconfig, link map or NVS data and creates no GitHub Release automatically.
 
 Local verification and remote workflow results are separate. Remote CI execution is pending until an actual run is recorded in [validation](s31-validation.md).
 

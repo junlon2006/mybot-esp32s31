@@ -600,9 +600,8 @@ static void test_meeting_flow(int width) {
     content.volume = 40;
     content.caption_generation = caption_generation;
     content.usb_audio_available = true;
-    // The previous listen-only firmware may have persisted the opposite pair.
-    std::strcpy(content.source_language, "en-US");
-    std::strcpy(content.target_language, "zh-CN");
+    std::strcpy(content.source_language, "zh-CN");
+    std::strcpy(content.target_language, "en-US");
     update(display, content);
     click(find(&display.root, home_action(width)));
     CHECK(find(&display.root, tr("双向会议翻译", "Two-way meeting audio")));
@@ -615,8 +614,7 @@ static void test_meeting_flow(int width) {
     CHECK(commands.size() == 1 && commands.back().type == MYBOT_UI_SET_MODE &&
           commands.back().value == MYBOT_TRANSLATION_LISTEN_SPEAK &&
           commands.back().audio_source == MYBOT_AUDIO_SOURCE_USB);
-    CHECK(std::strcmp(commands.back().source_language, "zh-CN") == 0 &&
-          std::strcmp(commands.back().target_language, "en-US") == 0);
+    CHECK(!commands.back().source_language[0] && !commands.back().target_language[0]);
     CHECK(lv_obj_has_state(find(&display.root, tr("开始翻译  >", "Start translation  >"))->parent,
                            LV_STATE_DISABLED));
     ++content.volume;
@@ -752,27 +750,55 @@ static void test_meeting_flow(int width) {
     update(display, content);
     CHECK(find(&display.root, tr("翻译已结束", "Translation ended")));
     click(find(&display.root, tr("再来一次", "Translate again")));
+    click(find(&display.root, tr("中文", "Chinese")));
+    click(find(&display.root, tr("日语", "Japanese")));
+    CHECK(commands.back().type == MYBOT_UI_SET_LANGUAGES &&
+          std::strcmp(commands.back().source_language, "ja-JP") == 0 &&
+          std::strcmp(commands.back().target_language, "ko-KR") == 0);
+    std::strcpy(content.source_language, "ja-JP");
+    update(display, content);
     click(find(&display.root, tr("< 返回", "< Back")));
     click(find(&display.root, tr("媒体翻译", "Listen")));
     CHECK(commands.back().type == MYBOT_UI_SET_MODE &&
           commands.back().value == MYBOT_TRANSLATION_LISTEN &&
           commands.back().audio_source == MYBOT_AUDIO_SOURCE_CODEC);
-    CHECK(std::strcmp(commands.back().source_language, "zh-CN") == 0 &&
-          std::strcmp(commands.back().target_language, "en-US") == 0);
+    CHECK(!commands.back().source_language[0] && !commands.back().target_language[0]);
     CHECK(lv_obj_has_state(find(&display.root, tr("开始翻译  >", "Start translation  >"))->parent,
                            LV_STATE_DISABLED));
     content.audio_source = MYBOT_AUDIO_SOURCE_CODEC;
     content.translation_mode = MYBOT_TRANSLATION_LISTEN;
-    std::strcpy(content.source_language, "zh-CN");
-    std::strcpy(content.target_language, "en-US");
     ++content.selection_revision;
     update(display, content);
+    CHECK(find(&display.root, tr("日语", "Japanese")) && find(&display.root, tr("韩语", "Korean")));
+    CHECK(!lv_obj_has_state(find(&display.root, tr("开始翻译  >", "Start translation  >"))->parent,
+                            LV_STATE_DISABLED));
+    click(find(&display.root, tr("< 返回", "< Back")));
+    click(find(&display.root, tr("面对面", "In person")));
+    CHECK(commands.back().type == MYBOT_UI_SET_MODE &&
+          commands.back().value == MYBOT_TRANSLATION_LISTEN_SPEAK &&
+          commands.back().audio_source == MYBOT_AUDIO_SOURCE_CODEC);
+    CHECK(!commands.back().source_language[0] && !commands.back().target_language[0]);
+    content.translation_mode = MYBOT_TRANSLATION_LISTEN_SPEAK;
+    ++content.selection_revision;
+    update(display, content);
+    CHECK(find(&display.root, tr("日语", "Japanese")) && find(&display.root, tr("韩语", "Korean")));
+    click(find(&display.root, tr("< 返回", "< Back")));
+    click(find(&display.root, tr("会议互译", "Meeting")));
+    CHECK(commands.back().type == MYBOT_UI_SET_MODE &&
+          commands.back().value == MYBOT_TRANSLATION_LISTEN_SPEAK &&
+          commands.back().audio_source == MYBOT_AUDIO_SOURCE_USB);
+    CHECK(!commands.back().source_language[0] && !commands.back().target_language[0]);
+    content.audio_source = MYBOT_AUDIO_SOURCE_USB;
+    ++content.selection_revision;
+    update(display, content);
+    CHECK(find(&display.root, tr("日语", "Japanese")) && find(&display.root, tr("韩语", "Korean")));
     CHECK(!lv_obj_has_state(find(&display.root, tr("开始翻译  >", "Start translation  >"))->parent,
                             LV_STATE_DISABLED));
     mybot_lvgl_view_destroy();
     CHECK(!live && !timer && display.root.children.empty());
-    std::puts("PASS meeting UI: USB capability, acknowledged source selection, language mapping, "
-              "pending locks, both caption routes, simultaneous pause and codec return");
+    std::puts(
+        "PASS meeting UI: USB capability, acknowledged source selection, language mapping, "
+        "pending locks, both caption routes, simultaneous pause and preserved scene languages");
 }
 int main(int argc, char **argv) {
     const int width = argc > 1 ? std::atoi(argv[1]) : 480;

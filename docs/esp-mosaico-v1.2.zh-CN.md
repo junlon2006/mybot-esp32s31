@@ -20,6 +20,20 @@
 原理图的 `I2S_DOUT` / `I2S_DIN` 来自 codec 视角，不能据此交换 MCU 的 TX/RX。
 Mosaico 不使用 Korvo 的 ES8389、TDM4、无 MCLK 配置。
 
+启动先读取 eFuse `USER_DATA` 的前 16 位，再操作任何供电、功放或 I2C 引脚。
+`0x0100`（V1.0）使用不同引脚映射，固件拒绝启动；`0x0101`（V1.1）与 `0x0102`
+（V1.2）使用官方 V1.2 映射，V1.1 会明确记录兼容接入。eFuse 读取失败同样拒绝继续。
+对未烧录或未知值，本项目按已选择的 V1.2 目标板继续，并打印
+`result=degraded policy=assume_v1.2_pin_map`。这是项目允许的降级策略；官方 BSP 对未知值
+直接拒绝，降级日志不表示已经识别或验证了该硬件版本。
+
+VCC 使能保留官方软启动：若早期启动阶段已将 GPIO60 配置为低电平输出，则接管当前
+开启状态；否则先保持高电平关闭，再用 LEDC 低速 timer1/channel1、100 kHz、8-bit
+占空比从 255 降到 0，等待约 50 ms 渐变完成，最后恢复为 GPIO 低电平输出。
+随后保留 10 ms 稳定等待，再初始化 I2C。软启动失败会尝试恢复高电平关闭，不会直接
+跳过渐变强行上电；I2C 初始化重试不重复已完成的上电过程。此过程移植自固定版本官方
+BSP，尚不能替代浪涌、电压或启动时序的实测结果。
+
 音频采集与播放共用既有生命周期实现，保留有界 I/O、独立启停、延迟回收及音量保存。
 Cloud AEC 继续使用 SDK 的麦克风/播放参考 PCM 契约；此处不启用 DAC 参考回读。
 触摸通过 INT6 通知读取新报文，在报文之间保留触点，避免反复读取已 ACK 数据。
@@ -56,11 +70,13 @@ idf.py --preview -B build/korvo-s31 -p /dev/cu.usbmodem144101 flash
 启动后 Type-C 会重新枚举为 `MyBot Mosaico` 复合设备，包含 UAC2 音频和 CDC 日志；端口号可能变化。监视应用日志：
 
 ```sh
-idf.py --preview -B build/korvo-s31 -p /dev/cu.usbmodem实际端口 monitor
+idf.py --preview -B build/korvo-s31 -p RUNTIME_PORT monitor
 ```
 
 应用 CDC 在板级准备时启动，无法提供此前的 ROM / bootloader 日志。CDC 不实现自动进入
-ROM 下载，后续烧录同样可用 BOOT 手动进入。拔掉 USB 不影响设备独立运行。
+ROM 下载，后续烧录同样可用 BOOT 手动进入。USB 序列号为 `MOSAICO-` 加设备 MAC，
+每台板的运行时端口由 macOS 实际枚举决定，不能沿用旧固件的固定串口名称。
+拔掉 USB 不影响媒体／面对面独立运行；会议翻译依赖 USB 音频连接。
 烧录使用 `partitions/v2/16m.csv`，与 UAC 诊断分区不同；无需执行整片擦除。
 
 会议互译将电脑下行音频送往 LISTEN Agent，在板载喇叭播放译音；板载麦克风送往
@@ -85,8 +101,12 @@ AI 键短按与当前场景的开始/结束动作一致，长按 3 秒请求重�
 
 ## 验证范围与来源
 
-用户已确认独立 48 kHz UAC 诊断的麦克风采集和喇叭播放正常。用户也已确认 40 行刷新版本的字幕显示正常，触摸导航和启动操作已由实机日志确认。
-16 kHz 译音质量、Cloud AEC、长稳和 USB 会议路由仍需各自验证。
+用户已确认独立 48 kHz UAC 诊断的麦克风和喇叭正常。翻译固件已确认的 Mosaico 功能为
+PSRAM 栈修正版（`e279926`）的基础双向会议：电脑听译到喇叭、麦克风译音回传电脑；
+40 行刷新缓冲的字幕显示也已确认正常。触摸导航和启动操作另有实机日志。
+媒体／面对面已实现于本板，较早的独立实机通过记录来自 Korvo。
+后续 review 修复目前只有 host 测试和中文构建结果，尚未重新真机验收。
+音质、Cloud AEC、重连／长稳、USB 电流及修订后的 VCC 软启动仍需单独测量或验证。
 SPI 刷新发生超时后会停止继续提交，保留尚未完成的 DMA 缓冲；本版显示故障需要重启恢复。
 当前宿主/构建结果记录在 [s31-validation.md](s31-validation.md)。
 
@@ -94,5 +114,6 @@ SPI 刷新发生超时后会停止继续提交，保留尚未完成的 DMA 缓�
 - [CoreBoard V1.2 原理图](https://dl.espressif.com/AE/Mosaico/SCH_SCH_ESP-Mosaico_CoreBoard_V1_2_1_2026-09-24.pdf)
 - [固定版本官方 BSP](https://github.com/esp-mosaico/esp-mosaico-bsp/tree/8ce87a7ef130f946de4f84f6a5a20db1d8982605)
 
-仅采用必要引脚和 CO5300 初始化序列，保留其 Apache-2.0 版权。没有引入要求 IDF 6.2 的整套 BSP，
-也没有修改官方 codec 1.5.9、RTSA 或 AOSL 输入。CO5300 2.2.0、CST9220 0.1.0 由组件管理器固定下载。
+采用必要引脚、eFuse 版本映射、供电软启动和 CO5300 初始化序列，保留其 Apache-2.0 版权。没有引入要求 IDF 6.2 的整套 BSP，
+官方 codec 1.5.9、RTSA 和 AOSL 上游源码保持不变；AOSL 的组件包装及 S31 适配器由工程维护。
+CO5300 2.2.0、CST9220 0.1.0 由组件管理器固定下载。

@@ -1,3 +1,4 @@
+/* SPDX-FileCopyrightText: 2023-2026 Espressif Systems (Shanghai) CO LTD */
 /* SPDX-FileCopyrightText: 2026 MyBot Project Contributors */
 /* SPDX-License-Identifier: Apache-2.0 */
 #include "usb/mosaico_usb_audio.h"
@@ -14,7 +15,6 @@
 #include "esp_attr.h"
 #include "freertos/FreeRTOS.h"
 #include "tusb.h"
-#include "usb_device_uac.h"
 #include "uac_descriptors.h"
 
 #define TAG "mosaico_uac"
@@ -35,8 +35,6 @@ _Static_assert(TUD_AUDIO_PREFER_RING_BUFFER && !CFG_TUD_DWC2_DMA_ENABLE &&
                    !CFG_TUD_MEM_DCACHE_ENABLE,
                "Keep the validated S31 DWC2 PIO audio path");
 
-static bool s_attempted;
-static esp_err_t s_result = ESP_ERR_INVALID_STATE;
 static atomic_bool s_prepared;
 static atomic_bool s_muted;
 static atomic_uint s_volume = 100;
@@ -73,6 +71,8 @@ static atomic_uint s_feedback_rate_q16 = USB_RATE_Q16;
  * it is independent of the device's translated-audio speaker volume. */
 static atomic_uint s_channel_gain[3] = {32768, 32768, 32768};
 static atomic_bool s_channel_mute[3];
+/* Only the USB control task reads/writes the Q8.8 value returned to the host. */
+static int16_t s_channel_volume_db[3];
 
 static void clear_capture_locked(void) {
     s_capture.head = s_capture.count = 0;
@@ -460,23 +460,9 @@ const mybot_audio_playback_ops_t *mosaico_usb_audio_playback_ops(void) {
     return &ops;
 }
 
-esp_err_t mosaico_usb_audio_prepare(void) {
-    if (s_attempted)
-        return s_result;
-    s_attempted = true;
-    uac_device_config_t config = {
-        .skip_tinyusb_init = true,
-        .output_cb = NULL, /* Direct FIFO owner below bypasses the shared speaker buffer. */
-        .input_cb = NULL,  /* Host clock owns microphone packets, no tick-driven shared buffers. */
-        /* The channel-aware control wrapper owns mute/gain and master stats. */
-        .set_mute_cb = NULL,
-        .set_volume_cb = NULL,
-        .spk_itf_num = MYBOT_USB_ITF_SPEAKER,
-        .mic_itf_num = MYBOT_USB_ITF_MICROPHONE,
-    };
-    s_result = uac_device_init(&config);
-    atomic_store_explicit(&s_prepared, s_result == ESP_OK, memory_order_release);
-    return s_result;
+void mosaico_usb_audio_prepare(void) {
+    /* All state and PCM queues are static; no UAC package tasks or buffers. */
+    atomic_store_explicit(&s_prepared, true, memory_order_release);
 }
 
 void mosaico_usb_audio_event(tinyusb_event_t *event, void *arg) {
@@ -517,64 +503,99 @@ void mosaico_usb_audio_event(tinyusb_event_t *event, void *arg) {
     }
 }
 
-/* Rename only these package callbacks in the scoped compatibility header.
- * Own both PCM paths; the package's reusable buffers can otherwise be
- * overwritten while a task reads or replay old microphone data after stop. */
-extern bool mosaico_uac_upstream_set_req(uint8_t, tusb_control_request_t const *, uint8_t *);
-extern bool mosaico_uac_upstream_get_req(uint8_t, tusb_control_request_t const *);
-
-static bool valid_speaker_control(tusb_control_request_t const *request) {
-    return request && ((tu_le16toh(request->wIndex) >> 8) != UAC2_ENTITY_SPK_FEATURE_UNIT ||
-                       (tu_le16toh(request->wValue) & 255) <= 2);
+static bool valid_entity_request(uint8_t rhport, tusb_control_request_t const *request) {
+    return rhport == 0 && request &&
+           (tu_le16toh(request->wIndex) & 255) == MYBOT_USB_ITF_AUDIO_CONTROL;
 }
+
+/* Fixed-format clock/speaker controls retain usb_device_uac 1.3.1's UAC2
+ * protocol while keeping their small state in the project-owned USB adapter. */
 bool tud_audio_get_req_entity_cb(uint8_t rhport, tusb_control_request_t const *request) {
-    return valid_speaker_control(request) && mosaico_uac_upstream_get_req(rhport, request);
+    if (!valid_entity_request(rhport, request))
+        return false;
+    unsigned entity = tu_le16toh(request->wIndex) >> 8;
+    unsigned selector = tu_le16toh(request->wValue) >> 8;
+    unsigned channel = tu_le16toh(request->wValue) & 255;
+    uint8_t reply[14] = {0};
+    uint16_t length = 0;
+    if (entity == UAC2_ENTITY_CLOCK && channel == 0) {
+        if (selector == AUDIO_CS_CTRL_SAM_FREQ) {
+            if (request->bRequest == AUDIO_CS_REQ_CUR) {
+                tu_unaligned_write32(reply, tu_htole32(USB_AUDIO_RATE));
+                length = 4;
+            } else if (request->bRequest == AUDIO_CS_REQ_RANGE) {
+                reply[0] = 1;
+                tu_unaligned_write32(reply + 2, tu_htole32(USB_AUDIO_RATE));
+                tu_unaligned_write32(reply + 6, tu_htole32(USB_AUDIO_RATE));
+                length = 14;
+            }
+        } else if (selector == AUDIO_CS_CTRL_CLK_VALID && request->bRequest == AUDIO_CS_REQ_CUR) {
+            reply[0] = 1;
+            length = 1;
+        }
+    } else if (entity == UAC2_ENTITY_SPK_FEATURE_UNIT && channel <= 2) {
+        if (selector == AUDIO_FU_CTRL_MUTE && request->bRequest == AUDIO_CS_REQ_CUR) {
+            reply[0] = atomic_load_explicit(&s_channel_mute[channel], memory_order_relaxed);
+            length = 1;
+        } else if (selector == AUDIO_FU_CTRL_VOLUME) {
+            if (request->bRequest == AUDIO_CS_REQ_CUR) {
+                tu_unaligned_write16(reply, tu_htole16((uint16_t)s_channel_volume_db[channel]));
+                length = 2;
+            } else if (request->bRequest == AUDIO_CS_REQ_RANGE) {
+                reply[0] = 1;
+                tu_unaligned_write16(reply + 2, tu_htole16((uint16_t)(-50 * 256)));
+                tu_unaligned_write16(reply + 6, tu_htole16(256));
+                length = 8;
+            }
+        }
+    }
+    /* TinyUSB copies this local reply, and applies the host's requested length
+     * when it schedules the transfer (including a two-byte RANGE probe). */
+    return length && tud_audio_buffer_and_schedule_control_xfer(rhport, request, reply, length);
 }
 bool tud_audio_set_req_entity_cb(uint8_t rhport, tusb_control_request_t const *request,
                                  uint8_t *data) {
-    if (!valid_speaker_control(request) || !data)
+    if (!valid_entity_request(rhport, request) || !data || request->bRequest != AUDIO_CS_REQ_CUR)
         return false;
-    bool speaker = (tu_le16toh(request->wIndex) >> 8) == UAC2_ENTITY_SPK_FEATURE_UNIT;
+    unsigned entity = tu_le16toh(request->wIndex) >> 8;
     unsigned selector = tu_le16toh(request->wValue) >> 8;
     unsigned channel = tu_le16toh(request->wValue) & 255;
-    int16_t volume_db = 0;
-    if (speaker) {
-        if (request->bRequest != AUDIO_CS_REQ_CUR)
+    if (entity == UAC2_ENTITY_CLOCK) {
+        if (channel || selector != AUDIO_CS_CTRL_SAM_FREQ || tu_le16toh(request->wLength) != 4)
             return false;
-        if (selector == AUDIO_FU_CTRL_MUTE) {
-            if (tu_le16toh(request->wLength) != 1 || data[0] > 1)
-                return false;
-        } else if (selector == AUDIO_FU_CTRL_VOLUME) {
-            if (tu_le16toh(request->wLength) != 2)
-                return false;
-            volume_db = (int16_t)((uint16_t)data[0] | (uint16_t)data[1] << 8);
-            if (volume_db < -50 * 256 || volume_db > 0)
-                return false;
-        } else {
-            return false;
-        }
+        uint32_t rate = (uint32_t)data[0] | (uint32_t)data[1] << 8 | (uint32_t)data[2] << 16 |
+                        (uint32_t)data[3] << 24;
+        return rate == USB_AUDIO_RATE;
     }
-    if (!mosaico_uac_upstream_set_req(rhport, request, data))
+    if (entity != UAC2_ENTITY_SPK_FEATURE_UNIT || channel > 2)
         return false;
-    if (speaker && selector == AUDIO_FU_CTRL_MUTE) {
+    if (selector == AUDIO_FU_CTRL_MUTE) {
+        if (tu_le16toh(request->wLength) != 1 || data[0] > 1)
+            return false;
         atomic_store_explicit(&s_channel_mute[channel], data[0] != 0, memory_order_relaxed);
         if (channel == 0)
             atomic_store_explicit(&s_muted, data[0] != 0, memory_order_relaxed);
         portENTER_CRITICAL_ISR(&s_capture_lock);
         clear_capture_locked(); /* No pre-mute queue or FIR tail may cross this transition. */
         portEXIT_CRITICAL_ISR(&s_capture_lock);
-    } else if (speaker && selector == AUDIO_FU_CTRL_VOLUME) {
+    } else if (selector == AUDIO_FU_CTRL_VOLUME) {
+        if (tu_le16toh(request->wLength) != 2)
+            return false;
+        int16_t volume_db = (int16_t)((uint16_t)data[0] | (uint16_t)data[1] << 8);
+        if (volume_db < -50 * 256 || volume_db > 0)
+            return false;
+        s_channel_volume_db[channel] = volume_db;
         uint32_t gain = (uint32_t)lroundf(32768.0f * powf(10.0f, (float)volume_db / 5120.0f));
         atomic_store_explicit(&s_channel_gain[channel], gain, memory_order_relaxed);
         if (channel == 0)
             atomic_store_explicit(&s_volume, (volume_db + 50 * 256) * 100 / (50 * 256),
                                   memory_order_relaxed);
+    } else {
+        return false;
     }
     return true;
 }
 
-extern bool mosaico_uac_upstream_set_itf(uint8_t, tusb_control_request_t const *);
-extern bool mosaico_uac_upstream_close_itf(uint8_t, tusb_control_request_t const *);
 static void set_interface(tusb_control_request_t const *request) {
     unsigned interface = tu_le16toh(request->wIndex) & 255;
     bool open = (tu_le16toh(request->wValue) & 255) != 0;
@@ -594,21 +615,15 @@ static void set_interface(tusb_control_request_t const *request) {
     }
 }
 bool tud_audio_set_itf_cb(uint8_t rhport, tusb_control_request_t const *request) {
-    /* The package's tick-driven microphone task stays asleep permanently. */
-    bool microphone =
-        rhport == 0 && request && (tu_le16toh(request->wIndex) & 255) == MYBOT_USB_ITF_MICROPHONE;
-    bool result = microphone || mosaico_uac_upstream_set_itf(rhport, request);
-    if (result && rhport == 0 && request)
-        set_interface(request);
-    return result;
+    if (rhport != 0 || !request || tu_le16toh(request->wValue) > 1 ||
+        (tu_le16toh(request->wIndex) != MYBOT_USB_ITF_SPEAKER &&
+         tu_le16toh(request->wIndex) != MYBOT_USB_ITF_MICROPHONE))
+        return false;
+    set_interface(request);
+    return true;
 }
 bool tud_audio_set_itf_close_ep_cb(uint8_t rhport, tusb_control_request_t const *request) {
-    bool microphone =
-        rhport == 0 && request && (tu_le16toh(request->wIndex) & 255) == MYBOT_USB_ITF_MICROPHONE;
-    bool result = microphone || mosaico_uac_upstream_close_itf(rhport, request);
-    if (result && rhport == 0 && request)
-        set_interface(request);
-    return result;
+    return tud_audio_set_itf_cb(rhport, request);
 }
 
 bool tud_audio_rx_done_isr(uint8_t rhport, uint16_t bytes, uint8_t function, uint8_t endpoint,

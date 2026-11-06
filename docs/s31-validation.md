@@ -1,8 +1,8 @@
 # S31 validation record
 
-The current development target is ESP-Mosaico CoreBoard V1.2. The latest checks are under [RTC initialization and PSRAM task stacks](#2026-11-06-rtc-initialization-and-psram-task-stacks). Earlier sections describe the revision tested at that time. Use the manifests and checksums beside delivered images for their current binary identity.
+The current development target is ESP-Mosaico CoreBoard V1.2, with Korvo retained as an existing-device profile. Current review corrections are recorded in the [numbered review-fix sections](#review-fix-01-isolate-mosaico-uac-from-korvo). Earlier sections describe the revision tested at that time. Use the build-bound manifests and checksums beside delivered images for their binary identity.
 
-This records local build/host validation and separately attributed hardware feedback. Basic bidirectional audio passed the user's real-board interoperability test. The user subsequently confirmed normal screen display. Detailed TDM channel/reference mapping, quantitative audio quality, the new touch behavior, power sequencing and long-duration stability are not established by those reports.
+This records local build/host validation and separately attributed hardware feedback. The user confirmed the Korvo audio/display baseline, Mosaico diagnostic USB microphone/speaker audio, normal 40-row caption display and basic bidirectional meeting translation after the PSRAM-stack revision. Mosaico touch navigation and start operation also have device-log evidence. These reports precede this review-fix series and do not validate its new recovery, key, USB identity or power changes. Quantitative audio quality, AEC, enumeration/reconnect stability, power/current measurements and endurance still require separate hardware results.
 
 ## User-reported hardware audio test — 2026-10-30
 
@@ -792,3 +792,341 @@ audio quality and endurance remain separate validation items.
 The user requested PSRAM wherever practical; audited task stacks and large task buffers follow
 that policy while required internal-memory objects retain their placement. The global external
 BSS option remains disabled, avoiding an unrelated relocation of Wi-Fi/lwIP static storage.
+
+
+## Review fix 01: isolate Mosaico UAC from Korvo
+
+UAC's manifest now belongs to the nested mybot_mosaico_usb component, registered only
+for Mosaico before IDF dependency discovery. The global main manifest no longer downloads
+UAC for Korvo. CI builds both boards in both languages, with distinct output names and
+Mosaico-only descriptor tests. The focused workflow/delivery suite passes 21 cases.
+
+Fresh Korvo Chinese and restored Mosaico Chinese builds both pass in the same local
+build/korvo-s31 directory, with final S31 ABI/AOSL/RTSA/flash checks. Korvo's compilation
+graph has no UAC component/source; Mosaico contains the board wrapper and composite UAC,
+without standalone UAC descriptors. The original Mosaico build was preserved and restored;
+no device was flashed. Pinned-header descriptor tests pass. Remote CI remains pending.
+
+- Korvo application: 3541936 bytes, SHA-256 `44438cde7b2b620cd6851756b87f02f5d94edd6f5ac1fd2357911581e413ea3f`.
+- Mosaico application: 3654352 bytes, SHA-256 `25715672b5bf35cfd61930e375423d1c2ab08fbd51d42983896ae639ae8868e7`.
+
+
+## Review fix 02: preserve NVS on startup errors
+
+Storage startup now attempts NVS initialization once and returns on any error without
+an automatic erase. Wi-Fi/auth data and pending cloud session journals remain available
+for explicit recovery. A small startup helper is exercised with success, no-free-pages,
+newer-format, allocation and generic failure mocks; all verify zero erase calls and
+unchanged retained bytes under UBSan. CI runs this targeted test. Formatting/SPDX and
+whitespace checks pass. Chinese incremental build and final S31 checks pass in the fixed
+build directory: application 3654352 bytes, SHA-256 `0c8502571d9385677438ee42eabfbabce87568428d0f1dd57584326263db6527`.
+No device was flashed; real corrupt-partition recovery is not emulated by the host test.
+
+## Review fix 03: retain ambiguous gateway starts
+
+An HTTP 5xx without a usable parent session now preserves the unknown-start journal unless
+the server explicitly returns the boolean cleanup_required=false. A known parent still
+requires cleanup. Partial transport failures follow the same rule; 4xx rejection semantics
+are unchanged. Client UBSan tests pass 467/459 cases with features enabled/disabled,
+including 502/503/504 malformed/empty responses. Lifecycle tests pass 36 groups, including
+durable unknown results and blocked duplicate starts after reboot. Formatting and whitespace
+checks pass. The Chinese incremental build and final S31 checks pass in build/korvo-s31.
+No device was flashed; gateway failure injection remains a host result.
+
+## Review fix 04: recover physical playback faults
+
+The physical pipeline now reports and latches hard playback faults. Session cleanup
+stop/starts the backend and only clears the latch after success; a failed recovery
+blocks a new cloud start. The common error callback closes routing through cancellation
+without dereferencing a concurrently retiring USB pipeline. Intentional pause/stop
+interruptions do not latch faults. Media tests pass 17 cases with AEC on/off; control/UI
+and face tests cover idle failures, cleanup and subsequent successful playback. Both
+codec lifecycle suites pass. Formatting/SPDX, whitespace, Chinese incremental build
+and final S31 checks pass. No device was flashed; physical fault recovery still needs
+device fault injection to establish its hardware behavior.
+
+## Review fix 05: retain incomplete application teardown
+
+Application shutdown now shares one media cleanup path across startup failure,
+control-worker exit and repeated stop calls. Physical/USB workers and RTC must all
+stop before their PCM buffers or the application AOSL reference can be released.
+Uninitialized physical media is skipped. STOPPED is published only after the HTTP
+queue, lifecycle storage and media teardown have completed. Retained KV storage is
+also reclaimed when lifecycle initialization failed before an HTTP join completed.
+
+The public stop fault tests pass 16 control scenarios, including persistent physical,
+USB, RTC, HTTP/control-join failures and successful later reclamation. UI/caption/face
+regressions pass under UBSan. Formatting/SPDX and whitespace checks pass; the Chinese
+incremental build and final S31 checks pass in build/korvo-s31. No device was flashed;
+these fault results use mocked worker/vendor boundaries.
+
+## Review fix 06: preserve languages across scenes
+
+Scene selection now changes only the translation mode and audio source. It no longer
+overwrites the accepted language pair with Chinese/English when crossing codec/USB
+scenes. The existing UI flow selects Japanese/Korean and checks preserved labels and
+commands through meeting, media, face-to-face and meeting again. Defaults remain at
+initial configuration, and language changes still wait for acknowledged readback.
+
+The Chinese/English UI suites pass on both screen layouts, along with font checks,
+formatting/SPDX and whitespace checks. Chinese incremental firmware build and final
+S31 checks pass in build/korvo-s31. No device was flashed.
+
+## Review fix 07: reject stale physical key gestures
+
+Physical AI/PLAY gestures capture their action and SDK attachment epoch on press.
+Release dispatch validates that original gesture instead of selecting a new action
+from the release-time state. A gesture invalidated by a session-state transition or
+detach cannot become a start for a later session. Long-press provisioning remains
+owned by the board.
+
+Queued key events also carry the existing runtime and conversation generations.
+The conversation generation now spans an entire start attempt, so a valid STOP
+during STARTING still applies after RTC joins. Queue admission shares a short fence
+with attempt cancellation reset; stale STOP callbacks cannot mute a later session.
+
+Both-board input tests pass 31 scenarios, including the original ACTIVE-to-READY
+failure reproduced before the fix, stale held gestures, detach/reattach and long
+provisioning. UBSan control tests pass 20 UI scenarios plus the existing lifecycle,
+caption and route suites. One case injects STOP after the RTC-start cancellation
+precheck to verify that a starting attempt can still be stopped. Formatting/SPDX,
+whitespace, Chinese incremental build and final S31 checks pass. No device was flashed;
+physical key timing remains a separate hardware check.
+
+## Review fix 08: unique composite USB identity
+
+The USB serial string now comes from the factory MAC rather than the shared board
+model string. Product and audio/console interface names are preserved. Identity-read
+failure aborts descriptor configuration instead of exposing a shared fallback serial.
+
+The pinned-header descriptor test passes under UBSan with two synthetic factory
+MACs, stable repeat configuration, unchanged names, read errors and invalid identities.
+Formatting/SPDX, whitespace, Chinese incremental firmware build and final S31 checks
+pass in build/korvo-s31. No device was flashed; multi-device macOS enumeration is
+still a hardware validation item.
+
+## Review fix 09: register only initialized USB audio
+
+Board capability registration now checks successful USB audio/core initialization.
+Failed descriptor, UAC or controller startup does not expose meeting audio to the UI.
+An unavailable CDC VFS console does not suppress a working UAC function. Cable and
+stream-open state remain runtime readiness checks, separate from this capability.
+
+Nine composite initialization fault cases pass under UBSan, and both-board input
+and registration tests pass 39 scenarios. CI runs the new initialization suite.
+The 61 builder/delivery tests pass with Python 3.11; formatting/SPDX, whitespace,
+Chinese incremental firmware build and final S31 checks pass. No device was flashed;
+USB enumeration and reconnect behavior still need hardware testing.
+
+## Review fix 10: bind delivery source to the build
+
+An ordered prebuild step captures the Git revision, dirty state, project build-input
+digest and effective configuration hash. It generates a retained digest in the
+application only when the snapshot changes. After application and flash segments
+complete, a source recheck binds the snapshot to ELF/BIN/configuration/segment hashes.
+The delivery checker consumes this frozen record and validates the embedded digest;
+it never replaces provenance with the packaging checkout's HEAD. Missing or stale
+records require a rebuild. Credentials/configuration contents are not recorded, and
+the source digest explicitly covers project inputs rather than external toolchains.
+
+The real Chinese build and merged-image packaging pass. A no-op build preserves
+ELF, BIN, generated identity and provenance content and timestamps. Host tests cover
+packaging A after checkout B, failed B preserving A, ordinary source edits without
+reconfigure, dirty inputs, mid-build changes and artifact/embedded-digest mismatches.
+All 74 builder/delivery tests pass with Python 3.11; the 22 delivery tests also pass
+with IDF Python 3.10. Embedded Wi-Fi HTML and hidden-index modification regressions
+pass. The final Chinese rebuild and S31 checks pass. No device was flashed.
+
+## Review fix 11: allocation-free PSRAM task reclamation
+
+The S31 AOSL adapter prepares a static internal queue, TCB and aligned 2 KiB reaper
+stack before admitting a PSRAM worker. Normal return and explicit self-exit enqueue
+the task handle and park; the permanent reaper uses IDF's external WithCaps deletion
+path, which waits until the task is off every core before freeing it. Queue pressure
+blocks without discarding ownership or allocating a temporary cleanup task. Reaper
+startup failure rejects worker creation. Original AOSL inputs remain unchanged, and
+the reaper depends only on FreeRTOS so it can safely outlive an AOSL reference cycle.
+
+UBSan tests compile the unchanged HAL through the production wrapper and cover
+startup rollback, overlapping creators, matching allocation/deletion, explicit exit,
+and 24 worker exits with allocation denied and 16-slot queue backpressure. All pass;
+formatting/SPDX and whitespace checks pass. Chinese firmware and final S31 checks
+pass, and ELF inspection places every reaper resource in internal DRAM. No device
+was flashed; host mocks do not establish real SMP shutdown timing or stack headroom.
+
+## Review fix 12: explicit USB bus-power budget
+
+Mosaico FS/HS descriptors now request 500 mA after configuration and the native PHY
+configuration explicitly declares bus-powered operation. Pinned-header descriptor
+tests verify bmAttributes=0x80 and bMaxPower=250 at both speeds; initialization tests
+verify the explicit self_powered=false override. These tests pass under UBSan, with
+formatting/SPDX and whitespace checks. This is a declared budget, not a measured
+load or a hardware current limit; charging, inrush, preconfiguration/suspend and
+full-volume load remain unmeasured. Chinese build and final S31 checks pass. No
+device was flashed.
+
+## Review fix 13: Mosaico revision guard and VCC ramp
+
+Board startup reads the first 16 eFuse USER_DATA bits before touching GPIO or I2C.
+V1.0 is rejected; V1.1 and V1.2 use the documented shared map. Unknown/unprogrammed
+values explicitly warn and assume the user-selected V1.2 target, a project policy
+that differs from the upstream BSP's strict rejection. Existing enabled power is
+adopted; a disabled rail follows the pinned BSP's active-low 100 kHz, 8-bit 255-to-0
+LEDC fade over 50 ms, then returns to GPIO ownership. Failures attempt to restore
+the off level, and only a locally installed fade service is uninstalled. The existing
+10 ms settling delay remains after power setup and before the first I2C initialization. The source
+reference blob f6c5efa192638e9cce674ed395fb1eb1de691fa4 matches the pinned BSP tree.
+
+All 23 hardware initialization fault cases pass under UBSan, including shared-fade
+failure ownership. CI runs the suite and checks its formatting/SPDX. Whitespace,
+Chinese incremental build and final S31 checks pass. No device was flashed; actual
+VCC waveform, inrush, eFuse contents and post-ramp peripheral operation still need
+hardware validation.
+
+## Review fix 14: default USB audio sanitizer coverage
+
+USB audio host tests now enable UBSan with fail-fast recovery disabled by default;
+CI explicitly sets the same flags. All nine transport/filter/concurrency scenarios
+pass, and the 22 delivery/workflow tests pass. Whitespace checks pass. This change
+updates host validation only. Threaded mocks do not prove ISR/task race freedom,
+and no successful TSan result is recorded. The optional macOS ASan control run
+failed before main in libpthread/dyld initialization and did not execute application
+tests. Remote CI and real USB scheduling remain separate results.
+
+## Review fix 15: enforce OTA image headroom
+
+Local and CI delivery checks now require at least 307,200 bytes (300 KiB) free in
+every writable OTA application slot. Capacity comes from the built binary partition
+table, with its integrity/layout checked and flash records cross-checked against
+the delivered application offset. Current checkout CSV files are not consulted.
+Metadata and CLI output record the image size, per-slot capacity/free bytes and
+required minimum. The existing Chinese artifact passes under IDF Python 3.10:
+3,671,632 application bytes and 457,136 free bytes in each 4,128,768-byte OTA slot.
+
+All 85 builder/delivery tests pass with Python 3.11, including 11 new grouped
+capacity/layout regressions. Exactly 307,200 free bytes passes; 307,199 in the
+smaller OTA slot fails. Malformed tables, mismatched flash records and overflows
+are rejected. Whitespace checks pass. Firmware source is unchanged by this host
+delivery-policy fix; no device was flashed.
+
+## Review fix 16: align maintained documentation
+
+Current guides consistently use Mosaico V1.2, the fixed local build/sdkconfig path,
+direct IDF/merge commands, isolated CI variants, frozen source records and the OTA
+margin policy. SDK/board/PSRAM documentation describes meeting routing, dynamic USB
+capability and the static internal reaper. Hardware acceptance is scoped to the
+reported Korvo baseline and Mosaico USB/display/basic meeting evidence; later fixes
+remain host/build results. Historical sections retain their original scope. Local
+file links in all 27 changed Markdown documents and whitespace checks pass. This
+documentation-only correction required no firmware build or device flash.
+
+## Review fix 17: remove unused emoji assets
+
+Removed the nine-file emoji chain (439,331 source bytes): generated arrays/header,
+generator, four PNGs and their dedicated provenance/license. Source, CMake, actual
+compile commands and map inspection found no consumers. Current UI/caption fonts,
+their generators/tests and license notices remain. The four board/language UI
+variants and font checks pass; Chinese build, source/OTA delivery checks and whitespace
+checks pass. The app size remains 3,671,632 bytes: these assets were never linked,
+so this is a repository cleanup rather than a firmware memory reduction. No flash.
+
+## Review fix 18: simplify the S31 automation builder
+
+The builder accepts the two registered S31 profiles, defaults to Mosaico and validates
+their declared target. Removed obsolete video options/defaults/naming, camera/display
+source-name guesses, generic profile objects and conditional S31 delivery checks.
+All seven ownership/path/FD-anchored cleanup functions remain unchanged. The Python
+3.11 suite passes 83 tests, with two obsolete capability/video tests removed. A real
+CLI dry-run plans four board/language variants using preview/60 ms and four checker
+calls; output roots remain absent. Whitespace checks pass. No firmware was built
+outside the fixed local directory, and no device was flashed.
+
+## Full host CI follow-up: key epoch test fixture
+
+The complete local quality run found one older volume test still dispatching the
+pre-epoch two-argument key handler. Its fixture now passes the current runtime and
+conversation generations, including nonzero test values. All eight volume scenarios
+pass under UBSan, with formatting/whitespace checks. This corrects the test harness
+for review fix 07; production behavior is unchanged.
+
+## Review fix 19: remove idle UAC runtime
+
+Production now owns fixed 48 kHz clock controls, speaker master/L/R mute and Q8.8
+volume state. The pinned package supplies descriptors/Kconfig through a header-only
+registration; managed sources and the standalone diagnostic remain intact. Actual
+IDF testing showed require:no alone still builds managed roots, so the project
+redirects only this package's registration before component processing. No vendor
+UAC source compiles or runtime symbols remain; six project callbacks are live.
+Existing PCM/feedback/DWC2 paths are retained. A delivery guard rejects reintroduced
+vendor runtime compilation or live symbols.
+
+Nine USB audio/control groups, eight console initialization fault groups and pinned
+FS/HS descriptor tests pass under UBSan. Builder/delivery tests pass 86 cases; the
+full local quality/host run passes all 34 jobs after the volume fixture correction.
+Chinese firmware and final source/link/OTA checks pass: app 3,667,776 bytes, each
+OTA slot free 460,992 bytes. No device was flashed; current USB traffic and audio
+quality still need hardware verification after these changes.
+
+## Host CI follow-up: GCC boolean assignment warning
+
+The USB shutdown retry fixture now initializes its bool and atomic integer fields
+in separate statements. GCC rejects the previous mixed-type chained assignment
+with -Werror=parentheses; production code is unchanged. The isolated correction
+passes the control suite with GNU GCC 13.4.0, GCC with UBSan and Apple Clang with
+UBSan. All 26 CI C/C++ host scripts pass on macOS using real GCC/G++ 13.4.0 with
+the LLVM UBSan runtime; a deliberate overflow probe confirms sanitizer execution.
+The descriptor suite initially lacked its UAC header prerequisite while the Korvo
+matrix was active, then passed using the existing pinned 1.3.1 header cache.
+Evidence is retained in /private/tmp/mybot-gcc-bool-fix-dxdyf7sk/full-gcc-results.json.
+This is local compiler validation, not a remote Ubuntu CI result.
+
+## Final review-series board/language matrix (2026-11-06)
+
+All four variants pass direct ESP-IDF v6.1 preview builds, merge-bin delivery and
+the source/link/partition checks at eec75e64ddcbe7e7e5e59383d01795a6f3e3edfd:
+
+| Board | Language | Application bytes | Minimum OTA free bytes | Source dirty |
+| --- | --- | ---: | ---: | --- |
+| esp32-s31-korvo-1 | zh-CN | 3,545,168 | 583,600 | true |
+| esp32-s31-korvo-1 | en-US | 3,626,128 | 502,640 | true |
+| esp-mosaico-v1.2 | en-US | 3,748,752 | 380,016 | false |
+| esp-mosaico-v1.2 | zh-CN | 3,667,776 | 460,992 | false |
+
+Korvo's dirty flag records IDF's board-specific regeneration of dependencies.lock;
+the manifests retain the actual input hashes. Returning to Mosaico restored the
+committed lock contents. Every OTA slot exceeds the required 307,200 free bytes.
+Checks cover RISC-V/local AOSL, pinned RTSA and link members, video disabled,
+embedded/frozen source provenance, flash segments, partition layout and merged
+image hashes. Korvo has no UAC/Mosaico wrapper component. Mosaico's UAC component
+is CONFIG_ONLY, and no variant compiles usb_device_uac.c. The earlier Chinese
+build/ELF inspection remains the evidence for six live callbacks, DWC2 patches,
+PIO configuration and internal reaper placement; those inspections were not repeated
+for every matrix variant.
+
+With explicit user authorization, inactive contexts were atomically archived
+under build/validation-archives/review-matrix-21fc3v5r. All compilation and active
+sdkconfig use remained at build/korvo-s31. Results, full application/merged SHA-256
+values, manifests and logs are retained in that archive's results.json and
+deliveries directory. The original Mosaico Chinese context was restored; its
+application SHA-256 remained
+99f2890d90c4ab02b9bd7ed1f30197eb816cec289b03c996d5fdac4b7ae0ae38.
+Hash inventories confirm all eight mosaico-uac-passed and nine meeting-listen-passed
+backup files are unchanged. No device was flashed. The subsequent GCC fixture
+correction changes test setup only; these matrix results remain firmware-source
+evidence rather than hardware acceptance of the review fixes.
+
+## CI follow-up: container Git workspace access (2026-11-06)
+
+The remote Mosaico Chinese job stopped before compilation when provenance capture
+could not read HEAD (Git exit 128). Its log omitted Git stderr, so the original
+diagnostic is unavailable. A forced ownership check with Git 2.50.1 reproduces
+that exit; trusting the exact checkout path restores access. The IDF container job
+now sets safe.directory to GITHUB_WORKSPACE after checkout and verifies HEAD in
+the same shell environment used for builds. The provenance helper streams Git
+stderr and still rejects failed metadata queries without creating a snapshot.
+
+All 89 builder/delivery/provenance tests pass with Python 3.11 and Git 2.50.1,
+without skips. Tests execute the workflow's trust commands, exercise capture and
+finalize with clean and dirty inputs, preserve missing-repository diagnostics and
+confirm that other repositories remain untrusted. Whitespace checks pass. This
+fix changes CI and provenance tooling; another remote CI run is still required.

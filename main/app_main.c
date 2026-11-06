@@ -12,7 +12,7 @@
 #include "esp_netif_sntp.h"
 #include "esp_psram.h"
 #include "esp_timer.h"
-#include "nvs_flash.h"
+#include "storage_init.h"
 #include "psa/crypto.h"
 #include "mybot_platform/board.h"
 #if CONFIG_MYBOT_DEBUG_RESOURCE_MONITOR
@@ -74,15 +74,6 @@ static int build_device_id(char *device_id, size_t capacity, const uint8_t mac[6
 
 static esp_event_handler_instance_t s_got_ip_handler;
 static bool s_sntp_initialized;
-
-static int init_nvs(void) {
-    esp_err_t err = nvs_flash_init();
-    if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-        ESP_ERROR_CHECK(nvs_flash_erase());
-        err = nvs_flash_init();
-    }
-    return err == ESP_OK ? 0 : -1;
-}
 
 /* AOSL creates socket-backed wakeup pipes before the platform Wi-Fi init callback runs. */
 static int init_network_stack(void) {
@@ -177,8 +168,7 @@ void app_main(void) {
     return;
 #endif
 
-    if (init_nvs() < 0) {
-        ESP_LOGE(TAG, "NVS initialization failed");
+    if (mybot_storage_init() < 0) {
         return;
     }
     if (init_network_stack() < 0) {

@@ -70,6 +70,7 @@ list(APPEND EXTRA_COMPONENT_DIRS
     "${MYBOT_STACK_ROOT}/mybot_sdk"
     "${MYBOT_STACK_ROOT}/aosl"
     "${MYBOT_STACK_ROOT}/agora_rtc"
+    ${MYBOT_BOARD_EXTRA_COMPONENT_DIRS}
 )
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
@@ -82,3 +83,4 @@ project(mybot_esp32s31)
 if(MYBOT_BOARD STREQUAL "esp-mosaico-v1.2")
     include("${CMAKE_CURRENT_LIST_DIR}/components/mybot_platform/src/drivers/usb/mosaico_usb.cmake")
 endif()
+include("${CMAKE_CURRENT_LIST_DIR}/scripts/build_source.cmake")

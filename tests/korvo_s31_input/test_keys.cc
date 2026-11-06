@@ -254,7 +254,8 @@ int main(int argc, char **argv) {
     CHECK(ops->init(&ctx, emit, &events) < 0 && !ctx); // source not prepared
     if (scenario != "behavior" && scenario != "ordering" && scenario != "touch" &&
         scenario != "touch_stale" && scenario != "touch_ordering" && scenario != "ui_controls" &&
-        scenario != "ui_commands" && scenario != "late_cancel" && scenario != "gpio_behavior") {
+        scenario != "ui_commands" && scenario != "late_cancel" && scenario != "gpio_behavior" &&
+        scenario != "physical_stale") {
         failure = scenario == "cleanup_retry" ? "channel" : scenario;
         if (scenario == "partial_adc_new") {
             failure = "adc_new";
@@ -301,6 +302,66 @@ int main(int argc, char **argv) {
         feed(1340, 160);
         feed(2000, 4);
         CHECK(provisioning == 2 && events.size() == 2); // provisioning works detached
+        CHECK(ops->init(&ctx, emit, &events) == 0);
+    } else if (scenario == "physical_stale") {
+        state = MYBOT_STATE_IN_CONVERSATION;
+        feed(1340, 8);
+        state = MYBOT_STATE_READY;
+        feed(2000, 4);
+        CHECK(events.empty()); // A stop press cannot become a start after the session ends.
+        feed(1340, 8);
+        state = MYBOT_STATE_IN_CONVERSATION;
+        feed(2000, 4);
+        CHECK(events.empty()); // A start press cannot stop a session opened by another input.
+        feed(1340, 8);
+        state = MYBOT_STATE_READY;
+        feed(1340, 1);
+        state = MYBOT_STATE_IN_CONVERSATION;
+        feed(2000, 4);
+        CHECK(events.empty()); // Returning to the pressed state cannot revive an expired gesture.
+        state = MYBOT_STATE_READY;
+        feed(1340, 8);
+        state = MYBOT_STATE_PAIRING;
+        feed(1340, 1);
+        state = MYBOT_STATE_READY;
+        feed(2000, 4);
+        CHECK(events.empty());
+        feed(1340, 8);
+        ops->destroy(ctx);
+        CHECK(ops->init(&ctx, emit, &events) == 0);
+        feed(2000, 4);
+        CHECK(events.empty()); // SDK reattachment cannot inherit a physical press.
+        ops->destroy(ctx);
+        feed(1340, 8);
+        CHECK(ops->init(&ctx, emit, &events) == 0);
+        feed(2000, 4);
+        CHECK(events.empty()); // A detached press stays invalid after attachment.
+        state = MYBOT_STATE_TRANSLATION_STARTING;
+        feed(1340, 8);
+        state = MYBOT_STATE_IN_CONVERSATION;
+        feed(2000, 4);
+        CHECK(events.size() == 1 && events.back() == MYBOT_KEY_EVENT_CONVERSATION_STOP);
+        state = MYBOT_STATE_TRANSLATION_STARTING;
+        feed(1340, 8);
+        state = MYBOT_STATE_CLEANUP_PENDING;
+        feed(2000, 4);
+        CHECK(events.size() == 2 && events.back() == MYBOT_KEY_EVENT_CONVERSATION_STOP);
+        state = MYBOT_STATE_READY;
+        press(1340);
+        press(1340);
+        CHECK(events.size() == 4 && events[2] == MYBOT_KEY_EVENT_CONVERSATION_START &&
+              events[3] == MYBOT_KEY_EVENT_CONVERSATION_START);
+        state = MYBOT_STATE_IN_CONVERSATION;
+        press(1340);
+        press(1340);
+        CHECK(events.size() == 6 && events[4] == MYBOT_KEY_EVENT_CONVERSATION_STOP &&
+              events[5] == MYBOT_KEY_EVENT_CONVERSATION_STOP);
+        ops->destroy(ctx);
+        state = MYBOT_STATE_STOPPED;
+        feed(TEST_MOSAICO ? 1340 : 1870, 170);
+        feed(2000, 4);
+        CHECK(events.size() == 6 &&
+              provisioning == 1); // Board-owned long provisioning is unchanged.
         CHECK(ops->init(&ctx, emit, &events) == 0);
     } else if (scenario == "touch") {
         tap();

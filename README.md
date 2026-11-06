@@ -8,7 +8,8 @@
 `mybot-esp32s31` is an ESP-IDF firmware project for standalone V2VT translation on the
 **ESP-Mosaico CoreBoard V1.2**, the target for future development. The media scene sends board microphone audio to the cloud and plays
 translated speech through the board speaker, initially Chinese to English. Face-to-face supports
-alternating Chinese/English speech, with language buttons selecting the microphone route. The project maintains
+alternating Chinese/English speech, with language buttons selecting the microphone route. Mosaico meetings
+translate PC audio to the device speaker and device microphone audio back to the PC over USB. The project maintains
 the MyBot translation SDK fork and its board, network, audio, display and lifecycle integration.
 The development API is `https://mybot.sh3t.agoralab.co/api`.
 
@@ -46,9 +47,12 @@ The default `esp-mosaico-v1.2` profile targets 16 MB NOR Flash, 16 MB Octal PSRA
 ES8311 audio and a 480×480 CO5300 / CST9220 display. It uses `partitions/v2/16m.csv`;
 the 128 MB NAND is unused. The earlier `esp32-s31-korvo-1` profile is retained. Video stays disabled.
 
-The user confirmed microphone and speaker operation in the standalone Mosaico UAC test.
-The user also confirmed normal caption display with 40-row partial buffers; device logs confirm
-touch navigation and start requests. The 16 kHz audio quality, Cloud AEC and endurance need separate results.
+The earlier Korvo media/face-to-face baseline has user confirmation. On Mosaico, the user
+confirmed basic bidirectional USB meeting translation after the PSRAM-stack revision (`e279926`)
+and normal captions with 40-row partial buffers; touch/start requests have device logs.
+The standalone UAC microphone/speaker test is a separate passed baseline. Subsequent review fixes
+have host-test and Chinese-build results; they have not received a new hardware acceptance.
+Audio quality, Cloud AEC, reconnect/endurance, USB current and the revised VCC ramp need separate results.
 See the [board guide](docs/esp-mosaico-v1.2.zh-CN.md) and [validation record](docs/s31-validation.md).
 
 ## Build
@@ -72,8 +76,8 @@ idf.py --preview -B build/korvo-s31 \
   -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;ci/ptime60.defaults" build
 ```
 
-CI builds language variants in isolated jobs. The [release guide](docs/RELEASING.md) describes
-the packaging builder and delivery checks; local development uses the direct command above.
+CI builds both Mosaico and Korvo language variants in isolated jobs. The [release guide](docs/RELEASING.md) describes
+merging, build-bound source records and delivery checks using this same local build directory.
 The direct flash command and board-specific hardware details are in the
 [board guide](docs/esp-mosaico-v1.2.zh-CN.md).
 
@@ -99,7 +103,7 @@ send PC playback to the LISTEN Agent and the physical microphone to the SPEAK Ag
 LISTEN output plays on the device speaker; SPEAK output returns through the USB microphone.
 Boundary filters convert between USB 48 kHz stereo and SDK 16 kHz mono.
 See the [USB integration guide](docs/MOSAICO_USB_AUDIO.zh-CN.md).
-The passed [standalone UAC diagnostic](diagnostics/mosaico_uac/README.zh-CN.md) is preserved for future meeting work.
+The passed [standalone UAC diagnostic](diagnostics/mosaico_uac/README.zh-CN.md) remains a separate USB audio reference.
 Korvo-only [CDC](docs/USB_CDC_PROBE.zh-CN.md) and [Host](docs/USB_HOST_PROBE.zh-CN.md) probes remain opt-in.
 
 Use `idf.py --preview -B build/korvo-s31 menuconfig` under `mybot` to select the product language,

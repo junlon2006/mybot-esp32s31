@@ -16,11 +16,10 @@ The root Apache-2.0 license applies to project-maintained code unless a file sta
 | Espressif TinyUSB driver 2.4.0 | Apache-2.0 | generated `managed_components/espressif__esp_tinyusb/LICENSE` and file notices |
 | TinyUSB 0.19.0~3 | MIT plus retained file notices | generated `managed_components/espressif__tinyusb/LICENSE` and package file notices |
 | Espressif USB Host library 1.6.0 | Apache-2.0 plus retained file notices | generated `managed_components/espressif__usb/LICENSE` and package file notices |
-| Espressif USB Device UAC 1.3.1 and CMake Utilities 1.3.0 | Apache-2.0 plus retained file notices | production Mosaico and diagnostic dependencies; generated `managed_components/espressif__usb_device_uac/license.txt` and `espressif__cmake_utilities/license.txt` |
+| Espressif USB Device UAC 1.3.1 and CMake Utilities 1.3.0 | Apache-2.0 plus retained file notices | UAC headers/configuration in production Mosaico; full runtime and CMake Utilities in the standalone diagnostic. Licenses remain under generated `managed_components/espressif__usb_device_uac/license.txt` and `espressif__cmake_utilities/license.txt` |
 | Official S31 ADC calibration source | Apache-2.0; copyright 2026 Espressif Systems (Shanghai) CO LTD | `components/mybot_platform/boards/esp32-s31-korvo-1/reference/esp32_s31_adc_calibration.c` |
 | Pairing prompt and digit recordings | Apache-2.0, SDK asset provenance | `components/mybot_platform/assets/locales/`, `SOURCES.json` and the retained MyBot license |
 | Noto Sans SC UI glyph subset | SIL Open Font License 1.1 | `components/mybot_platform/src/drivers/display/assets/licenses/LVGL_VIEW_FONT_LICENSE.txt` |
-| Noto Color Emoji rasterized glyphs | SIL Open Font License 1.1 | `components/mybot_platform/assets/ui/noto_emoji/LICENSE.txt` |
 | ESP-IDF v6.1 | Apache-2.0 plus component-specific terms | external development SDK |
 
 ## Retained component terms
@@ -43,17 +42,21 @@ Pairing prompts and digit recordings derive from MyBot's 16 kHz mono signed-16 P
 
 The translation view's UI fonts and live-caption subsets use Noto Sans SC Regular (Adobe copyright 2014, 2015) and retain SIL OFL 1.1 in `LVGL_VIEW_FONT_LICENSE.txt`. The caption fonts add the 6,763 GB2312 Han characters, Latin-1 and common punctuation using the same source font. The pinned source-font hash and embedded license provenance are recorded in `VENDORED_SOURCES.md`; the original TTF is not redistributed. Built-in LVGL Montserrat and Font Awesome terms remain at `components/lvgl/scripts/built_in_font/font_license/Montserrat/OFL.txt` and `FontAwesome5/LICENSE.txt`.
 
-The four local state emoji are rasterized Noto Color Emoji glyphs supplied by the pinned `78/noto-fonts` package. Their original PNGs, Google copyright, SIL OFL 1.1 and per-file provenance remain under `components/mybot_platform/assets/ui/noto_emoji/`.
-
 The upstream MyBot baseline's own notices may describe packages used by other targets. Those notices remain part of the snapshot and do not define this S31 firmware's active dependency set. Every retained package license and file-level copyright/SPDX notice remains in force.
 
 MyBot SDK modifications for V2VT media, face-to-face and bidirectional USB meetings are maintained by this project under its existing Apache-2.0 license. Upstream copyright and license notices remain intact. The supplied Agora RTSA and official codec sources are unchanged.
 
 ## Mosaico hardware integration
 
-The Mosaico V1.2 pin configuration and CO5300 startup sequence derive from the official
+The Mosaico V1.2 pin configuration, eFuse revision mapping, VCC soft-start ramp and CO5300 startup sequence derive from the official
 `esp-mosaico/esp-mosaico-bsp` at `8ce87a7ef130f946de4f84f6a5a20db1d8982605` under Apache-2.0.
 Espressif 2026 copyright is retained in the derived hardware files. Managed
 `esp_lcd_co5300` 2.2.0 and `esp_lcd_touch_cst9220` 0.1.0 retain their package Apache-2.0
 licenses under `managed_components/`. The earlier project adapter's MIT notices remain on
 shared audio lifecycle and derived display/input glue. No full BSP or factory artwork is imported.
+
+Production USB clock and speaker feature-unit control handling follows the pinned UAC 1.3.1
+protocol under Apache-2.0, with Espressif 2023–2026 attribution retained in the project adapter.
+The production build reuses the package's unmodified descriptor/configuration headers and
+Kconfig without compiling its singleton or worker runtime. TinyUSB remains the audio class
+and USB controller implementation.

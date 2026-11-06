@@ -68,6 +68,22 @@ static bool event_matches_gesture(mybot_key_event_t event, uint32_t gesture, myb
             (event == MYBOT_KEY_EVENT_CONVERSATION_STOP && start_completed(pressed_state, state)));
 }
 
+static uint32_t conversation_press(void) {
+    uint32_t epoch = __atomic_load_n(&s_epoch, __ATOMIC_ACQUIRE);
+    mybot_state_t state = mybot_get_state();
+    mybot_key_event_t event = event_allowed(MYBOT_KEY_EVENT_CONVERSATION_START, state)
+                                  ? MYBOT_KEY_EVENT_CONVERSATION_START
+                                  : MYBOT_KEY_EVENT_CONVERSATION_STOP;
+    return (epoch & 1U) && event_allowed(event, state)
+               ? (epoch << 9) | ((uint32_t)state << 4) | ((unsigned)event + 1U)
+               : 0;
+}
+
+static bool conversation_press_valid(uint32_t press) {
+    return press && (press >> 9) == __atomic_load_n(&s_epoch, __ATOMIC_ACQUIRE) &&
+           event_matches_gesture((mybot_key_event_t)((press & 15U) - 1U), press, mybot_get_state());
+}
+
 void mybot_korvo_s31_keys_touch_sample(bool valid, bool pressed) {
     s_touch_click = 0;
     if (!valid) {
@@ -183,7 +199,7 @@ static int classify_key(int mv) {
     return KEY_SET;
 }
 
-static void short_press(int key) {
+static void short_press(int key, uint32_t press) {
     xSemaphoreTake(s_callback_lock, portMAX_DELAY);
     if (s_emit) {
         switch (key) {
@@ -197,11 +213,8 @@ static void short_press(int key) {
             s_emit(MYBOT_KEY_EVENT_PAIR, s_user);
             break;
         case KEY_PLAY: {
-            mybot_state_t state = mybot_get_state();
-            if (event_allowed(MYBOT_KEY_EVENT_CONVERSATION_START, state))
-                s_emit(MYBOT_KEY_EVENT_CONVERSATION_START, s_user);
-            else if (event_allowed(MYBOT_KEY_EVENT_CONVERSATION_STOP, state))
-                s_emit(MYBOT_KEY_EVENT_CONVERSATION_STOP, s_user);
+            if (conversation_press_valid(press))
+                s_emit((mybot_key_event_t)((press & 15U) - 1U), s_user);
             break;
         }
         default:
@@ -217,18 +230,22 @@ static void key_task(void *arg) {
     unsigned samples = 0;
     int64_t pressed_at = 0;
     bool long_sent = false;
+    uint32_t press = 0;
     for (;;) {
         int raw = 0, mv = 0;
         bool valid = adc_oneshot_read(s_adc, ADC_CHANNEL_0, &raw) == ESP_OK &&
                      bsp_s31_adc_calibration_raw_to_mv(ADC_UNIT_1, raw, &mv) == ESP_OK;
         dispatch_touch();
         dispatch_ui_command();
+        if (press && !conversation_press_valid(press))
+            press = 0; /* A stale gesture cannot revive if the state later returns. */
         int key = valid ? classify_key(mv) : KEY_NONE;
         int64_t now = esp_timer_get_time() / 1000;
         if (!valid) {
             /* A failed sample cancels a press rather than synthesizing a release. */
             stable = candidate = KEY_NONE;
             samples = 0;
+            press = 0;
         } else if (key != candidate) {
             candidate = key;
             samples = 1;
@@ -237,8 +254,9 @@ static void key_task(void *arg) {
         }
         if (valid && samples == 3 && stable != candidate) {
             if (stable != KEY_NONE && candidate == KEY_NONE && !long_sent && now - pressed_at >= 60)
-                short_press(stable);
+                short_press(stable, press);
             stable = candidate;
+            press = stable == KEY_PLAY ? conversation_press() : 0;
             pressed_at = now;
             long_sent = false;
             if (stable != KEY_NONE)

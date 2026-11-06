@@ -5,8 +5,4 @@ dependencies:
   espressif/esp_lcd_touch_cst9220: "0.1.0"
   espressif/esp_tinyusb: "2.4.0"
   espressif/tinyusb: "0.19.0~3"
-  espressif/usb_device_uac:
-    version: "1.3.1"
-    # The Mosaico board requires it; other boards do not compile this component.
-    require: no
   espressif/usb: "1.6.0"

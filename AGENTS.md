@@ -24,7 +24,7 @@ network, display, audio or translation starts. See `docs/USB_HOST_PROBE.zh-CN.md
 The separate CMake option `MYBOT_MOSAICO_UAC_TEST` builds only the V1.2 diagnostic
 under `diagnostics/mosaico_uac`, still in `build/korvo-s31`. It is not a Korvo image
 or the Mosaico translation image. Its passed UAC firmware is a separate hardware
-baseline; the production Mosaico profile currently runs media/face-to-face translation
+baseline; the production Mosaico profile runs media/face-to-face and bidirectional meeting translation
 with a 480x480 LVGL UI and one composite UAC2/CDC USB device. Meeting converts USB OUT
 48 kHz stereo to SDK 16 kHz mono and interpolates SPEAK PCM back to USB IN. USB IN
 transfers follow the host cadence and return silence outside active translated output. See `docs/MOSAICO_USB_AUDIO.zh-CN.md`.
@@ -63,6 +63,10 @@ alignment/cache rules. Do not copy S3 DMA assumptions or link Xtensa binaries.
 The S31 AOSL task adapter puts audited media, service_mpq (HTTP/JSON) and mybot_rtc
 (forwarding) stacks in PSRAM. Keep control_mpq (NVS) and opaque RTSA stacks internal;
 creation/deletion must use matching APIs selected from actual stack placement.
+The adapter prepares its static internal reaper before admitting PSRAM workers.
+Self-exit queues a handle and suspends; the reaper uses IDF's external WithCaps
+deletion protocol. Keep its queue, TCB and aligned 2 KiB stack internal; exit must
+not allocate a temporary cleanup task.
 
 Do not hand-edit generated sdkconfig/build/managed_components/cache files. Edit
 defaults/Kconfig/CMake and regenerate. The user-approved pinned RTSA header/library are versioned immutable inputs.
@@ -80,7 +84,10 @@ inputs or hardware facts change. The Korvo media/face-to-face baseline and Mosai
 have user-reported confirmation. The user also confirmed normal Mosaico 480x480
 caption display after changing partial buffers to 40 rows; keep that display baseline. The user
 confirmed PC-audio meeting listening plays translated Chinese on the device and reported
-bidirectional meeting tests passing after the PSRAM task-stack revision.
-Translation audio quality, AEC and long-duration behavior require their own results.
+bidirectional meeting tests passing after the PSRAM task-stack revision (e279926).
+Mosaico media/face-to-face support is implemented; the earlier scene acceptance is Korvo's.
+Later review fixes
+have host/build results only until another hardware result is recorded.
+Translation quality, AEC, reconnect/endurance, USB current and VCC ramp behavior require their own results.
 Translation route subscription, language controls, cloud AEC and recovery require
 their own hardware results. The development service is https://mybot.sh3t.agoralab.co/api.

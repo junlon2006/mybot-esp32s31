@@ -166,6 +166,9 @@ static void playback_timer(aosl_timer_t id, const aosl_ts_t *now, uintptr_t argc
         discard_pending_playback(pipeline);
         return;
     }
+    if (aosl_atomic_read(&pipeline->playback_fault)) {
+        return;
+    }
 
     uint32_t generation = mybot_announce_get_generation(&pipeline->announce);
     if (aosl_atomic_cmpxchg(&pipeline->announce_clear_pb, true, false) ||
@@ -227,9 +230,12 @@ static void playback_timer(aosl_timer_t id, const aosl_ts_t *now, uintptr_t argc
         AOSL_LOG_ERR("playback write failed, dropping %d pending frames",
                      pipeline->pb_pending_frames);
         discard_pending_playback(pipeline);
-        if (pipeline->usb && aosl_atomic_read(&pipeline->running) &&
-            !aosl_atomic_read(&pipeline->paused) && pipeline->cbs.on_audio_error)
-            pipeline->cbs.on_audio_error(pipeline->cbs.user_data);
+        if (aosl_atomic_read(&pipeline->running) && !aosl_atomic_read(&pipeline->paused)) {
+            if (!pipeline->usb)
+                aosl_atomic_set(&pipeline->playback_fault, true);
+            if (pipeline->cbs.on_audio_error)
+                pipeline->cbs.on_audio_error(pipeline->cbs.user_data);
+        }
         return;
     }
 
@@ -402,6 +408,7 @@ static int start_pipeline(mybot_media_pipeline_t *pipeline,
     pipeline->usb = usb;
     pipeline->stop_complete = false;
     aosl_atomic_set(&pipeline->paused, false);
+    aosl_atomic_set(&pipeline->playback_fault, false);
     pipeline->playback_suspended = false;
     mybot_audio_context_init(&pipeline->audio);
     if (usb) {
@@ -638,9 +645,10 @@ int mybot_media_pipeline_end_session(mybot_media_pipeline_t *pipeline) {
     if (result < 0) {
         return result;
     }
-    if (pipeline->playback_suspended && aosl_atomic_read(&pipeline->running)) {
-        /* A failed pause stop may retain driver-owned teardown state. Retry
-         * stop before start so session cleanup can reclaim that state. */
+    if ((pipeline->playback_suspended || aosl_atomic_read(&pipeline->playback_fault)) &&
+        aosl_atomic_read(&pipeline->running)) {
+        /* Both a failed pause and a hard playback fault need stop/start before
+         * another session can use the retained physical device. */
         if (pipeline->audio.playback_ops->stop(pipeline->pb_ctx) < 0) {
             return -1;
         }
@@ -648,6 +656,7 @@ int mybot_media_pipeline_end_session(mybot_media_pipeline_t *pipeline) {
             return -1;
         }
         pipeline->playback_suspended = false;
+        aosl_atomic_set(&pipeline->playback_fault, false);
     }
     aosl_atomic_set(&pipeline->paused, false);
     return 0;

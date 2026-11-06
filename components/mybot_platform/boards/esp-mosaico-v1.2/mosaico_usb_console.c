@@ -11,6 +11,12 @@
 #include "usb/mosaico_usb_audio.h"
 #include "usb/mosaico_usb_descriptors.h"
 
+static bool s_audio_initialized;
+
+bool mosaico_usb_audio_initialized(void) {
+    return s_audio_initialized;
+}
+
 static void log_usb_status(void *arg) {
     (void)arg;
     mosaico_usb_audio_log_stats();
@@ -24,15 +30,13 @@ esp_err_t mosaico_usb_console_init(void) {
     attempted = true;
     /* One owner for the native HS UTMI PHY, USB task and both classes. */
     tinyusb_config_t config = TINYUSB_DEFAULT_CONFIG(mosaico_usb_audio_event, NULL);
+    config.phy.self_powered = false; /* USB 2.0 bus-powered policy, matching both descriptors. */
     config.task.xCoreID = 0;
     result = mybot_mosaico_usb_descriptors_configure(&config);
     if (result != ESP_OK)
         return result;
-    /* The host can select an audio interface as soon as the stack is exposed.
-     * Prepare UAC workers first; the pinned component has no teardown API. */
-    result = mosaico_usb_audio_prepare();
-    if (result != ESP_OK)
-        return result;
+    /* Publish the static audio state before the host can open an interface. */
+    mosaico_usb_audio_prepare();
     result = tinyusb_driver_install(&config);
     if (result != ESP_OK)
         return result;
@@ -42,6 +46,7 @@ esp_err_t mosaico_usb_console_init(void) {
         (void)tinyusb_driver_uninstall();
         return result;
     }
+    s_audio_initialized = true;
     /* The upstream CDC VFS writes nonblocking: unplugging a USB cable must not
      * block audio, networking or translation. Console ownership lasts to reboot. */
     result = tinyusb_console_init(TINYUSB_CDC_ACM_0);

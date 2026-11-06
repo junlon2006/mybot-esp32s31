@@ -57,13 +57,14 @@ static int prepare(void) {
     return 0;
 }
 static int register_platform(void) {
+    bool usb_audio = mosaico_usb_audio_initialized();
     const mybot_platform_descriptor_t descriptor = {
         .wifi = mybot_esp_idf_wifi_ops(),
         .kv_store = mybot_esp_idf_kv_store_ops(),
         .key = mybot_mosaico_key_ops(),
         .audio_capture = mybot_mosaico_audio_capture_ops(),
-        .audio_usb_capture = mosaico_usb_audio_capture_ops(),
-        .audio_usb_playback = mosaico_usb_audio_playback_ops(),
+        .audio_usb_capture = usb_audio ? mosaico_usb_audio_capture_ops() : NULL,
+        .audio_usb_playback = usb_audio ? mosaico_usb_audio_playback_ops() : NULL,
         .audio_playback = mybot_mosaico_audio_playback_ops(),
         .audio_volume = mybot_mosaico_audio_volume_ops(),
         .announce = mybot_korvo_s31_announce_ops(),

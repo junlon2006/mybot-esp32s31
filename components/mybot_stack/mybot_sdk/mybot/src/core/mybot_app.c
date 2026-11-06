@@ -288,9 +288,10 @@ static void rtc_on_caption_channel(const char *channel, const char *sender, cons
 }
 
 static void refresh_translation_view(mybot_runtime_t *runtime);
+static void lock_ui_commands(mybot_runtime_t *runtime);
 
 static int usb_media_send_audio(const void *data, size_t len, void *user_data);
-static void usb_media_error(void *user_data);
+static void media_error(void *user_data);
 
 /* Called with RTC callbacks drained, or release=false while shutdown is pending. */
 static int stop_usb_media(mybot_runtime_t *runtime, bool release) {
@@ -322,7 +323,7 @@ static int start_usb_media(mybot_runtime_t *runtime) {
     mybot_media_pipeline_init(runtime->usb_media);
     mybot_media_pipeline_callbacks_t callbacks = {
         .send_audio = usb_media_send_audio,
-        .on_audio_error = usb_media_error,
+        .on_audio_error = media_error,
         .user_data = runtime,
     };
     if (mybot_media_pipeline_start_usb(runtime->usb_media, &callbacks) < 0) {
@@ -349,7 +350,8 @@ static void control_start_conversation(mybot_runtime_t *runtime) {
             return;
         }
         if (runtime->media_recovery_required || runtime->usb_media ||
-            mybot_media_pipeline_is_paused(&runtime->media)) {
+            mybot_media_pipeline_is_paused(&runtime->media) ||
+            aosl_atomic_read(&runtime->media.playback_fault)) {
             runtime->media_recovery_required = end_session_media(runtime, true);
             if (runtime->media_recovery_required) {
                 snprintf(runtime->lifecycle.error_code, sizeof(runtime->lifecycle.error_code),
@@ -360,7 +362,12 @@ static void control_start_conversation(mybot_runtime_t *runtime) {
             if (strcmp(runtime->lifecycle.error_code, "MEDIA_NOT_READY") == 0)
                 runtime->lifecycle.error_code[0] = '\0';
         }
+        /* One generation spans the whole start attempt, including RTC join.
+         * Key STOP admission shares this short fence with the cancellation reset. */
+        lock_ui_commands(runtime);
+        aosl_atomic_inc(&runtime->conversation_generation);
         aosl_atomic_set(&runtime->media_cancel_requested, false);
+        aosl_atomic_set(&runtime->ui_gate, 0);
         if (runtime->lifecycle.audio_source == MYBOT_AUDIO_SOURCE_USB &&
             start_usb_media(runtime) < 0) {
             snprintf(runtime->lifecycle.error_code, sizeof(runtime->lifecycle.error_code),
@@ -578,13 +585,12 @@ static int usb_media_send_audio(const void *data, size_t len, void *user_data) {
     return mybot_agora_rtc_send_audio(MYBOT_TRANSLATION_DIRECTION_LISTEN, data, len);
 }
 
-static void usb_media_error(void *user_data) {
+static void media_error(void *user_data) {
     mybot_runtime_t *runtime = user_data;
-    /* I/O workers only close admission and notify the control worker. */
+    /* Close both routes through cancellation, then let control quiesce USB.
+     * Its pipeline may be retiring while a physical worker reports this error. */
     aosl_atomic_set(&runtime->media_cancel_requested, true);
     mybot_media_pipeline_set_rtc_connected(&runtime->media, false);
-    if (runtime->usb_media)
-        mybot_media_pipeline_set_rtc_connected(runtime->usb_media, false);
     mybot_device_lifecycle_notify_conversation_ended(&runtime->lifecycle);
 }
 
@@ -762,7 +768,6 @@ static void dev_on_conversation_start(const mybot_device_conversation_t *params,
         return;
     }
     close_caption_inbox(runtime, false);
-    aosl_atomic_inc(&runtime->conversation_generation);
     caption_lock(&runtime->caption_model_gate);
     mybot_captions_reset(runtime->captions,
                          (uint32_t)aosl_atomic_read(&runtime->conversation_generation));
@@ -855,7 +860,9 @@ static void dev_on_conversation_stop(void *user_data) {
         runtime->lifecycle.error_code[0] = '\0';
     close_caption_inbox(runtime, true);
     refresh_caption_metadata(runtime);
+    lock_ui_commands(runtime);
     aosl_atomic_inc(&runtime->conversation_generation);
+    aosl_atomic_set(&runtime->ui_gate, 0);
     caption_lock(&runtime->caption_inbox_gate);
     runtime->rtc_channel[0] = '\0';
     memset(runtime->rtc_agent_uid, 0, sizeof(runtime->rtc_agent_uid));
@@ -1166,12 +1173,13 @@ static void handle_key_event(const aosl_ts_t *queued_ts, aosl_refobj_t robj, uin
                              uintptr_t argv[]) {
     (void)queued_ts;
     (void)robj;
-    if (argc != 2) {
+    if (argc != 4) {
         return;
     }
 
     mybot_runtime_t *runtime = (mybot_runtime_t *)argv[0];
-    if (!runtime_is_running(runtime)) {
+    if (!runtime_is_running(runtime) || argv[2] != runtime->ui_generation ||
+        argv[3] != (uintptr_t)aosl_atomic_read(&runtime->conversation_generation)) {
         return;
     }
     mybot_key_event_t event = (mybot_key_event_t)argv[1];
@@ -1206,21 +1214,42 @@ static void handle_key_event(const aosl_ts_t *queued_ts, aosl_refobj_t robj, uin
 
 static void on_key_event(mybot_key_event_t event, void *user_data) {
     mybot_runtime_t *runtime = user_data;
-    if (event == MYBOT_KEY_EVENT_CONVERSATION_STOP) {
-        aosl_atomic_set(&runtime->media_cancel_requested, true);
-    }
     if (event == MYBOT_KEY_EVENT_EXIT) {
         runtime_publish_exit(runtime);
         return;
     }
-    if (!runtime_is_running(runtime)) {
+    /* Match UI submission: never publish into a queue that start/stop owns. */
+    if (aosl_atomic_cmpxchg(&s_lifecycle_gate, 0, 1) != 0)
         return;
+    if (!runtime_is_running(runtime) || aosl_mpq_invalid(runtime->control_mpq)) {
+        lifecycle_unlock();
+        return;
+    }
+    if (aosl_atomic_cmpxchg(&runtime->ui_gate, 0, 1) != 0) {
+        lifecycle_unlock();
+        return;
+    }
+    uintptr_t ui_generation = runtime->ui_generation;
+    uintptr_t conversation_generation =
+        (uintptr_t)aosl_atomic_read(&runtime->conversation_generation);
+    if (event == MYBOT_KEY_EVENT_CONVERSATION_STOP) {
+        mybot_state_t state = runtime_get_state(runtime);
+        if (state != MYBOT_STATE_IN_CONVERSATION && state != MYBOT_STATE_TRANSLATION_STARTING &&
+            state != MYBOT_STATE_CLEANUP_PENDING && state != MYBOT_STATE_TRANSLATION_STOPPING) {
+            aosl_atomic_set(&runtime->ui_gate, 0);
+            lifecycle_unlock();
+            return;
+        }
+        aosl_atomic_set(&runtime->media_cancel_requested, true);
     }
 
     if (aosl_mpq_queue(runtime->control_mpq, AOSL_MPQ_INVALID, AOSL_REF_INVALID, "handle_key_event",
-                       handle_key_event, 2, (uintptr_t)runtime, (uintptr_t)event) < 0) {
+                       handle_key_event, 4, (uintptr_t)runtime, (uintptr_t)event, ui_generation,
+                       conversation_generation) < 0) {
         fail_control_queue(runtime, "key");
     }
+    aosl_atomic_set(&runtime->ui_gate, 0);
+    lifecycle_unlock();
 }
 
 static void control_tick_timer(aosl_timer_t id, const aosl_ts_t *now, uintptr_t argc,
@@ -1264,7 +1293,7 @@ static void cleanup_services(mybot_runtime_t *runtime) {
         runtime->control_timer = AOSL_MPQ_TIMER_INVALID;
     }
 
-    if (mybot_media_pipeline_stop(&runtime->media) < 0) {
+    if (runtime->media.initialized && mybot_media_pipeline_stop(&runtime->media) < 0) {
         AOSL_LOG_ERR("media pipeline stop incomplete");
     }
     if (runtime->usb_media && mybot_media_pipeline_stop(runtime->usb_media) < 0)
@@ -1292,6 +1321,37 @@ static void cleanup_services(mybot_runtime_t *runtime) {
     mybot_kv_store_deinit(&runtime->kv_store);
 }
 
+/* Control's finalizer and later stop calls share the same retained ownership.
+ * Join every producer before freeing PCM or releasing the last AOSL reference. */
+static bool finish_media_shutdown(mybot_runtime_t *runtime) {
+    bool stopped = true;
+    if (runtime->media.initialized && mybot_media_pipeline_stop(&runtime->media) < 0)
+        stopped = false;
+    if (runtime->usb_media && mybot_media_pipeline_stop(runtime->usb_media) < 0)
+        stopped = false;
+#if MYBOT_ENABLE_VIDEO
+    if (mybot_video_stop(&runtime->video) < 0)
+        stopped = false;
+#endif
+    if (mybot_agora_rtc_fini() < 0)
+        stopped = false;
+    if (!stopped) {
+        AOSL_LOG_ERR("media shutdown incomplete; workers and buffers retained");
+        return false;
+    }
+    if (runtime->media.initialized && mybot_media_pipeline_destroy(&runtime->media) < 0)
+        return false;
+    if (stop_usb_media(runtime, true) < 0)
+        return false;
+#if MYBOT_ENABLE_VIDEO
+    if (mybot_video_destroy(&runtime->video) < 0)
+        return false;
+#endif
+    aosl_hal_free(runtime->silent_audio);
+    runtime->silent_audio = NULL;
+    return true;
+}
+
 static int start_services(mybot_runtime_t *runtime) {
     if (mybot_kv_store_init(&runtime->kv_store) < 0 ||
         mybot_key_init(&runtime->key, on_key_event, runtime) < 0) {
@@ -1301,6 +1361,7 @@ static int start_services(mybot_runtime_t *runtime) {
     mybot_media_pipeline_callbacks_t media_cbs;
     memset(&media_cbs, 0, sizeof(media_cbs));
     media_cbs.send_audio = media_send_audio;
+    media_cbs.on_audio_error = media_error;
     media_cbs.on_wake_word = media_on_wake_word;
     media_cbs.user_data = runtime;
     mybot_media_pipeline_init(&runtime->media);
@@ -1358,17 +1419,7 @@ static int start_services(mybot_runtime_t *runtime) {
 
 fail:
     cleanup_services(runtime);
-#if MYBOT_ENABLE_VIDEO
-    if (mybot_video_destroy(&runtime->video) < 0) {
-        AOSL_LOG_ERR("video source destroy incomplete");
-    }
-#endif
-    if (mybot_media_pipeline_destroy(&runtime->media) < 0) {
-        AOSL_LOG_ERR("media pipeline destroy skipped because stop was incomplete");
-    } else {
-        aosl_hal_free(runtime->silent_audio);
-        runtime->silent_audio = NULL;
-    }
+    (void)finish_media_shutdown(runtime);
     caption_lock(&runtime->caption_model_gate);
     mybot_captions_destroy(runtime->captions);
     runtime->captions = NULL;
@@ -1543,31 +1594,12 @@ static void control_stop_runtime(mybot_runtime_t *runtime) {
                                                          : MYBOT_LCD_SCREEN_STOPPING);
     mybot_presenter_deinit(&runtime->presenter);
 
-    bool rtc_stopped = mybot_agora_rtc_fini() == 0;
-    if (!rtc_stopped) {
-        AOSL_LOG_ERR("RTC fini incomplete; RTSA reported terminal cleanup failure");
-    }
-    if (stop_usb_media(runtime, rtc_stopped) < 0)
-        AOSL_LOG_ERR("USB media destroy pending; resources retained");
-#if MYBOT_ENABLE_VIDEO
-    if (mybot_video_destroy(&runtime->video) < 0) {
-        AOSL_LOG_ERR("video source destroy incomplete");
-    }
-#endif
-    if (mybot_media_pipeline_destroy(&runtime->media) < 0) {
-        AOSL_LOG_ERR("media pipeline destroy skipped because stop was incomplete");
-    } else {
-        aosl_hal_free(runtime->silent_audio);
-        runtime->silent_audio = NULL;
-    }
+    (void)finish_media_shutdown(runtime);
 
     caption_lock(&runtime->caption_model_gate);
     mybot_captions_destroy(runtime->captions);
     runtime->captions = NULL;
     aosl_atomic_set(&runtime->caption_model_gate, 0);
-
-    mybot_state_model_reset(&runtime->state_model);
-    AOSL_LOG_NTC("application control stopped");
 }
 
 static void handle_control_start(const aosl_ts_t *queued_ts, aosl_refobj_t robj, uintptr_t argc,
@@ -1634,12 +1666,15 @@ static bool destroy_control_queue(mybot_runtime_t *runtime) {
     if (runtime->lifecycle_initialized) {
         mybot_device_lifecycle_finish_shutdown(&runtime->lifecycle);
         runtime->lifecycle_initialized = false;
-        mybot_kv_store_deinit(&runtime->kv_store);
     }
-    /* Do not release AOSL or permit another start while USB workers still own
-     * callbacks into this runtime. A repeated stop retries retained teardown. */
-    if (runtime->usb_media && (mybot_agora_rtc_fini() < 0 || stop_usb_media(runtime, true) < 0))
+    if (runtime->kv_store.ctx)
+        mybot_kv_store_deinit(&runtime->kv_store);
+    /* A repeated stop joins retained physical, USB and RTC workers even after
+     * the control worker itself has already exited. */
+    if (!finish_media_shutdown(runtime))
         return false;
+    mybot_state_model_reset(&runtime->state_model);
+    AOSL_LOG_NTC("application control stopped");
     return true;
 }
 

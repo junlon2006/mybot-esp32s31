@@ -2,6 +2,42 @@
 
 ## Unreleased — standalone S31 translation
 
+- Keep UAC clock/volume/mute state locally and use the pinned UAC package only for descriptors/configuration, removing its unused audio tasks and buffers.
+
+- Simplify the automation builder to registered S31 profiles, default to Mosaico, and remove unused video/S3 fallbacks.
+
+- Remove the unused emoji arrays, PNG inputs and generator while retaining the fonts used by the translation UI.
+
+- Align build/release instructions, board capabilities and validation status with the current Mosaico target and fixed local build directory.
+
+- Enforce at least 300 KiB application-image headroom against the built OTA partition capacities during local and CI delivery checks.
+
+- Enable fail-fast UBSan by default for USB audio host tests and explicitly in CI, and document concurrency validation limits.
+
+- Check Mosaico's eFuse board revision before pin setup and use the pinned BSP's VCC soft-start sequence.
+
+- Declare Mosaico's explicit 500 mA USB 2.0 bus-powered budget in both USB speeds, with measured-load validation kept separate.
+
+- Reclaim PSRAM AOSL task stacks through a static internal reaper, avoiding allocation of temporary cleanup tasks during worker exit.
+
+- Bind delivery provenance to the source captured during the firmware build and verify its artifact hashes when packaging.
+
+- Advertise USB meeting audio only after the USB audio core initializes successfully, independently of console availability or cable state.
+
+- Derive the composite USB serial number from the hardware MAC, preserving stable device identity across reconnects.
+
+- Discard stale AI/PLAY button releases after a session or SDK attachment changes, preventing accidental restarts.
+
+- Preserve the selected language pair when switching between media, face-to-face and USB meeting scenes.
+
+- Keep application ownership until physical/USB media, HTTP and RTC teardown completes; repeated stop retries retained resources before allowing restart.
+
+- Recover the physical playback backend after a hard audio fault so later translation sessions can play again.
+
+- Preserve an unknown start result after ambiguous gateway/server failures, preventing duplicate cloud sessions until recovery.
+
+- Preserve NVS on initialization failures instead of automatically erasing credentials and pending session journals.
+
 - Move audited media, HTTP and RTC-forwarding task stacks to PSRAM through the S31 adapter, reducing duplex internal-stack demand by about 120 KiB. Log task allocation failures and prevent unsafe RTSA initialization retries after a vendor failure.
 
 - Add simultaneous meeting SPEAK translation from the board microphone to the PC USB input, alongside the existing LISTEN-to-speaker path. Use one parent session, two RTC routes, one RTM subscription, separate AEC references and host-paced USB microphone packets.
