@@ -1,0 +1,23 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+#pragma once
+
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+#include "esp_err.h"
+
+typedef struct {
+    unsigned id;
+    uint8_t rhport;
+} tinyusb_event_t;
+typedef struct {
+    struct {
+        int xCoreID;
+    } task;
+    void (*event_cb)(tinyusb_event_t *, void *);
+    void *event_arg;
+    bool descriptors_configured;
+} tinyusb_config_t;
+
+esp_err_t tinyusb_driver_install(const tinyusb_config_t *config);
+esp_err_t tinyusb_driver_uninstall(void);

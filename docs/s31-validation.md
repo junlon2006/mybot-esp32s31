@@ -904,3 +904,16 @@ MACs, stable repeat configuration, unchanged names, read errors and invalid iden
 Formatting/SPDX, whitespace, Chinese incremental firmware build and final S31 checks
 pass in build/korvo-s31. No device was flashed; multi-device macOS enumeration is
 still a hardware validation item.
+
+## Review fix 09: register only initialized USB audio
+
+Board capability registration now checks successful USB audio/core initialization.
+Failed descriptor, UAC or controller startup does not expose meeting audio to the UI.
+An unavailable CDC VFS console does not suppress a working UAC function. Cable and
+stream-open state remain runtime readiness checks, separate from this capability.
+
+Nine composite initialization fault cases pass under UBSan, and both-board input
+and registration tests pass 39 scenarios. CI runs the new initialization suite.
+The 61 builder/delivery tests pass with Python 3.11; formatting/SPDX, whitespace,
+Chinese incremental firmware build and final S31 checks pass. No device was flashed;
+USB enumeration and reconnect behavior still need hardware testing.

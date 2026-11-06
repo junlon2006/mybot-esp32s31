@@ -11,6 +11,12 @@
 #include "usb/mosaico_usb_audio.h"
 #include "usb/mosaico_usb_descriptors.h"
 
+static bool s_audio_initialized;
+
+bool mosaico_usb_audio_initialized(void) {
+    return s_audio_initialized;
+}
+
 static void log_usb_status(void *arg) {
     (void)arg;
     mosaico_usb_audio_log_stats();
@@ -42,6 +48,7 @@ esp_err_t mosaico_usb_console_init(void) {
         (void)tinyusb_driver_uninstall();
         return result;
     }
+    s_audio_initialized = true;
     /* The upstream CDC VFS writes nonblocking: unplugging a USB cable must not
      * block audio, networking or translation. Console ownership lasts to reboot. */
     result = tinyusb_console_init(TINYUSB_CDC_ACM_0);

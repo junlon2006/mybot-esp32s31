@@ -106,7 +106,9 @@ jobs:
           sh tests/kv_store/run.sh
           sh tests/storage_init/run.sh
       - name: Mosaico composite audio transport host tests
-        run: sh tests/mosaico_usb_audio/run.sh
+        run: |
+          sh tests/mosaico_usb/run_init.sh
+          sh tests/mosaico_usb_audio/run.sh
       - name: Native USB probe host tests
         run: |
           sh tests/usb_cdc_probe/run.sh

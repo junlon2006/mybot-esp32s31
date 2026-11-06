@@ -2,6 +2,8 @@
 
 ## Unreleased — standalone S31 translation
 
+- Advertise USB meeting audio only after the USB audio core initializes successfully, independently of console availability or cable state.
+
 - Derive the composite USB serial number from the hardware MAC, preserving stable device identity across reconnects.
 
 - Discard stale AI/PLAY button releases after a session or SDK attachment changes, preventing accidental restarts.
