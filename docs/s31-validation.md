@@ -1066,3 +1066,16 @@ full local quality/host run passes all 34 jobs after the volume fixture correcti
 Chinese firmware and final source/link/OTA checks pass: app 3,667,776 bytes, each
 OTA slot free 460,992 bytes. No device was flashed; current USB traffic and audio
 quality still need hardware verification after these changes.
+
+## Host CI follow-up: GCC boolean assignment warning
+
+The USB shutdown retry fixture now initializes its bool and atomic integer fields
+in separate statements. GCC rejects the previous mixed-type chained assignment
+with -Werror=parentheses; production code is unchanged. The isolated correction
+passes the control suite with GNU GCC 13.4.0, GCC with UBSan and Apple Clang with
+UBSan. All 26 CI C/C++ host scripts pass on macOS using real GCC/G++ 13.4.0 with
+the LLVM UBSan runtime; a deliberate overflow probe confirms sanitizer execution.
+The descriptor suite initially lacked its UAC header prerequisite while the Korvo
+matrix was active, then passed using the existing pinned 1.3.1 header cache.
+Evidence is retained in /private/tmp/mybot-gcc-bool-fix-dxdyf7sk/full-gcc-results.json.
+This is local compiler validation, not a remote Ubuntu CI result.

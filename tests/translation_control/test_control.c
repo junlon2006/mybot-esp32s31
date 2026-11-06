@@ -394,7 +394,8 @@ static void test_usb_and_physical_shutdown_retry(void) {
         runtime.usb_media = aosl_hal_malloc(sizeof(*runtime.usb_media));
         assert(runtime.usb_media);
         memset(runtime.usb_media, 0, sizeof(*runtime.usb_media));
-        runtime.usb_media->initialized = runtime.usb_media->running = true;
+        runtime.usb_media->initialized = true;
+        runtime.usb_media->running = true;
         mybot_media_pipeline_t *retained = runtime.usb_media;
         fail_physical_stop = failure == 0;
         fail_usb_stop = failure == 1;
