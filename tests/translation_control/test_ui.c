@@ -19,6 +19,51 @@ static unsigned conversation_starts, session_ends, rtc_finalizations, mode_sets;
 static bool fail_queue, fail_volume, fail_pause, fail_end_session, fail_mode, paused;
 static int hardware_volume, rtc_fini_result;
 static mybot_lcd_content_t displayed;
+static mybot_platform_descriptor_t platform;
+static const mybot_audio_capture_ops_t usb_ops = {0};
+static const mybot_audio_playback_ops_t usb_playback_ops = {0};
+static bool fail_capture_source;
+static unsigned capture_switches;
+
+const mybot_platform_descriptor_t *mybot_platform_registry_get(void) {
+    return &platform;
+}
+void mybot_media_pipeline_init(mybot_media_pipeline_t *pipeline) {
+    memset(pipeline, 0, sizeof(*pipeline));
+    pipeline->initialized = true;
+}
+int mybot_media_pipeline_start_usb(mybot_media_pipeline_t *pipeline,
+                                   const mybot_media_pipeline_callbacks_t *callbacks) {
+    assert(pipeline == runtime.usb_media);
+    capture_switches++;
+    pipeline->cbs = *callbacks;
+    return fail_capture_source ? -1 : 0;
+}
+int mybot_media_pipeline_stop(mybot_media_pipeline_t *pipeline) {
+    assert(pipeline == runtime.usb_media);
+    return fail_end_session ? -1 : 0;
+}
+int mybot_media_pipeline_quiesce(mybot_media_pipeline_t *pipeline) {
+    pipeline->paused = true;
+    return 0;
+}
+int mybot_media_pipeline_destroy(mybot_media_pipeline_t *pipeline) {
+    assert(pipeline == runtime.usb_media);
+    return 0;
+}
+void mybot_media_pipeline_set_rtc_connected(mybot_media_pipeline_t *pipeline, bool connected) {
+    pipeline->rtc_connected = connected;
+}
+int mybot_agora_rtc_send_audio(mybot_translation_direction_t direction, const void *data,
+                               size_t len) {
+    (void)direction;
+    (void)data;
+    (void)len;
+    return 0;
+}
+void mybot_device_lifecycle_notify_conversation_ended(mybot_device_lifecycle_t *lifecycle) {
+    lifecycle->stop_request = true;
+}
 
 void *aosl_hal_malloc(size_t size) {
     return malloc(size);
@@ -61,13 +106,20 @@ int mybot_device_lifecycle_set_languages(mybot_device_lifecycle_t *lifecycle, co
     snprintf(lifecycle->target_language, sizeof(lifecycle->target_language), "%s", target);
     return 0;
 }
-int mybot_device_lifecycle_set_mode(mybot_device_lifecycle_t *lifecycle,
-                                    mybot_translation_mode_t mode) {
+int mybot_device_lifecycle_set_selection(mybot_device_lifecycle_t *lifecycle,
+                                         mybot_translation_mode_t mode,
+                                         mybot_audio_source_t audio_source, const char *source,
+                                         const char *target) {
     assert(lifecycle == &runtime.lifecycle);
     mode_sets++;
     if (fail_mode || runtime_get_state(&runtime) != MYBOT_STATE_READY)
         return -1;
     lifecycle->mode = mode;
+    lifecycle->audio_source = audio_source;
+    if (source && target) {
+        snprintf(lifecycle->source_language, sizeof(lifecycle->source_language), "%s", source);
+        snprintf(lifecycle->target_language, sizeof(lifecycle->target_language), "%s", target);
+    }
     return 0;
 }
 int mybot_media_pipeline_get_volume(mybot_media_pipeline_t *pipeline, int *volume) {
@@ -110,6 +162,7 @@ int mybot_agora_rtc_fini(void) {
 void mybot_device_lifecycle_request_start(mybot_device_lifecycle_t *lifecycle) {
     assert(lifecycle == &runtime.lifecycle);
     conversation_starts++;
+    lifecycle->conversation_requested = true;
 }
 int mybot_lcd_show_content(mybot_lcd_t *lcd, const mybot_lcd_content_t *content) {
     assert(lcd == &runtime.presenter.lcd);
@@ -119,7 +172,12 @@ int mybot_lcd_show_content(mybot_lcd_t *lcd, const mybot_lcd_content_t *content)
 }
 
 static void reset(void) {
+    free(runtime.usb_media);
+    runtime.usb_media = NULL;
     memset(&runtime, 0, sizeof(runtime));
+    memset(&platform, 0, sizeof(platform));
+    fail_capture_source = false;
+    capture_switches = 0;
     memset(notifications, 0, sizeof(notifications));
     memset(&displayed, 0, sizeof(displayed));
     notification_count = language_sets = volume_sets = pause_sets = renders = 0;
@@ -550,7 +608,68 @@ static void test_direction_readback_and_independent_revisions(void) {
     tests++;
 }
 
+static void test_usb_selection_and_start_preflight(void) {
+    reset();
+    mybot_ui_command_t command = {.type = MYBOT_UI_SET_MODE,
+                                  .value = MYBOT_TRANSLATION_LISTEN_SPEAK,
+                                  .audio_source = MYBOT_AUDIO_SOURCE_USB};
+    strcpy(command.source_language, "zh-CN");
+    strcpy(command.target_language, "en-US");
+    assert(mybot_ui_submit(&command) < 0); /* Both USB directions are required. */
+    platform.audio_usb_capture = &usb_ops;
+    assert(mybot_ui_submit(&command) < 0);
+    platform.audio_usb_playback = &usb_playback_ops;
+    command.value = MYBOT_TRANSLATION_LISTEN;
+    assert(mybot_ui_submit(&command) < 0); /* Obsolete one-way meeting topology rejected. */
+    command.value = MYBOT_TRANSLATION_LISTEN_SPEAK;
+    submit_and_dispatch(&command);
+    assert(displayed.audio_source == MYBOT_AUDIO_SOURCE_USB && displayed.usb_audio_available);
+    assert(displayed.selection_revision == 1 && !strcmp(displayed.source_language, "zh-CN"));
+    assert(!strcmp(displayed.target_language, "en-US"));
+    fail_capture_source = true;
+    control_start_conversation(&runtime);
+    assert(conversation_starts == 0 && capture_switches == 1 && !runtime.usb_media);
+    assert(!strcmp(displayed.error_code, "USB_AUDIO_NOT_READY"));
+    fail_capture_source = false;
+    control_start_conversation(&runtime);
+    assert(conversation_starts == 1 && runtime.meeting_active && runtime.usb_media);
+    active();
+    command.audio_source = MYBOT_AUDIO_SOURCE_CODEC;
+    submit_and_dispatch(&command);
+    assert(displayed.audio_source == MYBOT_AUDIO_SOURCE_USB && displayed.selection_revision == 2);
+    tests++;
+}
+
+static void test_unused_usb_capture_released_after_failed_start(void) {
+    reset();
+    platform.audio_usb_capture = &usb_ops;
+    platform.audio_usb_playback = &usb_playback_ops;
+    runtime.lifecycle.audio_source = MYBOT_AUDIO_SOURCE_USB;
+    assert(start_usb_media(&runtime) == 0);
+    runtime.lifecycle.conversation_requested = true;
+    release_unclaimed_usb_media(&runtime);
+    assert(session_ends == 0);
+    runtime.lifecycle.conversation_requested = false;
+    runtime.lifecycle.start_pending = true;
+    release_unclaimed_usb_media(&runtime);
+    assert(session_ends == 0);
+    runtime.lifecycle.start_pending = false;
+    runtime.lifecycle.local_media_active = true;
+    release_unclaimed_usb_media(&runtime);
+    assert(session_ends == 0);
+    runtime.lifecycle.local_media_active = false;
+    fail_end_session = true;
+    release_unclaimed_usb_media(&runtime);
+    assert(session_ends == 1 && runtime.media_recovery_required && runtime.usb_media);
+    fail_end_session = false;
+    release_unclaimed_usb_media(&runtime);
+    assert(session_ends == 2 && !runtime.media_recovery_required && !runtime.usb_media);
+    tests++;
+}
+
 int main(void) {
+    test_unused_usb_capture_released_after_failed_start();
+    test_usb_selection_and_start_preflight();
     test_mode_readback_and_repeated_failure();
     test_direction_readback_and_independent_revisions();
     test_validation_and_language_table();

@@ -1,7 +1,7 @@
 # ESP-Mosaico CoreBoard V1.2
 
 当前默认目标板为 `esp-mosaico-v1.2`，后续功能以它为设计基线。固件复用现有媒体翻译、
-面对面翻译、RTM 字幕、Wi-Fi 配网及设备绑定。会议翻译仍为界面预览。
+面对面翻译、RTM 字幕、Wi-Fi 配网及设备绑定。会议互译同时接入电脑听译和板载麦克风译音回传电脑。
 
 ## 硬件与接口
 
@@ -14,7 +14,7 @@
 | 音频 | ES8311，16 kHz / 16-bit Philips I2S stereo，MCLK256；SDK 收发 mono PCM |
 | I2S（MCU 方向） | TX52、RX40、BCLK37、WS49、MCLK54；功放使能45 |
 | 电源 | GPIO60 低使能 VCC_3V3；GPIO57 开漏释放关机信号 |
-| USB | Type-C 原生 HS UTMI；翻译固件提供 CDC 日志，不提供 UAC 音频 |
+| USB | Type-C 原生 HS UTMI；翻译固件提供 UAC2 声卡与 CDC 日志；声卡同时接收电脑原声与回传设备麦克风的译音 |
 | 操作键 | AI GPIO7 低有效；BOOT 保留给 ROM 下载模式 |
 
 原理图的 `I2S_DOUT` / `I2S_DIN` 来自 codec 视角，不能据此交换 MCU 的 TX/RX。
@@ -53,7 +53,7 @@ ls /dev/cu.usbmodem*
 idf.py --preview -B build/korvo-s31 -p /dev/cu.usbmodem144101 flash
 ```
 
-启动后 Type-C 会重新枚举为 `MyBot Mosaico` CDC 日志串口，端口号可能变化。监视应用日志：
+启动后 Type-C 会重新枚举为 `MyBot Mosaico` 复合设备，包含 UAC2 音频和 CDC 日志；端口号可能变化。监视应用日志：
 
 ```sh
 idf.py --preview -B build/korvo-s31 -p /dev/cu.usbmodem实际端口 monitor
@@ -62,6 +62,10 @@ idf.py --preview -B build/korvo-s31 -p /dev/cu.usbmodem实际端口 monitor
 应用 CDC 在板级准备时启动，无法提供此前的 ROM / bootloader 日志。CDC 不实现自动进入
 ROM 下载，后续烧录同样可用 BOOT 手动进入。拔掉 USB 不影响设备独立运行。
 烧录使用 `partitions/v2/16m.csv`，与 UAC 诊断分区不同；无需执行整片擦除。
+
+会议互译将电脑下行音频送往 LISTEN Agent，在板载喇叭播放译音；板载麦克风送往
+SPEAK Agent，其译音通过 USB 麦克风回传电脑。媒体与面对面继续使用原有板载音频。
+枚举、收发计数和并发验证见 [USB 声卡与日志串口](MOSAICO_USB_AUDIO.zh-CN.md)。
 
 ## 首次使用与验收
 

@@ -16,6 +16,7 @@ static queued_callback_t queue[64];
 static unsigned queued, allocations, audio_callbacks, errors, unmute_calls, leave_calls;
 static unsigned init_calls, fini_calls, destroy_calls, queue_creates, queue_destroys;
 static unsigned tests;
+static int init_result;
 static unsigned create_calls, join_calls, rtm_login_calls, rtm_logout_calls;
 static unsigned subscribe_calls, unsubscribe_calls, send_calls;
 static unsigned fail_create_call, fail_join_call;
@@ -170,7 +171,7 @@ int agora_rtc_init(const char *app_id, const agora_rtc_event_handler_t *handler,
     snprintf(initialized_app_id, sizeof(initialized_app_id), "%s", app_id);
     (void)handler;
     (void)options;
-    return 0;
+    return init_result;
 }
 int agora_rtc_fini(void) {
     fini_calls++;
@@ -340,6 +341,7 @@ static void reset(void) {
     memset(&direct_message, 0, sizeof(direct_message));
     memset(&channel_message, 0, sizeof(channel_message));
     init_calls = fini_calls = destroy_calls = queue_creates = queue_destroys = 0;
+    init_result = 0;
     unmute_result = join_result = destroy_result = fini_result = queue_destroy_result = 0;
     initialized_app_id[0] = '\0';
     callbacks_during_fini = false;
@@ -558,6 +560,30 @@ static void test_destroy_failure_recovered_by_fini(void) {
         assert(mybot_agora_rtc_fini() == 0);
         tests++;
     }
+}
+static void test_failed_init_is_terminal(void) {
+    for (unsigned queue_failure = 0; queue_failure < 2; ++queue_failure) {
+        reset_public();
+        init_result = -1;
+        assert(mybot_agora_rtc_init("project-A", NULL) < 0 && init_calls == 1);
+        assert(s_rtc.state == MYBOT_RTC_STATE_ERROR);
+        /* The pinned vendor may return false success after its first failure.
+         * The wrapper must never call it a second time within this boot. */
+        init_result = 0;
+        queue_destroy_result = queue_failure ? -1 : 0;
+        assert(mybot_agora_rtc_fini() < 0 && fini_calls == 0);
+        assert(!s_rtc_callbacks_enabled);
+        assert(mybot_agora_rtc_init("project-B", NULL) < 0);
+        assert(init_calls == 1 && queue_creates == 1);
+        queue_destroy_result = 0;
+        assert(mybot_agora_rtc_fini() < 0 && s_rtc_mpq_id == AOSL_MPQ_INVALID);
+        assert(mybot_agora_rtc_fini() < 0 && fini_calls == 0);
+        assert(mybot_agora_rtc_init("project-B", NULL) < 0 && init_calls == 1);
+        tests++;
+    }
+    reset_public(); /* A new boot has fresh vendor and wrapper state. */
+    init_public("project-B");
+    assert(mybot_agora_rtc_fini() == 0);
 }
 static void test_failed_fini_is_terminal(void) {
     for (unsigned queue_failure = 0; queue_failure < 2; queue_failure++) {
@@ -1076,6 +1102,7 @@ int main(void) {
     test_join_failure();
     test_project_change_after_fini();
     test_destroy_failure_recovered_by_fini();
+    test_failed_init_is_terminal();
     test_failed_fini_is_terminal();
     test_fini_drains_old_session_callbacks();
     test_forwarding_queue_destroy_retry();

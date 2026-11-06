@@ -55,7 +55,7 @@ typedef struct {
     aosl_timer_t ready_timer;
     aosl_ts_t ready_started;
     mybot_agora_rtc_callbacks_t callbacks;
-    bool fini_failed;
+    bool terminal_failure;
     char rtm_uid[MYBOT_RTM_UID_MAX_LEN];
     char rtm_channel[AGORA_RTC_CHANNEL_NAME_MAX_LEN + 1];
     bool rtm_login_requested;
@@ -1372,13 +1372,15 @@ static int rtc_init_impl(const char *app_id, const mybot_agora_rtc_callbacks_t *
     int ret = agora_rtc_init((void *)app_id, &handler, &options);
     aosl_set_log_level(saved_aosl_log_level);
     if (ret < 0) {
-        AOSL_LOG_ERR("agora_rtc_init failed: %s", agora_rtc_err_2_str(ret));
+        AOSL_LOG_ERR("agora_rtc_init failed: %s (%d); device restart required",
+                     agora_rtc_err_2_str(ret), ret);
         clear_runtime_state();
-        /* RTSA init failure leaves this wrapper uninitialized. The exact
-         * package must guarantee that a failed init has no live service before
-         * retrying; no fini is issued here because the vendor API does not
-         * define fini-after-failed-init semantics. */
-        s_rtc.state = MYBOT_RTC_STATE_IDLE;
+        /* The pinned RTSA sets its process-wide initialized flag before
+         * creating AgoraRtc. A failed creation leaves that flag set, so a
+         * second init may report success without a service. Do not retry or
+         * invoke vendor fini on this partially initialized state. */
+        s_rtc.terminal_failure = true;
+        s_rtc.state = MYBOT_RTC_STATE_ERROR;
         return -1;
     }
 
@@ -1519,8 +1521,9 @@ failed:
 }
 
 static int rtc_fini_impl(void) {
-    /* RTSA does not guarantee that a failed global fini can be called again. */
-    if (s_rtc.fini_failed)
+    /* Neither a failed init nor failed global fini is safely retryable in the
+     * pinned RTSA. Retire only our forwarding queue until device restart. */
+    if (s_rtc.terminal_failure)
         return -1;
     if (s_rtc.state == MYBOT_RTC_STATE_IDLE) {
         return 0;
@@ -1532,7 +1535,7 @@ static int rtc_fini_impl(void) {
     if (ret < 0) {
         AOSL_LOG_ERR("agora_rtc_fini failed; RTSA source does not guarantee retry: %s",
                      agora_rtc_err_2_str(ret));
-        s_rtc.fini_failed = true;
+        s_rtc.terminal_failure = true;
         s_rtc.state = MYBOT_RTC_STATE_ERROR;
         return -1;
     }
@@ -1672,7 +1675,7 @@ static void cmd_send_video(const aosl_ts_t *ts, aosl_refobj_t ref, uintptr_t arg
 int mybot_agora_rtc_init(const char *app_id, const mybot_agora_rtc_callbacks_t *callbacks) {
     /* Each conversation starts with a fresh RTSA service and forwarding queue. */
     if (aosl_atomic_read(&s_rtc_mpq_id) != AOSL_MPQ_INVALID ||
-        s_rtc.state != MYBOT_RTC_STATE_IDLE || s_rtc.fini_failed) {
+        s_rtc.state != MYBOT_RTC_STATE_IDLE || s_rtc.terminal_failure) {
         AOSL_LOG_ERR("[RTC] init rejected: previous session not finalized");
         return -1;
     }
@@ -1698,15 +1701,14 @@ int mybot_agora_rtc_join(const mybot_device_translation_route_t *routes, size_t 
 int mybot_agora_rtc_fini(void) {
     aosl_mpq_t q = (aosl_mpq_t)aosl_atomic_read(&s_rtc_mpq_id);
     if (q == AOSL_MPQ_INVALID)
-        return s_rtc.fini_failed ? -1 : 0;
+        return s_rtc.terminal_failure ? -1 : 0;
     int result = -1;
     uintptr_t argv[] = {(uintptr_t)&result};
     if (rtc_call("rtc_fini", cmd_fini, 1, argv) < 0)
         return -1;
     if (result < 0) {
-        /* agora_rtc_fini() clears RTSA's process-global queue even when its
-         * destroy reports an error; callbacks are disabled above, so retire
-         * our forwarding queue too and expose the terminal failure. */
+        /* Callbacks are disabled above. Retire our forwarding queue even when
+         * the vendor service has entered an unrecoverable init/fini state. */
         if (aosl_mpq_destroy_wait(q) == 0) {
             aosl_atomic_set(&s_rtc_mpq_id, AOSL_MPQ_INVALID);
         }

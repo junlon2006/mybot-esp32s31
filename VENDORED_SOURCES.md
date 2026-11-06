@@ -42,8 +42,8 @@ The archive contains 126 RISC-V ELF32 objects and 49 x86-64 AOSL/HAL objects. Th
 | `espressif/esp_lcd_touch_gt1151` | 1.1.1 | GT1151 touch driver |
 | `espressif/esp_lcd_touch` | 1.2.1 | base touch interface |
 | `espressif/cjson` | 1.7.19~2 | JSON used by Wi-Fi provisioning |
-| `espressif/esp_tinyusb` | 2.4.0 | Espressif driver/PHY/descriptors for the optional native CDC probe |
-| `espressif/tinyusb` | 0.19.0~3 | S31 USB Device stack and CDC class; no UAC application is enabled |
+| `espressif/esp_tinyusb` | 2.4.0 | Espressif driver/PHY/descriptors for Mosaico UAC/CDC and the optional Korvo CDC probe |
+| `espressif/tinyusb` | 0.19.0~3 | S31 USB Device stack, CDC and Mosaico UAC2 classes |
 | `espressif/usb` | 1.6.0 | S31 USB Host stack for the optional descriptor-only probe |
 
 GT1151/base touch, esp_tinyusb and the USB Host library retain Espressif Apache-2.0 licenses and package file notices; cJSON and TinyUSB retain MIT with their file notices. The USB versions are pinned in the application manifest; generated packages remain unmodified. Native ES8389 support comes from the official codec snapshot, not a substitute codec.
@@ -110,3 +110,23 @@ Korvo adapter with its original MIT header; board-specific configuration remains
 Mosaico touch orientation is overridden in the project adapter with `mirror_y=true`, based
 on recorded physical Home/volume taps on the user's V1.2 assembly. The common touch getter
 performs `479-y`; this does not alter the pinned BSP references or managed CST9220 sources.
+
+## Mosaico composite USB transport
+
+Production Mosaico now uses the existing `espressif/esp_tinyusb` 2.4.0 and TinyUSB 0.19.0~3
+with `usb_device_uac` 1.3.1 in AS_PART mode. Project-owned descriptors/configuration combine
+one duplex UAC2 function and one CDC function. The production wrapper reuses the diagnostic's
+hash-checked generated DWC2 compilation copy and scoped ISR shim; the UAC singleton is placed
+in internal RAM because production enables PSRAM. Vendor sources remain unchanged.
+The project-owned USB OUT adapter drains into an owned bounded ring, then filters and
+decimates 48 kHz stereo to 16 kHz mono in the capture worker. Meeting SPEAK PCM is
+interpolated from 16 kHz mono to a bounded 48 kHz queue and sent on host-driven USB IN
+transfers. The filters and occupancy rate controls are project implementations. The
+scoped FIFO-transfer wrapper forwards non-microphone endpoints unchanged. No additional
+third-party DSP implementation is imported.
+
+
+The S31 AOSL component wrapper force-includes a project task-stack adapter only for
+`platform/src/esp32-s3/aosl_hal_thread.c`. Audited application workers use PSRAM stacks;
+control and vendor RTSA tasks retain internal stacks. Matching deletion is selected by
+actual stack placement. The original AOSL source bytes and RTSA binary remain unchanged.

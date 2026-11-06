@@ -2,7 +2,7 @@
 #ifndef MYBOT_TRANSLATION_H_
 #define MYBOT_TRANSLATION_H_
 
-/** Media uses one listen route; face-to-face uses listen and speak together. */
+/** Media uses one listen route; face-to-face and meeting use listen and speak together. */
 typedef enum {
     MYBOT_TRANSLATION_LISTEN = 0,
     MYBOT_TRANSLATION_LISTEN_SPEAK = 1,

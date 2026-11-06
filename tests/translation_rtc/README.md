@@ -13,7 +13,8 @@ AEC and QoS options, string-account mapping before unmuting, rejection of unrela
 publisher lookup, Agent/publisher loss, stale connections, callback shutdown and subscription
 failure. Public API scenarios cover switching App IDs after per-session finalization,
 whole-service recovery after connection-destroy failures during join/leave/fini, terminal
-vendor-finalization failure, retrying forwarding-queue destruction without repeating vendor
+vendor initialization/finalization failure (including a false-success second init),
+retrying forwarding-queue destruction without repeating vendor
 finalization, and callbacks delivered during teardown before connection IDs are reused by
 the next session. Successful vendor finalization must stop vendor callbacks; the mock does
 not establish that behavior in the supplied binary.

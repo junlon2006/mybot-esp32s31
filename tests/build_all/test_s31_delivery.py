@@ -82,6 +82,101 @@ class S31DeliveryTests(unittest.TestCase):
         self.assertEqual(metadata["board"], "esp-mosaico-v1.2")
         self.assertIn("Board: esp-mosaico-v1.2", self.merged.with_suffix(".flash.txt").read_text())
 
+    def enable_mosaico_uac(self) -> None:
+        (self.build / "CMakeCache.txt").write_text("MYBOT_BOARD:STRING=esp-mosaico-v1.2\n")
+        (self.build / "sdkconfig").write_text(
+            self.config.replace("ES8389", "ES8311") + "CONFIG_USB_DEVICE_UAC_AS_PART=y\n"
+        )
+        self.usb_link_flags = (
+            "-Wl,--gc-sections,--wrap=dcd_edpt_xfer,--wrap=dcd_event_handler"
+            ",--wrap=usbd_edpt_xfer_fifo"
+        )
+        self.usb_live_symbols = "".join(
+            f"                0x400a{index}000                __wrap_{symbol}\n"
+            for index, symbol in enumerate(checker.USB_WRAPPED_SYMBOLS, 1)
+        )
+        self.usb_discarded = "Discarded input sections\n" + "".join(
+            f" .text.__wrap_{symbol}\n"
+            "                0x00000000       0x96 esp-idf/mybot_platform/libmybot_platform.a(usb.c.obj)\n"
+            for symbol in checker.USB_WRAPPED_SYMBOLS
+        )
+        self.usb_cross_reference = "Cross Reference Table\n" + "".join(
+            f"__wrap_{symbol}    esp-idf/mybot_platform/libmybot_platform.a(usb.c.obj)\n"
+            for symbol in checker.USB_WRAPPED_SYMBOLS
+        )
+        self.write_usb_link_fixture()
+
+    def write_usb_link_fixture(self, flags=None, live=None, elf_target=None) -> None:
+        if flags is None:
+            flags = self.usb_link_flags
+        if live is None:
+            live = self.usb_live_symbols
+        if elf_target is None:
+            elf_target = self.description["app_elf"]
+        (self.build / "build.ninja").write_text(
+            # A matching flag elsewhere must never satisfy the application check.
+            "build unrelated.elf: CXX_EXECUTABLE_LINKER_other other.obj\n"
+            f"  LINK_FLAGS = {self.usb_link_flags}\n\n"
+            f"build {elf_target}: CXX_EXECUTABLE_LINKER_app main.obj | library.a\n"
+            f"  LINK_FLAGS = {flags}\n"
+            "  TARGET_FILE = application.elf\n\n"
+        )
+        (self.build / "mybot_esp32s31.map").write_text(
+            self.map_text + self.usb_discarded + "Linker script and memory map\n" +
+            live + self.usb_cross_reference
+        )
+
+    def test_mosaico_uac_requires_link_flags_and_live_wrappers(self) -> None:
+        self.enable_mosaico_uac()
+        metadata = checker.verify_build(self.build, "zh-CN")
+        self.assertEqual(metadata["board"], "esp-mosaico-v1.2")
+
+    def test_mosaico_uac_rejects_current_discarded_wrapper_failure(self) -> None:
+        self.enable_mosaico_uac()
+        self.write_usb_link_fixture(flags="-Wl,--gc-sections", live="")
+        with self.assertRaisesRegex(RuntimeError, "link must include --wrap=dcd_edpt_xfer"):
+            checker.verify_build(self.build, "zh-CN")
+        # Even if flags are present, discarded/cross-reference-only names do not
+        # prove the wrappers survived the final ELF link.
+        self.write_usb_link_fixture(live="")
+        with self.assertRaisesRegex(RuntimeError, "nonzero live map symbol"):
+            checker.verify_build(self.build, "zh-CN")
+
+    def test_mosaico_uac_rejects_each_missing_link_flag(self) -> None:
+        self.enable_mosaico_uac()
+        for symbol in checker.USB_WRAPPED_SYMBOLS:
+            with self.subTest(symbol=symbol):
+                flags = self.usb_link_flags.replace(f",--wrap={symbol}", "")
+                self.write_usb_link_fixture(flags=flags)
+                with self.assertRaisesRegex(RuntimeError, f"link must include --wrap={symbol}"):
+                    checker.verify_build(self.build, "zh-CN")
+        self.write_usb_link_fixture(elf_target="wrong-app.elf")
+        with self.assertRaisesRegex(RuntimeError, "link must include --wrap"):
+            checker.verify_build(self.build, "zh-CN")
+
+    def test_mosaico_uac_rejects_each_missing_or_zero_live_symbol(self) -> None:
+        self.enable_mosaico_uac()
+        for symbol in checker.USB_WRAPPED_SYMBOLS:
+            for zero_address in (False, True):
+                with self.subTest(symbol=symbol, zero_address=zero_address):
+                    lines = self.usb_live_symbols.splitlines(keepends=True)
+                    live = "".join(
+                        (f"                0x00000000                __wrap_{symbol}\n"
+                         if zero_address else "") if f"__wrap_{symbol}" in line else line
+                        for line in lines
+                    )
+                    self.write_usb_link_fixture(live=live)
+                    with self.assertRaisesRegex(RuntimeError, f"__wrap_{symbol}.*nonzero live"):
+                        checker.verify_build(self.build, "zh-CN")
+
+    def test_usb_wrapper_check_is_scoped_to_mosaico_composite_audio(self) -> None:
+        # Korvo can carry an unrelated UAC config symbol without using Mosaico wrappers.
+        (self.build / "sdkconfig").write_text(self.config + "CONFIG_USB_DEVICE_UAC_AS_PART=y\n")
+        checker.verify_build(self.build, "zh-CN")
+        (self.build / "CMakeCache.txt").write_text("MYBOT_BOARD:STRING=esp-mosaico-v1.2\n")
+        (self.build / "sdkconfig").write_text(self.config.replace("ES8389", "ES8311"))
+        checker.verify_build(self.build, "zh-CN")
+
     def test_delivery_rejects_unknown_board(self) -> None:
         (self.build / "CMakeCache.txt").write_text("MYBOT_BOARD:STRING=unknown\n")
         with self.assertRaisesRegex(RuntimeError, "unsupported or missing MYBOT_BOARD"):

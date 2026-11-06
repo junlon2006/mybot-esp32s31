@@ -1,5 +1,10 @@
 cmake_minimum_required(VERSION 3.16)
 
+# Keep generated configuration beside the selected build, including reconfigure.
+if(NOT DEFINED SDKCONFIG AND NOT DEFINED ENV{SDKCONFIG})
+    set(SDKCONFIG "${CMAKE_BINARY_DIR}/sdkconfig" CACHE FILEPATH "ESP-IDF generated configuration")
+endif()
+
 option(MYBOT_MOSAICO_UAC_TEST "Build only the Mosaico V1.2 USB audio diagnostic" OFF)
 if(MYBOT_MOSAICO_UAC_TEST)
     set(IDF_TARGET "esp32s31" CACHE STRING "ESP-IDF target")
@@ -72,3 +77,8 @@ idf_build_set_property(MINIMAL_BUILD ON)
 idf_build_set_property(MYBOT_BOARD "${MYBOT_BOARD}")
 
 project(mybot_esp32s31)
+
+# Apply the shared USB configuration after every component target exists.
+if(MYBOT_BOARD STREQUAL "esp-mosaico-v1.2")
+    include("${CMAKE_CURRENT_LIST_DIR}/components/mybot_platform/src/drivers/usb/mosaico_usb.cmake")
+endif()

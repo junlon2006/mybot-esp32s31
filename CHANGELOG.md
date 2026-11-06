@@ -2,6 +2,16 @@
 
 ## Unreleased — standalone S31 translation
 
+- Move audited media, HTTP and RTC-forwarding task stacks to PSRAM through the S31 adapter, reducing duplex internal-stack demand by about 120 KiB. Log task allocation failures and prevent unsafe RTSA initialization retries after a vendor failure.
+
+- Add simultaneous meeting SPEAK translation from the board microphone to the PC USB input, alongside the existing LISTEN-to-speaker path. Use one parent session, two RTC routes, one RTM subscription, separate AEC references and host-paced USB microphone packets.
+
+- Add Mosaico meeting listening: USB PC audio is filtered from 48 kHz stereo to 16 kHz mono, translated by the listen Agent, and played on the board speaker. Use owned USB receive buffering, bounded capture lifecycle and zero digital-input AEC reference; USB microphone return remains silent.
+
+- Attach composite USB interposition directly to the final ELF so transfer counters and initial feedback correction execute; verify live wrappers and application link flags in delivery checks.
+
+- Add one UAC2/CDC composite USB device to Mosaico firmware for meeting step 1: silent USB capture, discarded PC playback, and periodic transfer statistics alongside existing translation.
+
 - Use 40-row Mosaico display buffers; the user confirmed that the persistent caption stripe disappeared and display output is normal.
 
 - Store compact session journals to fit atomic updates in the existing NVS partition; preserve legacy journal recovery and all existing Wi-Fi/binding data.

@@ -1,6 +1,6 @@
 # S31 validation record
 
-The current development target is ESP-Mosaico CoreBoard V1.2. The latest checks are under [Caption stripe comparison](#2026-11-05-caption-stripe-comparison). Earlier sections describe the revision tested at that time. Use the manifests and checksums beside delivered images for their current binary identity.
+The current development target is ESP-Mosaico CoreBoard V1.2. The latest checks are under [RTC initialization and PSRAM task stacks](#2026-11-06-rtc-initialization-and-psram-task-stacks). Earlier sections describe the revision tested at that time. Use the manifests and checksums beside delivered images for their current binary identity.
 
 This records local build/host validation and separately attributed hardware feedback. Basic bidirectional audio passed the user's real-board interoperability test. The user subsequently confirmed normal screen display. Detailed TDM channel/reference mapping, quantitative audio quality, the new touch behavior, power sequencing and long-duration stability are not established by those reports.
 
@@ -513,3 +513,282 @@ The user subsequently flashed this version and confirmed that the horizontal str
 and the display is normal. Retain 40 rows as the current Mosaico display baseline. This is
 user-reported hardware confirmation of the visible fix; it does not identify the exact
 controller-level cause or establish long-duration/audio performance.
+
+## 2026-11-05 Mosaico composite USB transport
+
+Meeting integration step 1 adds UAC2 and CDC to the existing Mosaico translation image.
+It is transport-only: PC playback is received/discarded and USB microphone packets contain
+silence. Existing media/face-to-face audio still uses the codec; no meeting routing or
+resampling was added. One esp_tinyusb instance owns the PHY/task/descriptors; UAC is
+prepared first with AS_PART/skip_tinyusb_init, including internal-RAM ISR buffers.
+
+- Audio 48 kHz/S16/stereo, interfaces 0–2, endpoints OUT01/FB81/MIC82; CDC interfaces 3–4,
+  endpoints 83/04/84. HS feedback interval 4 and FS 1, CDC bulk 512/64. Composite descriptor
+  strings name the audio function MyBot Mosaico Audio.
+- Production reuses the immutable-input-checked DWC2 generated compilation copy, scoped
+  ISR compatibility and PIO/FIFO audio path. The duplex alternate-interface array is
+  explicitly sized for two streaming interfaces. Nominal feedback remains fixed for
+  this transport check; real audio-clock compensation belongs to the later routing step.
+- Every five seconds, CDC logs report actual successful USB OUT/MIC/feedback bytes and
+  errors separately from application callback/discard/silence counters. No raw PCM is
+  logged or routed to the device microphone/speaker.
+- Actual pinned-header descriptor tests pass with UBSan. Transport callback tests pass
+  with UBSan, covering lengths, silence, empty packets, state, failed initialization,
+  feedback, endpoint statistics and unchanged CDC forwarding. Format/SPDX/diff checks pass.
+- Direct Chinese IDF 6.1 build passed in `build/korvo-s31` using its own sdkconfig. The
+  root project now defaults sdkconfig to the selected build directory if unspecified.
+  Application 3595424 bytes, SHA-256
+  `4b111b3817972bd94b37804c10d597da92c9c256a6a9eb7e25a873f8a954be2f`.
+- RISC-V/local-AOSL/RTSA/four-flash-segment checks pass. The build contains one each of
+  TinyUSB, esp_tinyusb, UAC and the existing runtime components. Link ownership confirms
+  descriptors/mount callbacks in esp_tinyusb and feedback override in the platform.
+
+Mac enumeration, simultaneous CDC/UAC traffic and coexistence with live translations
+remain hardware tests for this new composite image. The standalone UAC result does not
+prove composite enumeration. Flashing and the expected silent-audio behavior are described
+in [the step 1 guide](MOSAICO_USB_AUDIO.zh-CN.md). No device was flashed or commit created.
+
+## 2026-11-06 Composite USB link interposition
+
+The user confirmed MyBot Mosaico Audio appears on macOS, and CDC logs work through
+`/dev/cu.usbmodemMOSAICO_V124`. A continuous-playback log spans 40 seconds with
+7,587,264 additional callback-discarded bytes and 7,680,000 additional prepared-silence
+bytes, and no application callback errors. Wi-Fi binding polling continues concurrently.
+However, all actual USB transfer counters remained zero; those zero error counters could
+not establish error-free bus traffic.
+
+The final ELF revealed an integration defect: the post-project USB helper appended to
+IDF's LINK_OPTIONS build property after it had been copied to the executable. Neither
+GNU --wrap option reached the actual link, so both wrappers were discarded. This also
+disabled the first high-speed feedback correction, not just the transfer counters.
+
+- Apply both wrap options directly with target_link_options on the final executable.
+- The build checker now checks the application's Ninja link flags and nonzero wrapper
+  addresses in the live map region, excluding discarded input and cross-reference names.
+- 20 delivery tests pass, including missing flags, unrelated-target flags, discarded-only
+  names and missing/zero wrapper symbols. Actual firmware check passes; nm shows both
+  wrappers and disassembly confirms calls from USB code reach them.
+- Chinese build passed in `build/korvo-s31`: 3595792-byte application, SHA-256
+  `beafe1ce2e4cf623cb82796426588cde22085aec40cb8f5e28625b18ec04e737`.
+  The existing S31 ABI/AOSL/RTSA/flash checks pass.
+
+The user's subsequent log confirms that the corrected image records actual transfer
+completions while CDC logs and Wi-Fi/HTTPS polling continue. Both audio streaming
+interfaces open; the device stays mounted at high speed without a detach or suspend.
+The user also reports switching the Mac audio selection to the built-in MacBook device
+during this capture. Counters pause between 21.614 and 26.614 s and streaming interfaces
+open again before 31.614 s, consistent with a host stop/reopen rather than a USB hang.
+Exact switch timestamps are unavailable; this is not a controlled uninterrupted-stream
+test. In the 31.614–51.614 s comparison interval:
+
+- Successful USB OUT bytes increase by 3,839,952 and microphone IN bytes by 3,840,000.
+  Both match the nominal 192,000 bytes/s for 48 kHz, stereo S16 audio within sampling
+  granularity. OUT errors remain zero; MIC errors remain at 78 in this interval.
+- Feedback has 20,000 completions and 79,940 successful bytes. Errors increase from
+  56 to 71: 15 unsuccessful completions (0.075%). Feedback stays at 393216 and submit
+  errors remain zero. The pinned DWC2 driver reports FAILED after exhausting incomplete
+  ISO IN retries; TinyUSB then submits another feedback transfer. This explains continued
+  traffic despite those errors, but does not establish their timing/hardware cause.
+- Discard callbacks account for 3,790,464 bytes, 49,488 fewer than successful OUT bytes
+  (about 1.29%). The upstream UAC ISR and worker share one buffer/length and merge task
+  notifications; this path cannot establish lossless delivery to a future audio consumer.
+  Prepared silence increases by 3,840,000 bytes; application callback errors remain zero.
+
+This establishes short-duration USB duplex transport alongside CDC and network activity,
+not error-free endurance or live translation coexistence. Feedback errors grow in the
+sampled interval, but a capture with fixed input/output selection is needed to distinguish
+stream-switch effects from steady-state failures. The callback path needs reliable buffer
+ownership before carrying meeting audio. The final
+56.614 s status line is truncated and is not used for the complete-sample comparison.
+USB audio still discards playback and returns silence; no physical or RTC meeting routing
+was tested. No device was flashed or commit created by the agent.
+
+
+## 2026-11-06 Meeting listening
+
+The user selected PC audio → LISTEN Agent → device speaker as the next integration step.
+Mosaico's meeting page now selects LISTEN with USB capture, initially remote English to
+local Chinese. It reuses the existing speaker, caption, pause and cleanup paths. USB
+microphone return still contains silence; simultaneous meeting SPEAK is not implemented.
+
+- Optional platform USB capture uses the existing 16 kHz mono S16 frame-count contract.
+  Mode, source and optional language pair are committed together only while idle. USB
+  playback must be mounted, unsuspended and open before any cloud start is issued.
+- Source changes stop and join the capture worker before destroying its device; failed
+  teardown retains ownership. Session end, rejected/unknown starts and pre-dispatch
+  failures restore codec capture. Recovery failure blocks the next cloud start.
+- Digital USB input sends zero AEC reference in the existing 60 ms paired format. Playback
+  neither fills nor waits on the physical-reference ring for this input source.
+- A 30,720-byte internal USB receive ring replaces upstream's shared speaker buffer.
+  A 95-tap Q15 low-pass FIR converts 48 kHz stereo to 16 kHz mono on the capture worker.
+  Normal residual is 20 ms; read-entry backlog above 120 ms is trimmed to 80 ms before
+  the 60 ms read. The hard limit is 160 ms. Bounded occupancy feedback corrects clock
+  mismatch; underflow is explicit silence. Stop/stream close/unplug/suspend invalidate
+  queued and already-copied PCM. Master and channel mute/dB gain affect the digital input;
+  the log reports master controls separately from physical speaker volume.
+- Focused USB UBSan tests pass for queue cadence, generation invalidation under concurrent
+  stop/close, overflow recovery, feedback, channel controls and malformed requests. FIR
+  tests measure 1 kHz gain 0.99997, 8.5 kHz residual 0.000289 and 12 kHz residual 0.000100;
+  arbitrary input chunking produces identical output. These are host numerical checks.
+- Control/lifecycle/media switching tests pass, including 36 lifecycle scenarios and
+  13 media pause/source tests. Control coverage includes AEC on/off, source admission and
+  failed-start cleanup; state/volume/input regressions pass. UI checks pass in both
+  languages at 480×480 and 800×480. The static UI font was regenerated from the pinned
+  input for the new computer-audio labels. Descriptor, format/SPDX and whitespace checks pass.
+- Direct Chinese IDF 6.1 build passes in `build/korvo-s31`; application is 3,634,992 bytes,
+  SHA-256 `434f45998b13a9e66ea95aeb7beaf704968536d3b4c55dc49dd2b1b68a4f8e26`.
+  Final checks confirm RISC-V, local AOSL, pinned RTSA, video disabled and four flash
+  segments. The live map includes the capture/resampler and all platform UAC callbacks.
+  The previous USB transport image is retained locally in `build/korvo-s31/usb-transport-baseline`.
+
+This revision has not been flashed by the agent. Actual English-to-Chinese meeting audio,
+caption correctness, host mute/volume, stream switching, clock feedback and endurance need
+user testing with this image. Previous composite transport logs do not establish these
+new behaviors. Instructions are in [the meeting USB guide](MOSAICO_USB_AUDIO.zh-CN.md).
+
+
+## 2026-11-06 Meeting UI snapshot forwarding
+
+The user reported that Meeting still displayed the unavailable preview after the listening
+integration. Both board display adapters constructed a zero-initialized snapshot and copied
+fields individually, omitting `usb_audio_available` and `audio_source`. The view therefore
+always received no USB capability and the codec source, despite correct platform registration
+and presenter state. The earlier UI tests injected snapshots directly and missed this boundary.
+
+Both adapters now forward these two fields. Real-adapter host regression tests reproduce the
+missing capability before the fix, then pass capability-only/source-only updates, queued
+snapshot ownership and default-source restoration after the fix. The Mosaico 18 display
+scenarios and touch checks, plus all Korvo display scenarios, pass with UBSan. Formatting,
+SPDX and whitespace checks pass. The 40-row display buffers are unchanged.
+
+Direct Chinese incremental build and the final S31 link/flash checks pass in
+`build/korvo-s31`: 3,635,008-byte application, SHA-256
+`cd8c5e790470eaa622e3de5be8413227ece6cb1f31b2c501046abf3128957c68`. No hardware was flashed by the agent; the user must flash this corrected image
+to verify the Meeting entry and continue the PC-audio translation test.
+
+
+## 2026-11-06 User confirmation of meeting listening
+
+The user reports that the meeting listening test passes after starting PC audio playback
+before pressing Start on the device. The preceding USB_AUDIO_NOT_READY log showed a mounted
+USB device but no opened playback interface and zero received bytes; this was consistent
+with the required preflight check. No firmware/source change or rebuild was made for that
+report, so there is no corresponding diagnostic patch to revert. The earlier display
+snapshot fix remains part of the working version.
+
+The user subsequently explicitly confirmed that the device plays the translated Chinese
+speech normally and supplied an active USB listening log. In the 196.591–231.591 s sample
+interval, successful OUT bytes increase by 6,719,620 (about 192,000 bytes/s). Converted
+capture frames increase by 559,680 (about 16,000 samples/s); sampled PCM peaks are nonzero.
+Application queue drops remain zero and inserted-silence frames remain at 296, showing no
+new queue underflow in that interval. Binding HTTPS polling continues concurrently.
+
+Feedback failures increase from 112 to 119 over 34,999 completions and MIC failures from
+41 to 42; this is not an error-free bus result. A later streaming-interface reopen is
+followed by additional initial errors and silence padding, after which receive/capture
+counts and nonzero peaks continue. The log excerpt contains transport measurements, while
+the audible Chinese translation result is confirmed by the user.
+
+This establishes functional PC-audio-to-Agent-to-device-speaker meeting listening on the
+user's hardware. Quantitative audio quality and long-duration clock stability require
+separate validation; microphone translation return to the PC is still unimplemented.
+
+
+## 2026-11-06 Bidirectional USB meeting translation
+
+After the user confirmed normal Chinese playback in meeting listening, the next implementation
+adds the reverse path and runs both routes concurrently. Meeting selects `listen_speak` plus
+USB audio, with my/local Chinese and other/remote English by default. One parent conversation,
+two RTC connections and one RTM subscription retain the existing dual-route protocol.
+
+- The physical pipeline sends MIC to SPEAK and plays LISTEN output on the codec. Its AEC
+  reference is the physical speaker PCM. A separate PSRAM-allocated USB pipeline sends PC
+  audio to LISTEN with zero reference and plays SPEAK output to the USB microphone sink.
+  The USB pipeline does not own codec volume, announcements or an unused reference ring.
+  The prior per-session capture-device switching helper is removed.
+- Source/mode/language selection is atomic while idle, USB capability requires both operation
+  tables, and capture preflight still requires PC playback to be open. The USB microphone
+  may be opened later; translated PCM while it is closed is consumed/discarded, never replayed.
+- Both paths share aggregate RTC readiness and pause/stop admission. An intentional pause
+  interrupting USB I/O does not report a fatal device error. Meeting teardown quiesces both
+  device queues even after RTC disconnect, then joins workers before freeing the USB object.
+  RTC/worker failure retains ownership for a later retry; physical idle playback is restored.
+- A task-side polyphase FIR interpolates 16 kHz mono to 48 kHz. The separate internal return
+  ring holds 7,680 mono samples (15,360 bytes), with 20 ms priming and bounded rate correction.
+  USB microphone packet payloads are 6 stereo frames at HS and 48 at FS, scheduled by host
+  transfers; no 10 ms UAC task cadence drives this path. Silence fills unavailable PCM.
+  A submitted packet is immutable until completion; stopping cannot retract that one packet.
+- Interposition is at `usbd_edpt_xfer_fifo`, forwarding the microphone through `usbd_edpt_xfer`
+  for normal endpoint busy bookkeeping. A local RISC-V linker experiment showed that wrapping
+  `dcd_edpt_xfer_fifo` would not reliably intercept its same-object weak fallback. The final
+  ELF contains live calls from `audiod_control_xfer_cb` and `audiod_xfer_isr` to
+  `__wrap_usbd_edpt_xfer_fifo`. Managed inputs remain unchanged.
+- Nine focused USB UBSan cases pass, including both interface lifetimes, concurrent stop/close/
+  destroy, nominal FS/HS packets, short utterances, capacity handling and both filters.
+  Simulated +417/-417 ppm clocks over 144 seconds produce no additional underflow/drop after
+  priming. The interpolation numerical test gives 1 kHz gain 0.99998 and 15 kHz image residual
+  0.000048; varied chunk boundaries match. These are host checks, not device timing/quality results.
+- Media pipeline 14 cases and route/control 14 cases pass with cloud AEC both enabled/disabled;
+  lifecycle 36, RTC 48, state 141 assertions, volume 8 and mailbox/UI/caption regressions pass.
+  UI tests pass in both languages at 480×480/800×480, with simultaneous directions, correct
+  caption labels, pause and source acknowledgement. Descriptor tests and 20 delivery checks
+  pass, including the new live wrapper/link option. Formatting/SPDX and whitespace checks pass.
+- Direct Chinese IDF 6.1 build passes in `build/korvo-s31`: application 3,653,536 bytes,
+  SHA-256 `cf2abac3dc51ed1a07835804d4a176c05f59771d41e4df9e9cd8aa1544871104`.
+  Final S31 RISC-V/local-AOSL/RTSA/video-off/four-segment checks pass. The symbol map places
+  the input ring, return ring and 192-byte USB packet in internal memory. The previously
+  user-confirmed listening image is retained at `build/korvo-s31/meeting-listen-passed/`.
+
+This new duplex firmware has not been flashed by the agent. User acceptance must verify
+English recording on the PC from the device's Chinese microphone, simultaneous opposite
+traffic, pause/stop/restart, acoustic AEC and longer runs. The earlier listening acceptance
+remains a separate baseline. Use the updated [meeting guide](MOSAICO_USB_AUDIO.zh-CN.md).
+
+
+## 2026-11-06 RTC initialization and PSRAM task stacks
+
+The user's duplex test opened both USB streams and obtained HTTP 201 with valid LISTEN/SPEAK
+routes, local Chinese and remote English. Local `agora_rtc_init` then returned ERR_FAILED
+before RTC join. Cloud stop succeeded with HTTP 200 and confirmed the parent ended; no
+translated return PCM was generated. USB transport continued operating.
+
+Read-only reference-source inspection and the pinned binary narrow this return to creation
+of the first AgoraRtc MPQ. The inherited ESP32 AOSL HAL uses xTaskCreate: enabling external
+stack support does not automatically move those task stacks out of internal RAM. Starting
+the extra USB pipeline had added three 16 KiB internal stacks before RTC's own task allocation.
+The log's 173,435 free / 75,776 largest internal block measurement preceded codec and media
+startup; allocation-time heap figures were absent. Internal-memory pressure is therefore the
+supported explanation, while the exact failed allocation must be confirmed by new logs.
+
+- A project S31 adapter is force-included only into the original AOSL thread HAL compilation
+  unit. Exact audited task names cap_mpq/pb_mpq/mybot_mpq, service_mpq and mybot_rtc use PSRAM
+  stacks; control_mpq and opaque vendor RTC tasks retain internal stacks. Six media stacks
+  plus HTTP and forwarding reduce internal-stack demand by about 120 KiB without shrinking
+  stack sizes or altering priorities. Existing PSRAM data-buffer allocations remain in place.
+- The deletion adapter inspects the actual stack address and pairs WithCaps creation with
+  WithCaps deletion on both ordinary return and explicit thread exit. Other tasks retain
+  their original allocation/deletion. Task logs report placement and, on failure, requested
+  stack bytes plus internal/PSRAM free and largest blocks. TCBs and USB ISR buffers stay internal.
+- Fixed RTSA sets its initialized flag before its MPQ creation and does not reliably roll back
+  that flag after failure. The wrapper now latches a terminal init/fini failure until restart,
+  retires its own callback queue and prevents a false-success subsequent vendor init.
+- The new host CMake case compiles the unchanged upstream HAL using the production wrapper.
+  UBSan tests cover exact-name policy, size/priority, normal return, explicit exit, renamed task
+  deletion, unknown/truncated-name rejection and allocation failures. RTC 50 scenarios pass,
+  including failed-init/forwarding-cleanup retry without another vendor init or fini call.
+  Format/SPDX and whitespace checks pass; CI includes the new focused task test.
+- Direct Chinese build passes in build/korvo-s31: application 3,654,352 bytes, SHA-256
+  `25715672b5bf35cfd61930e375423d1c2ab08fbd51d42983896ae639ae8868e7`.
+  RISC-V/local-AOSL/pinned-RTSA/video-off/four-segment checks pass. Final ELF inspection
+  confirms the actual AOSL create and normal-return calls reach the S31 adapter; the production
+  HAL object also confirms explicit thread exit uses the matching deletion adapter.
+
+No device was flashed by the agent. The user subsequently reported that testing passed after
+flashing the PSRAM stack revision. This records user-reported functional acceptance of the
+current bidirectional meeting firmware; no additional device log or quantitative measurements
+were supplied with that confirmation. Detailed repeated start/stop reclamation, acoustic AEC,
+audio quality and endurance remain separate validation items.
+
+The user requested PSRAM wherever practical; audited task stacks and large task buffers follow
+that policy while required internal-memory objects retain their placement. The global external
+BSS option remains disabled, avoiding an unrelated relocation of Wi-Fi/lwIP static storage.

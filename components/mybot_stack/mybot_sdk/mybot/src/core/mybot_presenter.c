@@ -50,6 +50,8 @@ void mybot_presenter_show_screen(mybot_presenter_t *presenter, mybot_lcd_screen_
     content.volume = presenter->volume;
     content.paused = presenter->paused && screen == MYBOT_LCD_SCREEN_IN_CONVERSATION;
     content.translation_mode = presenter->translation_mode;
+    content.audio_source = presenter->audio_source;
+    content.usb_audio_available = presenter->usb_audio_available;
     content.input_direction = presenter->input_direction;
     content.selection_revision = presenter->selection_revision;
     content.caption_generation = presenter->captions.generation;

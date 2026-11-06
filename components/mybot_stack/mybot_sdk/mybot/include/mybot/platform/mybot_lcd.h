@@ -5,6 +5,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <mybot/mybot_translation.h>
+#include <mybot/platform/mybot_audio.h>
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -104,7 +105,7 @@ typedef struct {
      *       SDK and platform LCD adapter against the same public header.
      */
     uint32_t indicators;
-    /** Media: input/output; face-to-face: my/other language. NUL-terminated. */
+    /** Media: input/output; face-to-face and meeting: my/other language. NUL-terminated. */
     char source_language[33];
     char target_language[33];
     /** Optional stable error code, NUL-terminated. */
@@ -114,6 +115,10 @@ typedef struct {
     /** Actual local media pause state; the RTC session remains connected. */
     bool paused;
     mybot_translation_mode_t translation_mode;
+    /** Session topology; USB with LISTEN_SPEAK is simultaneous meeting translation. */
+    mybot_audio_source_t audio_source;
+    /** Platform capability, independent of whether a PC is currently connected. */
+    bool usb_audio_available;
     /** Face-to-face microphone selection; NONE until explicitly selected. */
     mybot_translation_direction_t input_direction;
     /** Advances after each mode/direction command is applied or rejected. */

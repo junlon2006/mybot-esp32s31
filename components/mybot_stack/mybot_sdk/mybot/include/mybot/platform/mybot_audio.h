@@ -9,10 +9,18 @@
 extern "C" {
 #endif
 
+/** Session audio topology. USB meetings capture PC playback for LISTEN and
+ * the physical microphone for SPEAK simultaneously. */
+typedef enum {
+    MYBOT_AUDIO_SOURCE_CODEC = 0,
+    MYBOT_AUDIO_SOURCE_USB,
+} mybot_audio_source_t;
+
 /* ----------------------------------------------------------
  * Platform audio device operations (hook interface)
  *
- * Each platform provides one capture ops and one playback ops.
+ * Each platform provides physical capture and playback operations; optional
+ * USB capture/playback use the same format and ownership contract.
  * The framework registers them at startup and uses the
  * unified mybot_audio_* API everywhere.
  * ---------------------------------------------------------- */

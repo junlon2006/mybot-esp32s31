@@ -327,6 +327,8 @@ int render(void *opaque, const mybot_lcd_content_t *content) {
     snapshot.volume = content->volume;
     snapshot.paused = content->paused;
     snapshot.translation_mode = content->translation_mode;
+    snapshot.audio_source = content->audio_source;
+    snapshot.usb_audio_available = content->usb_audio_available;
     snapshot.input_direction = content->input_direction;
     snapshot.selection_revision = content->selection_revision;
     snapshot.caption_generation = content->caption_generation;

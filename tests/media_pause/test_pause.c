@@ -36,7 +36,11 @@ static unsigned queued_count;
 static aosl_mpq_t current_queue, next_queue, fail_queue, delay_queue;
 static bool fail_pb_stop, fail_pb_start, stop_during_wait, release_producer_during_wait;
 static bool fail_destroy;
-static bool cap_active, pb_active;
+static bool cap_active, pb_active, usb_active, usb_pb_active;
+static bool usb_disconnected, pause_usb_write;
+static unsigned audio_errors, volume_inits, announce_inits;
+static bool fail_usb_start, fail_cap_stop, fail_codec_start, fail_cap_create;
+static unsigned usb_destroyed, codec_destroyed;
 static int16_t captured_sample, played[MAX_DEVICE_FRAMES], sent[MYBOT_MEDIA_FRAME_SAMPLES * 2];
 static unsigned played_frames, sends, capture_reads, playback_writes, pb_stops, cap_stops;
 static unsigned hardware_volume_sets, waited_ms, tests;
@@ -83,6 +87,8 @@ static int capture_init(void **context, int rate, int channels, int bits) {
 
 static int capture_start(void *context) {
     assert(context == &cap_active);
+    if (fail_codec_start)
+        return -1;
     cap_active = true;
     return 0;
 }
@@ -102,12 +108,15 @@ static int capture_read(void *context, void *buffer, int frames) {
 static int capture_stop(void *context) {
     assert(context == &cap_active);
     cap_stops++;
+    if (fail_cap_stop)
+        return -1;
     cap_active = false;
     return 0;
 }
 
 static void capture_destroy(void *context) {
     assert(context == &cap_active && !cap_active);
+    codec_destroyed++;
 }
 
 static int playback_init(void **context, int rate, int channels, int bits) {
@@ -117,18 +126,22 @@ static int playback_init(void **context, int rate, int channels, int bits) {
 }
 
 static int playback_start(void *context) {
-    assert(context == &pb_active);
+    assert(context == &pb_active || context == &usb_pb_active);
     if (fail_pb_start)
         return -1;
-    assert(cap_active); /* Capture retains the shared bus clocks. */
-    pb_active = true;
+    assert(cap_active || usb_active); /* Playback is independent of physical capture. */
+    *(bool *)context = true;
     return 0;
 }
 
 static int playback_write(void *context, const void *buffer, int frames) {
-    assert(context == &pb_active);
+    assert(context == &pb_active || context == &usb_pb_active);
     playback_writes++;
-    if (!pb_active)
+    if (context == &usb_pb_active && pause_usb_write) {
+        aosl_atomic_set(&pipeline.paused, true);
+        return -1;
+    }
+    if (!*(bool *)context)
         return 0;
     int written = frames < write_limit ? frames : write_limit;
     assert(written >= 0 && played_frames + (unsigned)written <= MAX_DEVICE_FRAMES);
@@ -138,20 +151,21 @@ static int playback_write(void *context, const void *buffer, int frames) {
 }
 
 static int playback_stop(void *context) {
-    assert(context == &pb_active);
+    assert(context == &pb_active || context == &usb_pb_active);
     pb_stops++;
     if (fail_pb_stop)
         return -1;
-    pb_active = false;
+    *(bool *)context = false;
     played_frames = 0; /* Model the driver dropping its asynchronous PCM queue. */
     return 0;
 }
 
 static void playback_destroy(void *context) {
-    assert(context == &pb_active && !pb_active);
+    assert((context == &pb_active || context == &usb_pb_active) && !*(bool *)context);
 }
 
 static int volume_init(void **context) {
+    volume_inits++;
     *context = &hardware_volume;
     return 0;
 }
@@ -175,20 +189,64 @@ static void volume_destroy(void *context) {
 
 static const mybot_audio_capture_ops_t capture_ops = {capture_init, capture_start, capture_read,
                                                       capture_stop, capture_destroy};
+static int usb_init(void **context, int rate, int channels, int bits) {
+    assert(rate == 16000 && channels == 1 && bits == 16);
+    *context = &usb_active;
+    return 0;
+}
+static int usb_start(void *context) {
+    assert(context == &usb_active);
+    if (fail_usb_start)
+        return -1;
+    usb_active = true;
+    return 0;
+}
+static int usb_read(void *context, void *buffer, int frames) {
+    assert(context == &usb_active && usb_active);
+    if (usb_disconnected)
+        return -1;
+    int16_t *samples = buffer;
+    for (int i = 0; i < frames; ++i)
+        samples[i] = 5678;
+    return frames;
+}
+static int usb_stop(void *context) {
+    assert(context == &usb_active);
+    usb_active = false;
+    return 0;
+}
+static void usb_destroy(void *context) {
+    assert(context == &usb_active && !usb_active);
+    usb_destroyed++;
+}
+static const mybot_audio_capture_ops_t usb_ops = {usb_init, usb_start, usb_read, usb_stop,
+                                                  usb_destroy};
 static const mybot_audio_playback_ops_t playback_ops = {
     playback_init, playback_start, playback_write, playback_stop, playback_destroy};
+static int usb_playback_init(void **context, int rate, int channels, int bits) {
+    assert(rate == 16000 && channels == 1 && bits == 16);
+    *context = &usb_pb_active;
+    return 0;
+}
+static const mybot_audio_playback_ops_t usb_playback_ops = {
+    usb_playback_init, playback_start, playback_write, playback_stop, playback_destroy};
+static void audio_error(void *context) {
+    assert(context == &pipeline);
+    audio_errors++;
+}
 static const mybot_audio_volume_ops_t volume_ops = {volume_init, volume_set, volume_get,
                                                     volume_destroy};
 
 static int send_audio(const void *data, size_t bytes, void *context) {
     assert(context == &pipeline);
-    assert(bytes == 960 * 2 * sizeof(int16_t));
+    assert(bytes == 960 * (MYBOT_CLOUD_AEC ? 2U : 1U) * sizeof(int16_t));
     memcpy(sent, data, bytes);
     sends++;
     return 0;
 }
 
 int mybot_announce_init(mybot_announce_t *announce) {
+    announce_inits++;
     memset(announce, 0, sizeof(*announce));
     return 0;
 }
@@ -231,7 +289,8 @@ aosl_mpq_t aosl_mpq_create_flags(int flags, int priority, int stack, int maximum
     (void)priority;
     (void)stack;
     (void)maximum;
-    (void)name;
+    if (!strcmp(name, "cap_mpq") && fail_cap_create)
+        return AOSL_MPQ_INVALID;
     aosl_mpq_t queue = next_queue++;
     assert(queue > 0 && queue < QUEUE_COUNT);
     workers[queue].fini = (void (*)(void *))fini;
@@ -367,13 +426,19 @@ static void reset(void) {
     fail_pb_stop = fail_pb_start = stop_during_wait = release_producer_during_wait = false;
     fail_destroy = tick_during_fence = false;
     hold_remote_producer = producer_acquired = release_remote_producer = false;
-    cap_active = pb_active = false;
+    cap_active = pb_active = usb_active = usb_pb_active = false;
+    usb_disconnected = pause_usb_write = false;
+    audio_errors = volume_inits = announce_inits = 0;
+    fail_usb_start = fail_cap_stop = fail_codec_start = fail_cap_create = false;
+    usb_destroyed = codec_destroyed = 0;
     played_frames = sends = capture_reads = playback_writes = pb_stops = cap_stops = 0;
     hardware_volume_sets = waited_ms = fence_ticks = 0;
     captured_sample = 1234;
     hardware_volume = 45;
     capture_frames = write_limit = MYBOT_MEDIA_FRAME_SAMPLES;
     platform.audio_capture = &capture_ops;
+    platform.audio_usb_capture = &usb_ops;
+    platform.audio_usb_playback = &usb_playback_ops;
     platform.audio_playback = &playback_ops;
     platform.audio_volume = &volume_ops;
     mybot_media_pipeline_init(&pipeline);
@@ -383,7 +448,7 @@ static void reset(void) {
 }
 
 static void finish(void) {
-    fail_pb_stop = fail_pb_start = fail_destroy = false;
+    fail_pb_stop = fail_pb_start = fail_destroy = fail_cap_stop = false;
     assert(mybot_media_pipeline_stop(&pipeline) == 0);
     assert(mybot_media_pipeline_destroy(&pipeline) == 0);
     assert(queued_count == 0);
@@ -399,8 +464,13 @@ static void push(int16_t value) {
 static void expect_sent(int16_t mic, int16_t reference) {
     assert(sends > 0);
     for (unsigned i = 0; i < MYBOT_MEDIA_FRAME_SAMPLES; ++i) {
+#if MYBOT_CLOUD_AEC
         assert(sent[i * 2] == mic);
         assert(sent[i * 2 + 1] == reference);
+#else
+        (void)reference;
+        assert(sent[i] == mic);
+#endif
     }
 }
 
@@ -434,7 +504,9 @@ static void test_pause_silent_cadence_and_playback_discard(void) {
     assert(played_frames == 0 && pipeline.pb_pending_frames == 0);
     assert(mybot_ringbuf_get_data_size(pipeline.pb_ringbuf) == 0);
     assert(mybot_ringbuf_get_data_size(pipeline.cap_ringbuf) == 0);
+#if MYBOT_CLOUD_AEC
     assert(mybot_ringbuf_get_data_size(pipeline.ref_ringbuf) == 0);
+#endif
     unsigned previous_writes = playback_writes;
     for (unsigned frame = 0; frame < 4; ++frame) {
         push(7777);
@@ -465,7 +537,9 @@ static void test_resume_flushes_old_audio(void) {
         old[i] = 8888;
     assert(mybot_ringbuf_write(pipeline.pb_ringbuf, (const char *)old, sizeof(old)) > 0);
     assert(mybot_ringbuf_write(pipeline.cap_ringbuf, (const char *)old, sizeof(old)) > 0);
+#if MYBOT_CLOUD_AEC
     assert(mybot_ringbuf_write(pipeline.ref_ringbuf, (const char *)old, sizeof(old)) > 0);
+#endif
     pipeline.pb_pending_frames = 100;
     tick_during_fence = true;
     assert(mybot_media_pipeline_set_paused(&pipeline, false) == 0);
@@ -626,7 +700,10 @@ static void test_stop_and_delayed_fence_ownership(void) {
     fail_destroy = true;
     assert(mybot_media_pipeline_stop(&pipeline) < 0);
     assert(mybot_media_pipeline_destroy(&pipeline) < 0);
-    assert(pipeline.cap_ringbuf && pipeline.pb_ringbuf && pipeline.ref_ringbuf);
+    assert(pipeline.cap_ringbuf && pipeline.pb_ringbuf);
+#if MYBOT_CLOUD_AEC
+    assert(pipeline.ref_ringbuf);
+#endif
     fail_destroy = false;
     finish();
     tests++;
@@ -671,8 +748,105 @@ static void test_invalid_arguments(void) {
     tests++;
 }
 
+static void reset_usb(void) {
+    reset();
+    finish();
+    next_queue = CAPTURE_QUEUE;
+    volume_inits = announce_inits = 0;
+    usb_destroyed = codec_destroyed = 0;
+    cap_active = true; /* A separate physical pipeline continues to own the codec. */
+    mybot_media_pipeline_init(&pipeline);
+}
+static int start_usb(void) {
+    mybot_media_pipeline_callbacks_t callbacks = {
+        .send_audio = send_audio, .on_audio_error = audio_error, .user_data = &pipeline};
+    return mybot_media_pipeline_start_usb(&pipeline, &callbacks);
+}
+static void test_usb_pipeline_zero_reference_and_unity_gain(void) {
+    reset_usb();
+    assert(start_usb() == 0);
+    assert(usb_active && usb_pb_active && cap_active && !pb_active);
+    assert(!codec_destroyed && !volume_inits && !announce_inits);
+    assert(pipeline.usb && !pipeline.audio.volume_active);
+#if MYBOT_CLOUD_AEC
+    assert(!pipeline.ref_ringbuf);
+#endif
+    assert(mybot_audio_get_media_volume(&pipeline.audio) == 100);
+    mybot_media_pipeline_set_rtc_connected(&pipeline, true);
+    push(2500);
+    tick(PLAYBACK_QUEUE);
+    assert(played_frames == 960 &&
+           played[0] == 2500); /* Physical volume45 must not attenuate USB. */
+    tick(CAPTURE_QUEUE);
+    tick(SEND_QUEUE);
+    expect_sent(5678, 0); /* SPEAK return never enters the LISTEN AEC reference. */
+    assert(mybot_media_pipeline_set_paused(&pipeline, true) == 0);
+    assert(!usb_pb_active && !played_frames && usb_active && cap_active);
+    tick(CAPTURE_QUEUE);
+    tick(SEND_QUEUE);
+    expect_sent(0, 0);
+    assert(mybot_media_pipeline_set_paused(&pipeline, false) == 0);
+    tick(CAPTURE_QUEUE);
+    tick(SEND_QUEUE);
+    expect_sent(5678, 0);
+    usb_disconnected = true;
+    tick(CAPTURE_QUEUE);
+    assert(audio_errors == 1);
+    usb_disconnected = false;
+    pause_usb_write = true;
+    push(3456);
+    tick(PLAYBACK_QUEUE);
+    assert(audio_errors == 1); /* A write interrupted by pause is not USB detachment. */
+    finish();
+    assert(cap_active && !usb_active && !usb_pb_active && !codec_destroyed && usb_destroyed == 1);
+    tests++;
+}
+static void test_usb_start_failures_and_retained_worker(void) {
+    reset_usb();
+    platform.audio_usb_playback = NULL;
+    assert(start_usb() < 0 && cap_active && !usb_active && !usb_pb_active);
+    reset_usb();
+    fail_usb_start = true;
+    assert(start_usb() < 0 && cap_active && !usb_active && !usb_pb_active);
+    assert(usb_destroyed == 1 && !codec_destroyed && !volume_inits && !announce_inits);
+    reset_usb();
+    fail_cap_create = true;
+    fail_destroy = true;
+    assert(start_usb() < 0 && pipeline.cap_ctx && pipeline.pb_ctx && pipeline.cap_ringbuf);
+    assert(!pipeline.stop_complete && cap_active && !usb_active && !usb_pb_active);
+    assert(!usb_destroyed && !codec_destroyed);
+    assert(mybot_media_pipeline_destroy(&pipeline) < 0);
+    fail_destroy = false;
+    fail_cap_create = false;
+    finish();
+    assert(usb_destroyed == 1 && !codec_destroyed && cap_active);
+    tests++;
+}
+
+static void test_disconnected_quiesce_clears_device_pcm(void) {
+    reset();
+    push(3000);
+    tick(PLAYBACK_QUEUE);
+    assert(played_frames == 960);
+    mybot_media_pipeline_set_rtc_connected(&pipeline, false);
+    assert(mybot_media_pipeline_set_paused(&pipeline, true) < 0);
+    fail_pb_stop = true;
+    assert(mybot_media_pipeline_quiesce(&pipeline) < 0);
+    assert(pipeline.paused && pipeline.playback_suspended && played_frames == 960);
+    fail_pb_stop = false;
+    assert(mybot_media_pipeline_quiesce(&pipeline) == 0);
+    assert(!played_frames && !pb_active && cap_active && pipeline.paused);
+    assert(mybot_media_pipeline_end_session(&pipeline) == 0);
+    assert(!pipeline.paused && pb_active && cap_active && !pipeline.playback_suspended);
+    finish();
+    tests++;
+}
+
 int main(void) {
-    assert(MYBOT_AUDIO_PTIME_MS == 60 && MYBOT_CLOUD_AEC == 1);
+    test_disconnected_quiesce_clears_device_pcm();
+    test_usb_pipeline_zero_reference_and_unity_gain();
+    test_usb_start_failures_and_retained_worker();
+    assert(MYBOT_AUDIO_PTIME_MS == 60);
     test_unchanged_audio();
     test_pause_silent_cadence_and_playback_discard();
     test_resume_flushes_old_audio();
@@ -684,6 +858,6 @@ int main(void) {
     test_stop_and_delayed_fence_ownership();
     test_session_end_and_new_session();
     test_invalid_arguments();
-    printf("media pause: %u tests passed (UBSan)\n", tests);
+    printf("media pause: %u tests passed (UBSan, cloud AEC=%d)\n", tests, MYBOT_CLOUD_AEC);
     return 0;
 }

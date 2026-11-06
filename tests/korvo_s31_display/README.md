@@ -17,3 +17,7 @@ Conversation delivery and SDK lifetime checks run in `tests/korvo_s31_input`.
 
 These checks do not establish physical LCD colors, PSRAM bandwidth, touch
 orientation or actual GDMA timing. Those require the Korvo-1 V1.1 and SUB3.
+
+Snapshot delivery checks exercise capability-only and audio-source-only changes through
+the real adapter and its refresh timer, including queued value ownership and clearing
+back to the default codec source. This catches fields lost between presenter and view.

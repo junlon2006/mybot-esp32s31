@@ -74,6 +74,13 @@ int mybot_media_pipeline_stop(mybot_media_pipeline_t *media) {
     assert(!runtime.service_results_enabled);
     return 0;
 }
+int mybot_media_pipeline_destroy(mybot_media_pipeline_t *media) {
+    (void)media;
+    return 0;
+}
+int mybot_agora_rtc_fini(void) {
+    return 0;
+}
 void mybot_kv_store_deinit(mybot_kv_store_t *store) {
     (void)store;
     kv_deinitialized++;

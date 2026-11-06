@@ -89,6 +89,40 @@ int aosl_mpq_call(aosl_mpq_t queue, aosl_ref_t reference, const char *name,
     (void)count;
     abort();
 }
+aosl_mpq_t aosl_mpq_create_flags(int flags, int priority, int stack, int maximum, const char *name,
+                                 void *init, void *fini, void *context) {
+    (void)flags;
+    (void)priority;
+    (void)stack;
+    (void)maximum;
+    (void)name;
+    (void)init;
+    (void)fini;
+    (void)context;
+    abort();
+}
+int aosl_mpq_destroy_wait(aosl_mpq_t queue) {
+    (void)queue;
+    abort();
+}
+aosl_timer_t aosl_mpq_set_timer(uintptr_t interval, aosl_timer_func_t callback, void *destructor,
+                                uintptr_t argc, ...) {
+    (void)interval;
+    (void)callback;
+    (void)destructor;
+    (void)argc;
+    abort();
+}
+int aosl_mpq_kill_timer(aosl_timer_t timer) {
+    (void)timer;
+    abort();
+}
+int mybot_ringbuf_write(mybot_ringbuf_t buffer, const char *data, int bytes) {
+    (void)buffer;
+    (void)data;
+    (void)bytes;
+    abort();
+}
 uint32_t mybot_announce_get_generation(mybot_announce_t *announce) {
     (void)announce;
     abort();
@@ -101,6 +135,55 @@ int mybot_ringbuf_read(char *data, int bytes, mybot_ringbuf_t buffer) {
     (void)data;
     (void)bytes;
     (void)buffer;
+    abort();
+}
+
+/* USB pipeline creation is unreachable from volume-only controls. */
+mybot_ringbuf_t mybot_ringbuf_create(int bytes) {
+    (void)bytes;
+    abort();
+}
+int mybot_ringbuf_destroy(mybot_ringbuf_t buffer) {
+    (void)buffer;
+    abort();
+}
+int mybot_ringbuf_get_free_size(mybot_ringbuf_t buffer) {
+    (void)buffer;
+    abort();
+}
+int mybot_announce_init(mybot_announce_t *announce) {
+    (void)announce;
+    abort();
+}
+void mybot_announce_deinit(mybot_announce_t *announce) {
+    (void)announce;
+    abort();
+}
+void mybot_announce_stop(mybot_announce_t *announce) {
+    (void)announce;
+    abort();
+}
+bool mybot_announce_is_active(mybot_announce_t *announce) {
+    (void)announce;
+    abort();
+}
+int mybot_announce_read_pcm(mybot_announce_t *announce, int16_t *pcm, int frames,
+                            uint32_t *generation) {
+    (void)announce;
+    (void)pcm;
+    (void)frames;
+    (void)generation;
+    abort();
+}
+int mybot_agora_rtc_send_audio(mybot_translation_direction_t direction, const void *data,
+                               size_t len) {
+    (void)direction;
+    (void)data;
+    (void)len;
+    abort();
+}
+void mybot_device_lifecycle_notify_conversation_ended(mybot_device_lifecycle_t *lifecycle) {
+    (void)lifecycle;
     abort();
 }
 

@@ -55,6 +55,11 @@ static bool descriptor_is_valid(const mybot_platform_descriptor_t *descriptor) {
     return descriptor && wifi_is_valid(descriptor->wifi) &&
            kv_store_is_valid(descriptor->kv_store) && key_is_valid(descriptor->key) &&
            audio_capture_is_valid(descriptor->audio_capture) &&
+           (!descriptor->audio_usb_capture ||
+            audio_capture_is_valid(descriptor->audio_usb_capture)) &&
+           (!descriptor->audio_usb_playback ||
+            audio_playback_is_valid(descriptor->audio_usb_playback)) &&
+           (!!descriptor->audio_usb_capture == !!descriptor->audio_usb_playback) &&
            audio_playback_is_valid(descriptor->audio_playback) &&
            (!descriptor->audio_volume || audio_volume_is_valid(descriptor->audio_volume)) &&
            (!descriptor->https || https_is_valid(descriptor->https)) &&

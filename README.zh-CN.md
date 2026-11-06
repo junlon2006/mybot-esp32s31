@@ -30,7 +30,7 @@
 - Mosaico 使用 ES8311 标准 I2S stereo 和 MCLK256；板级完成 SDK mono PCM 转换。
 - Mosaico 480×480 CO5300 QSPI 屏和 CST9220 触摸使用方屏 LVGL 布局；旧 Korvo 保留 800×480 布局。
 - 原生媒体与面对面界面支持语言选择、启停、本地暂停和实际音量；AI 键同样支持启停。
-  面对面共用一个父会话、两个 RTC 连接和一个 RTM 频道订阅；会议场景提供设置预览。
+  面对面共用一个父会话、两个 RTC 连接和一个 RTM 频道订阅；Mosaico 会议场景支持电脑英语译中文到设备喇叭，同时将设备麦克风中文译英文回传电脑。
 - 提供中英文配对码与 Wi-Fi 配网提示，并在配网页面显示实际热点名称。
 
 ## 支持的板卡
@@ -81,7 +81,9 @@ NVS 中没有 Wi-Fi 凭据时，设备创建名为 `mybot-xxxx` 的配置 AP，�
 屏幕内可调整音量并保存到 NVS。字幕、可滚动全文和本次历史接收实时 RTM 原文/译文；
 详见[翻译界面](docs/PLATFORM_UI.zh-CN.md)。
 
-Mosaico 翻译固件通过 Type-C 提供 CDC 日志串口，USB 声卡不在本次固件中启用。
+Mosaico 翻译固件通过 Type-C 提供 UAC2 声卡与 CDC 日志串口。会议互译同时处理电脑
+音频与板载麦克风，两路译音分别去设备喇叭和电脑 USB 麦克风；USB 与 SDK 边界完成
+48 kHz / 16 kHz 转换。操作见 [USB 接入说明](docs/MOSAICO_USB_AUDIO.zh-CN.md)。
 已通过的 [UAC 最小测试](diagnostics/mosaico_uac/README.zh-CN.md)独立保留，后续用于会议翻译。
 Korvo 专用 [CDC](docs/USB_CDC_PROBE.zh-CN.md) / [Host](docs/USB_HOST_PROBE.zh-CN.md) 探针默认关闭。
 

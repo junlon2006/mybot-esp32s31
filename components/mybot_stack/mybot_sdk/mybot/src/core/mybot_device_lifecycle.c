@@ -942,48 +942,62 @@ static bool ui_language_supported(const char *language) {
     return false;
 }
 
-int mybot_device_lifecycle_set_languages(mybot_device_lifecycle_t *lifecycle, const char *source,
+int mybot_device_lifecycle_set_selection(mybot_device_lifecycle_t *lifecycle,
+                                         mybot_translation_mode_t mode,
+                                         mybot_audio_source_t audio_source, const char *source,
                                          const char *target) {
     if (!lifecycle || aosl_atomic_read(&lifecycle->shutting_down) || lifecycle->storage_fault ||
         lifecycle->cleanup_needed || lifecycle->pending_unknown || lifecycle->conversation_id[0] ||
         lifecycle->local_media_active || lifecycle->journal_present ||
         lifecycle->conversation_requested || lifecycle->start_pending || lifecycle->stop_pending ||
         lifecycle->pairing_requested || state(lifecycle) != MYBOT_DEVICE_STATE_RUNTIME ||
-        !ui_language_supported(source) || !ui_language_supported(target) ||
+        (mode != MYBOT_TRANSLATION_LISTEN && mode != MYBOT_TRANSLATION_LISTEN_SPEAK) ||
+        (audio_source != MYBOT_AUDIO_SOURCE_CODEC && audio_source != MYBOT_AUDIO_SOURCE_USB) ||
+        (audio_source == MYBOT_AUDIO_SOURCE_USB && mode != MYBOT_TRANSLATION_LISTEN_SPEAK) ||
+        ((source == NULL) != (target == NULL)))
+        return -1;
+    if (!source) {
+        source = lifecycle->source_language;
+        target = lifecycle->target_language;
+    }
+    if (!ui_language_supported(source) || !ui_language_supported(target) ||
         strcmp(source, target) == 0)
         return -1;
-    if (strcmp(source, lifecycle->source_language) == 0 &&
-        strcmp(target, lifecycle->target_language) == 0)
+    bool changed_languages = strcmp(source, lifecycle->source_language) != 0 ||
+                             strcmp(target, lifecycle->target_language) != 0;
+    if (!changed_languages && lifecycle->mode == mode && lifecycle->audio_source == audio_source)
         return 0;
     language_record_t record;
     memset(&record, 0, sizeof(record));
     record.version = RECORD_VERSION;
     snprintf(record.source, sizeof(record.source), "%s", source);
     snprintf(record.target, sizeof(record.target), "%s", target);
-    if (mybot_kv_store_set(lifecycle->kv_store, LANGUAGE_KEY, &record, sizeof(record)) < 0) {
+    if (changed_languages &&
+        mybot_kv_store_set(lifecycle->kv_store, LANGUAGE_KEY, &record, sizeof(record)) < 0) {
         storage_failed(lifecycle);
         return -1;
     }
     memcpy(lifecycle->source_language, record.source, sizeof(record.source));
     memcpy(lifecycle->target_language, record.target, sizeof(record.target));
+    lifecycle->mode = mode;
+    lifecycle->audio_source = audio_source;
     lifecycle->error_code[0] = '\0';
     configuration_changed(lifecycle);
     return 0;
 }
 
+int mybot_device_lifecycle_set_languages(mybot_device_lifecycle_t *lifecycle, const char *source,
+                                         const char *target) {
+    if (!lifecycle || !source || !target)
+        return -1;
+    return mybot_device_lifecycle_set_selection(lifecycle, lifecycle->mode, lifecycle->audio_source,
+                                                source, target);
+}
+
 int mybot_device_lifecycle_set_mode(mybot_device_lifecycle_t *lifecycle,
                                     mybot_translation_mode_t mode) {
-    if (!lifecycle || aosl_atomic_read(&lifecycle->shutting_down) || lifecycle->storage_fault ||
-        lifecycle->cleanup_needed || lifecycle->pending_unknown || lifecycle->conversation_id[0] ||
-        lifecycle->local_media_active || lifecycle->journal_present ||
-        lifecycle->conversation_requested || lifecycle->start_pending || lifecycle->stop_pending ||
-        lifecycle->pairing_requested || state(lifecycle) != MYBOT_DEVICE_STATE_RUNTIME ||
-        (mode != MYBOT_TRANSLATION_LISTEN && mode != MYBOT_TRANSLATION_LISTEN_SPEAK))
+    if (!lifecycle)
         return -1;
-    if (lifecycle->mode == mode)
-        return 0;
-    lifecycle->mode = mode;
-    lifecycle->error_code[0] = '\0';
-    configuration_changed(lifecycle);
-    return 0;
+    return mybot_device_lifecycle_set_selection(lifecycle, mode, lifecycle->audio_source, NULL,
+                                                NULL);
 }
