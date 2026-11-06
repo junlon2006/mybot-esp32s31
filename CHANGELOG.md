@@ -2,6 +2,8 @@
 
 ## Unreleased — standalone S31 translation
 
+- Enable fail-fast UBSan by default for USB audio host tests and explicitly in CI, and document concurrency validation limits.
+
 - Check Mosaico's eFuse board revision before pin setup and use the pinned BSP's VCC soft-start sequence.
 
 - Declare Mosaico's explicit 500 mA USB 2.0 bus-powered budget in both USB speeds, with measured-load validation kept separate.

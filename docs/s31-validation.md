@@ -982,3 +982,13 @@ failure ownership. CI runs the suite and checks its formatting/SPDX. Whitespace,
 Chinese incremental build and final S31 checks pass. No device was flashed; actual
 VCC waveform, inrush, eFuse contents and post-ramp peripheral operation still need
 hardware validation.
+
+## Review fix 14: default USB audio sanitizer coverage
+
+USB audio host tests now enable UBSan with fail-fast recovery disabled by default;
+CI explicitly sets the same flags. All nine transport/filter/concurrency scenarios
+pass, and the 22 delivery/workflow tests pass. Whitespace checks pass. This change
+updates host validation only. Threaded mocks do not prove ISR/task race freedom,
+and no successful TSan result is recorded. The optional macOS ASan control run
+failed before main in libpthread/dyld initialization and did not execute application
+tests. Remote CI and real USB scheduling remain separate results.

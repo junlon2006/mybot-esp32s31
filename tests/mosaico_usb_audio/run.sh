@@ -4,7 +4,8 @@ set -eu
 repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 test_build_dir=$(mktemp -d /tmp/mybot-usb-audio.XXXXXX)
 trap 'rm -r -- "$test_build_dir"' EXIT HUP INT TERM
-"${CC:-cc}" -std=c11 -pthread -Wall -Wextra -Werror ${TEST_SANITIZE_FLAGS:-} \
+"${CC:-cc}" -std=c11 -pthread -Wall -Wextra -Werror \
+    ${TEST_SANITIZE_FLAGS:--fsanitize=undefined -fno-sanitize-recover=all} \
     -I"$repo_root/tests/mosaico_usb_audio/mocks" \
     -I"$repo_root/components/mybot_platform/src/internal" \
     -I"$repo_root/components/mybot_stack/mybot_sdk/mybot/include" \
