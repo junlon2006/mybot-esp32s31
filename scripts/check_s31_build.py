@@ -13,8 +13,9 @@ import json
 from pathlib import Path
 import re
 import shlex
-import subprocess
 import sys
+
+from capture_build_source import verify as verify_build_provenance
 
 BOARD_CODECS = {
     "esp-mosaico-v1.2": "CONFIG_CODEC_ES8311_SUPPORT",
@@ -153,6 +154,7 @@ def verify_build(build_dir: Path, language: str) -> dict:
         segments.append({"offset": hex(start), "file": name, "size": size, "sha256": sha256(source)})
     if not segments or description["app_bin"] not in {segment["file"] for segment in segments}:
         raise RuntimeError("flash files must include the application")
+    provenance = verify_build_provenance(build_dir)
     return {
         "schema_version": 1,
         "board": board,
@@ -170,21 +172,9 @@ def verify_build(build_dir: Path, language: str) -> dict:
         "flash_settings": flash["flash_settings"],
         "extra_esptool_args": extra_args,
         "segments": segments,
+        "source": provenance["snapshot"]["source"],
+        "build_provenance": provenance,
     }
-
-
-def source_revision(project_root: Path) -> dict:
-    try:
-        revision = subprocess.run(
-            ["git", "rev-parse", "HEAD"], cwd=project_root, check=True, capture_output=True, text=True
-        ).stdout.strip()
-        dirty = bool(subprocess.run(
-            ["git", "status", "--porcelain", "--untracked-files=normal"], cwd=project_root,
-            check=True, capture_output=True, text=True,
-        ).stdout.strip())
-        return {"revision": revision, "dirty": dirty}
-    except (OSError, subprocess.CalledProcessError):
-        return {"revision": None, "dirty": None}
 
 
 def package(build_dir: Path, merged: Path, language: str) -> dict:
@@ -206,7 +196,6 @@ def package(build_dir: Path, merged: Path, language: str) -> dict:
         "file": merged.name, "flash_offset": "0x0",
         "size": merged.stat().st_size, "sha256": sha256(merged),
     }
-    metadata["source"] = source_revision(Path(__file__).resolve().parent.parent)
     extra_args = metadata["extra_esptool_args"]
     flash_command = [
         "python", "-m", "esptool", "--chip", extra_args["chip"], "--port", "PORT",

@@ -917,3 +917,22 @@ and registration tests pass 39 scenarios. CI runs the new initialization suite.
 The 61 builder/delivery tests pass with Python 3.11; formatting/SPDX, whitespace,
 Chinese incremental firmware build and final S31 checks pass. No device was flashed;
 USB enumeration and reconnect behavior still need hardware testing.
+
+## Review fix 10: bind delivery source to the build
+
+An ordered prebuild step captures the Git revision, dirty state, project build-input
+digest and effective configuration hash. It generates a retained digest in the
+application only when the snapshot changes. After application and flash segments
+complete, a source recheck binds the snapshot to ELF/BIN/configuration/segment hashes.
+The delivery checker consumes this frozen record and validates the embedded digest;
+it never replaces provenance with the packaging checkout's HEAD. Missing or stale
+records require a rebuild. Credentials/configuration contents are not recorded, and
+the source digest explicitly covers project inputs rather than external toolchains.
+
+The real Chinese build and merged-image packaging pass. A no-op build preserves
+ELF, BIN, generated identity and provenance content and timestamps. Host tests cover
+packaging A after checkout B, failed B preserving A, ordinary source edits without
+reconfigure, dirty inputs, mid-build changes and artifact/embedded-digest mismatches.
+All 74 builder/delivery tests pass with Python 3.11; the 22 delivery tests also pass
+with IDF Python 3.10. Embedded Wi-Fi HTML and hidden-index modification regressions
+pass. The final Chinese rebuild and S31 checks pass. No device was flashed.

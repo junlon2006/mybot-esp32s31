@@ -2,6 +2,8 @@
 
 ## Unreleased — standalone S31 translation
 
+- Bind delivery provenance to the source captured during the firmware build and verify its artifact hashes when packaging.
+
 - Advertise USB meeting audio only after the USB audio core initializes successfully, independently of console availability or cable state.
 
 - Derive the composite USB serial number from the hardware MAC, preserving stable device identity across reconnects.
