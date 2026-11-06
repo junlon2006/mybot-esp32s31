@@ -2,7 +2,7 @@
 
 [English](AUDIO_PLAYBACK.md) · [简体中文](AUDIO_PLAYBACK.zh-CN.md)
 
-MyBot 公开音频契约为 16 kHz、mono、signed 16-bit PCM，长度使用帧数。ES8389 adapter 将其映射到四个 16-bit Philips TDM 时隙。采集/播放独立持有 handle，共享 codec/I2S 引用计数，PA 跟随播放。
+MyBot 公开音频契约为 16 kHz、mono、signed 16-bit PCM，长度使用帧数。Mosaico 使用 ES8311 标准 Philips I2S、两个 16-bit 时隙及 MCLK256；Korvo 使用 ES8389 四个 16-bit Philips TDM 时隙，不输出 MCLK。采集/播放独立持有 handle，共享 codec/I2S 引用计数，PA 跟随播放。
 
 共享 PCM buffer 的 FIFO、暂存数据和 worker 栈使用 PSRAM，同步控制留在内部内存。owner 提供有界 sink write，等待 worker 确认后才释放资源，stop 超时保留待清理资源。有限提示音播放完成时等待 FIFO 和 DMA 尾部排空再停止。
 
@@ -10,4 +10,4 @@ MyBot 公开音频契约为 16 kHz、mono、signed 16-bit PCM，长度使用帧�
 
 S31 RTSA 使用 **60 ms** jitter-buffer 帧，区别于源 Ogg 历史编码的 20 ms Opus 包，也区别于驱动 sink 分块。提供匹配 RTSA 之前，20/40 ms 配置会被拒绝。
 
-用户已真机确认基础双向语音。详细参考/麦克风路由、量化音质、回声调优和长稳不在本轮范围。host 测试位于 `tests/korvo_s31_audio`、`tests/pcm_playback_buffer`，结果见[验证记录](s31-validation.md)。总线引脚与操作见[板卡文档](esp32-s31-korvo-1.zh-CN.md)。
+用户已确认 Korvo 基础音频及媒体／面对面运行、Mosaico 独立 UAC 录放，以及 PSRAM 栈修正版（`e279926`）的基础双向会议互译。此后的恢复修复只有 host／构建结果。详细参考/麦克风路由、量化音质、回声调优和长稳不在本轮范围。host 测试位于 `tests/korvo_s31_audio`、`tests/pcm_playback_buffer`，结果见[验证记录](s31-validation.md)。总线引脚与操作见[Mosaico 板卡文档](esp-mosaico-v1.2.zh-CN.md)。

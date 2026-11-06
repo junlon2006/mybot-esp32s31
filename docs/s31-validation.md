@@ -1,8 +1,8 @@
 # S31 validation record
 
-The current development target is ESP-Mosaico CoreBoard V1.2. The latest checks are under [RTC initialization and PSRAM task stacks](#2026-11-06-rtc-initialization-and-psram-task-stacks). Earlier sections describe the revision tested at that time. Use the manifests and checksums beside delivered images for their current binary identity.
+The current development target is ESP-Mosaico CoreBoard V1.2, with Korvo retained as an existing-device profile. Current review corrections are recorded in the [numbered review-fix sections](#review-fix-01-isolate-mosaico-uac-from-korvo). Earlier sections describe the revision tested at that time. Use the build-bound manifests and checksums beside delivered images for their binary identity.
 
-This records local build/host validation and separately attributed hardware feedback. Basic bidirectional audio passed the user's real-board interoperability test. The user subsequently confirmed normal screen display. Detailed TDM channel/reference mapping, quantitative audio quality, the new touch behavior, power sequencing and long-duration stability are not established by those reports.
+This records local build/host validation and separately attributed hardware feedback. The user confirmed the Korvo audio/display baseline, Mosaico diagnostic USB microphone/speaker audio, normal 40-row caption display and basic bidirectional meeting translation after the PSRAM-stack revision. Mosaico touch navigation and start operation also have device-log evidence. These reports precede this review-fix series and do not validate its new recovery, key, USB identity or power changes. Quantitative audio quality, AEC, enumeration/reconnect stability, power/current measurements and endurance still require separate hardware results.
 
 ## User-reported hardware audio test — 2026-10-30
 
@@ -1008,3 +1008,14 @@ capacity/layout regressions. Exactly 307,200 free bytes passes; 307,199 in the
 smaller OTA slot fails. Malformed tables, mismatched flash records and overflows
 are rejected. Whitespace checks pass. Firmware source is unchanged by this host
 delivery-policy fix; no device was flashed.
+
+## Review fix 16: align maintained documentation
+
+Current guides consistently use Mosaico V1.2, the fixed local build/sdkconfig path,
+direct IDF/merge commands, isolated CI variants, frozen source records and the OTA
+margin policy. SDK/board/PSRAM documentation describes meeting routing, dynamic USB
+capability and the static internal reaper. Hardware acceptance is scoped to the
+reported Korvo baseline and Mosaico USB/display/basic meeting evidence; later fixes
+remain host/build results. Historical sections retain their original scope. Local
+file links in all 27 changed Markdown documents and whitespace checks pass. This
+documentation-only correction required no firmware build or device flash.

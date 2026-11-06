@@ -4,7 +4,7 @@
 
 板级启用 Octal PSRAM；target defaults 选择 CPU 320 MHz、PSRAM 200 MHz、普通 malloc 内部优先阈值 2,048 字节和内部保留 65,536 字节。实际占用及长稳需真机测量。
 
-平台音频数据、PCM FIFO/暂存区、允许的任务栈、提示音和 HTTPS wrapper 在生命周期允许时显式使用 PSRAM。LVGL 与两张 RGB framebuffer 使用外部内存；NVS 采用 IDF 的 PSRAM 优先 cache，TLS 使用外部分配。驱动自有 allocator 仍决定能力、对齐和 cache 要求。
+平台音频数据、PCM FIFO／暂存区、允许的任务栈、提示音和 HTTPS wrapper 在生命周期允许时显式使用 PSRAM。LVGL 绘制缓冲使用 PSRAM；Mosaico 保留 40 行局部刷新和内部 DMA 暂存区，Korvo 使用两张外部 RGB framebuffer。NVS 采用 IDF 的 PSRAM 优先 cache，TLS 使用外部分配。驱动自有 allocator 仍决定能力、对齐和 cache 要求。
 
 同步对象、TCB、ISR 状态和会在关闭 cache 时执行 Flash/NVS 操作的栈按要求留在内部。保留池不保证单块连续空间。S31 支持部分 DMA 访问 PSRAM，不能照搬 S3 的所有 DMA 缓冲必须内部规则；遵循各 S31 外设驱动以及 RGB cache/VSYNC 同步要求。
 
@@ -19,8 +19,12 @@ S31 的 AOSL 适配层对明确审计过的任务使用 PSRAM 栈：音频采集
 共减少约 120 KiB 内部栈需求；每个任务原有栈大小和优先级不变。
 
 NVS 持久化由 `control_mpq` 执行，其栈继续内部；不透明的 RTSA `AgoraRtc`、
-`AgoraRtcCb` 等任务也保留内部策略。外部栈使用 IDF WithCaps 创建/删除配对，退出时
-依据实际栈地址判断，无须依赖可变化的任务名。任务创建日志显示栈位置，失败时记录
+`AgoraRtcCb` 等任务也保留内部策略。退出时依据实际栈地址选择配套的删除方式。
+适配器在创建第一个 PSRAM AOSL 任务前，先准备永久的内部静态回收任务：16 项句柄队列、
+TCB 和对齐的 2 KiB 栈，合计约占 2.5 KiB 内部内存。工作任务返回／主动退出时入队并挂起，
+回收任务调用 IDF 的外部 WithCaps 删除路径，等目标离开所有核心后释放。队列满时等待，
+不丢弃所有权；退出阶段不再临时创建任务或分配堆。回收任务启动失败会拒绝工作任务创建，
+已就绪的回收任务跨 AOSL 重启保留。任务创建日志显示栈位置，失败时记录
 所请求的栈大小及内部/PSRAM 空闲量、最大连续块。
 
 SDK PCM 队列、USB 媒体管线对象、字幕、RTC 事件拷贝、HTTPS/TLS 和 codec 暂存区已

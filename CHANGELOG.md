@@ -2,6 +2,8 @@
 
 ## Unreleased — standalone S31 translation
 
+- Align build/release instructions, board capabilities and validation status with the current Mosaico target and fixed local build directory.
+
 - Enforce at least 300 KiB application-image headroom against the built OTA partition capacities during local and CI delivery checks.
 
 - Enable fail-fast UBSan by default for USB audio host tests and explicitly in CI, and document concurrency validation limits.

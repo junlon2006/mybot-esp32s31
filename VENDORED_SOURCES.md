@@ -8,7 +8,7 @@ License terms are recorded in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). 
 
 | Path | Source | Pinned baseline |
 | --- | --- | --- |
-| `components/mybot_stack/mybot_sdk/mybot` | [junlon2006/mybot](https://github.com/junlon2006/mybot) | project-maintained V2VT media/face-to-face translation fork of v1.3.0 / `baf41bac3b6ca25bad9820f9fc857c94698607d8` |
+| `components/mybot_stack/mybot_sdk/mybot` | [junlon2006/mybot](https://github.com/junlon2006/mybot) | project-maintained V2VT media/face-to-face/meeting translation fork of v1.3.0 / `baf41bac3b6ca25bad9820f9fc857c94698607d8` |
 | `components/mybot_stack/aosl` | [AgoraIO-Community/aosl](https://github.com/AgoraIO-Community/aosl) | v1.0.4 plus fixes, `84e086084ebcd0ae2455a0ce5721950c5fe2e656` |
 | `components/esp-wifi-connect` | [78/esp-wifi-connect](https://github.com/78/esp-wifi-connect) | 3.2.2, `c24b97c194e6b4a1d7be0237b3c28980661cac1e` |
 | `components/esp_codec_dev` | ESP Component Registry / [espressif/esp-adf](https://github.com/espressif/esp-adf) | complete 1.5.9 source release, `df1182ab7ee63eb4e43304b526b59ed2d49b89f3`; registry file checksums verified |
@@ -16,7 +16,7 @@ License terms are recorded in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). 
 | `components/esp_lvgl_port` | [espressif/esp-bsp](https://github.com/espressif/esp-bsp), `components/esp_lvgl_port` | 2.8.0~1 runtime/display subset, `d14ff131266bf1392efff88db72cb4638897507c`; inherited integration corrections in `PATCHES.md`, local CMake source selection |
 | `components/mybot_platform/boards/esp32-s31-korvo-1/reference/esp32_s31_adc_calibration.c` | [official S31 BSP](https://github.com/espressif/esp-dev-kits/tree/bd4d4ac18657e73583af3d7c0b0a23c3cddf3735/examples/esp32-s31-korvo/examples/common_components/esp32_s31_korvo) | `bd4d4ac18657e73583af3d7c0b0a23c3cddf3735`; unchanged source, integration header maintained locally |
 
-MyBot is deliberately customized for standalone single-route V2VT listen translation: device-selected languages, route validation, publisher-only subscription, durable session cleanup and a dedicated UI contract. Its existing cloud-AEC MIC/reference packing, G.722 and 60 ms cadence are retained. See `components/mybot_stack/mybot_sdk/TRANSLATION.md`. AOSL, codec and LVGL source snapshots remain unchanged. The inherited LVGL-port runtime/display subset and its existing lifecycle corrections are retained unchanged from the imported baseline; its `PATCHES.md` records those corrections. `components/mybot_stack/aosl` builds the portable ESP-IDF HAL from its retained `esp32-s3` source directory; the component CMake wrapper and `s31_port/` supply S31 configuration and OS-name overrides.
+MyBot maintains V2VT media, face-to-face and bidirectional USB meeting translation: device-selected languages, validated per-direction routes, publisher-only subscription, durable session cleanup and a dedicated UI contract. Its cloud-AEC MIC/reference packing, G.722 and 60 ms cadence are retained. See `components/mybot_stack/mybot_sdk/TRANSLATION.md`. Original AOSL, codec and LVGL source snapshots remain unchanged. The inherited LVGL-port runtime/display subset and its existing lifecycle corrections are retained from the imported baseline; its `PATCHES.md` records those corrections. `components/mybot_stack/aosl` builds the portable ESP-IDF HAL from its retained `esp32-s3` source directory; the project wrapper and `s31_port/` supply S31 configuration, OS naming, audited PSRAM stacks and static task reclamation.
 
 ## Bundled RTSA
 
@@ -143,3 +143,6 @@ The S31 AOSL component wrapper force-includes a project task-stack adapter only 
 `platform/src/esp32-s3/aosl_hal_thread.c`. Audited application workers use PSRAM stacks;
 control and vendor RTSA tasks retain internal stacks. Matching deletion is selected by
 actual stack placement. The original AOSL source bytes and RTSA binary remain unchanged.
+PSRAM AOSL self-exit transfers the task to a permanent static internal reaper, prepared
+before any PSRAM worker. It uses IDF's external WithCaps deletion protocol and allocates
+no temporary task at exit. The queue, TCB and aligned 2 KiB reaper stack stay internal.

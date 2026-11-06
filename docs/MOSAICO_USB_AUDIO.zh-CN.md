@@ -69,7 +69,11 @@ Mosaico V1.2 固件采用固定的 USB 2.0 总线供电策略：FS/HS 配置描�
 ## 构建与烧录
 
 ```sh
-idf.py --preview -B build/korvo-s31 build
+idf.py --preview -B build/korvo-s31 \
+  -DMYBOT_BOARD=esp-mosaico-v1.2 \
+  -DMYBOT_MOSAICO_UAC_TEST=OFF \
+  -DSDKCONFIG=build/korvo-s31/sdkconfig \
+  -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;ci/ptime60.defaults" build
 ```
 
 固件仍为 `build/korvo-s31/mybot_esp32s31.bin`。按住 BOOT 开机进入下载模式，使用实际
@@ -89,10 +93,11 @@ idf.py --preview -B build/korvo-s31 -p 实际运行时串口 monitor
 
 ## 日志与验收范围
 
-运行时 CDC 通常为 `/dev/cu.usbmodemMOSAICO_V124`，以本机实际枚举为准：
+运行时 USB 序列号为 `MOSAICO-` 加这台设备的 MAC，macOS 端口随设备身份枚举。
+使用 `ls /dev/cu.usbmodem*` 查询，选取当前应用 CDC；它与 ROM 下载端口不同：
 
 ```sh
-idf.py --preview -B build/korvo-s31 -p /dev/cu.usbmodemMOSAICO_V124 monitor
+idf.py --preview -B build/korvo-s31 -p RUNTIME_PORT monitor
 ```
 
 `ready=1` 只表示 USB 已配置且未挂起。`speaker_open=1` 表示电脑输出流已打开，
@@ -120,6 +125,7 @@ RTC 转发任务应使用 PSRAM，`AgoraRtc` 保留内部栈。若 vendor RTC �
 期间持续新增的错误。不要把收发字节数等同于音质或长稳验证。
 
 2026-11-06 用户先确认会议听译能播放中文译音，随后在 PSRAM 任务栈修正版上报告
-双向会议测试通过，记录为当前固件的功能实机验证。量化音质、AEC 和长时间运行仍需
-各自验证。先前单向听译镜像保存在 `build/korvo-s31/meeting-listen-passed/`，验证细节见
+双向会议测试通过，对应功能验收基线 `e279926`。此后的 review 修复只有 host 测试和
+中文构建结果，尚未重新真机验收。量化音质、AEC、重连、长稳、USB 电流与 VCC 软启动
+仍需各自验证。先前单向听译镜像保存在 `build/korvo-s31/meeting-listen-passed/`，验证细节见
 [s31-validation.md](s31-validation.md)。独立诊断的 `read_status.py` 不适用于本固件。

@@ -70,11 +70,13 @@ idf.py --preview -B build/korvo-s31 -p /dev/cu.usbmodem144101 flash
 启动后 Type-C 会重新枚举为 `MyBot Mosaico` 复合设备，包含 UAC2 音频和 CDC 日志；端口号可能变化。监视应用日志：
 
 ```sh
-idf.py --preview -B build/korvo-s31 -p /dev/cu.usbmodem实际端口 monitor
+idf.py --preview -B build/korvo-s31 -p RUNTIME_PORT monitor
 ```
 
 应用 CDC 在板级准备时启动，无法提供此前的 ROM / bootloader 日志。CDC 不实现自动进入
-ROM 下载，后续烧录同样可用 BOOT 手动进入。拔掉 USB 不影响设备独立运行。
+ROM 下载，后续烧录同样可用 BOOT 手动进入。USB 序列号为 `MOSAICO-` 加设备 MAC，
+每台板的运行时端口由 macOS 实际枚举决定，不能沿用旧固件的固定串口名称。
+拔掉 USB 不影响媒体／面对面独立运行；会议翻译依赖 USB 音频连接。
 烧录使用 `partitions/v2/16m.csv`，与 UAC 诊断分区不同；无需执行整片擦除。
 
 会议互译将电脑下行音频送往 LISTEN Agent，在板载喇叭播放译音；板载麦克风送往
@@ -99,8 +101,12 @@ AI 键短按与当前场景的开始/结束动作一致，长按 3 秒请求重�
 
 ## 验证范围与来源
 
-用户已确认独立 48 kHz UAC 诊断的麦克风采集和喇叭播放正常。用户也已确认 40 行刷新版本的字幕显示正常，触摸导航和启动操作已由实机日志确认。
-16 kHz 译音质量、Cloud AEC、长稳和 USB 会议路由仍需各自验证。
+用户已确认独立 48 kHz UAC 诊断的麦克风和喇叭正常。翻译固件已确认的 Mosaico 功能为
+PSRAM 栈修正版（`e279926`）的基础双向会议：电脑听译到喇叭、麦克风译音回传电脑；
+40 行刷新缓冲的字幕显示也已确认正常。触摸导航和启动操作另有实机日志。
+媒体／面对面已实现于本板，较早的独立实机通过记录来自 Korvo。
+后续 review 修复目前只有 host 测试和中文构建结果，尚未重新真机验收。
+音质、Cloud AEC、重连／长稳、USB 电流及修订后的 VCC 软启动仍需单独测量或验证。
 SPI 刷新发生超时后会停止继续提交，保留尚未完成的 DMA 缓冲；本版显示故障需要重启恢复。
 当前宿主/构建结果记录在 [s31-validation.md](s31-validation.md)。
 
@@ -109,4 +115,5 @@ SPI 刷新发生超时后会停止继续提交，保留尚未完成的 DMA 缓�
 - [固定版本官方 BSP](https://github.com/esp-mosaico/esp-mosaico-bsp/tree/8ce87a7ef130f946de4f84f6a5a20db1d8982605)
 
 采用必要引脚、eFuse 版本映射、供电软启动和 CO5300 初始化序列，保留其 Apache-2.0 版权。没有引入要求 IDF 6.2 的整套 BSP，
-也没有修改官方 codec 1.5.9、RTSA 或 AOSL 输入。CO5300 2.2.0、CST9220 0.1.0 由组件管理器固定下载。
+官方 codec 1.5.9、RTSA 和 AOSL 上游源码保持不变；AOSL 的组件包装及 S31 适配器由工程维护。
+CO5300 2.2.0、CST9220 0.1.0 由组件管理器固定下载。

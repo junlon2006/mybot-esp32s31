@@ -8,6 +8,7 @@
 `mybot-esp32s31` 是基于 ESP-IDF 的独立 V2VT 翻译固件，运行于
 **ESP-Mosaico CoreBoard V1.2**，后续设计以此为目标板。媒体翻译将板载麦克风音频送往云端，并通过板载喇叭播放译音，
 默认中文译英文。面对面场景支持中文与英文轮流交流，点击语言按钮切换麦克风方向。
+Mosaico 会议互译将电脑原声的译音送往设备喇叭，并通过 USB 将板载麦克风的译音送回电脑。
 工程维护 MyBot 翻译 SDK 分支及板级、网络、音频、显示和生命周期集成。
 开发 API 为 `https://mybot.sh3t.agoralab.co/api`。
 
@@ -39,8 +40,11 @@
 480×480 CO5300 屏和 CST9220 触摸。沿用 `partitions/v2/16m.csv`；128 MB NAND 暂不使用。
 旧 `esp32-s31-korvo-1` profile 保留。两者都不启用视频。
 
-用户已确认 Mosaico 独立 UAC 测试的麦克风和喇叭正常，并确认 40 行刷新版本的字幕
-显示正常；触摸导航和启动操作有实机日志。16 kHz 译音质量、Cloud AEC 和长稳仍需验证。操作见[板卡说明](docs/esp-mosaico-v1.2.zh-CN.md)，
+旧 Korvo 媒体／面对面已有用户确认基线。Mosaico 用户确认了 PSRAM 栈修正版（`e279926`）的
+基础 USB 双向会议互译，以及 40 行刷新缓冲的正常字幕显示；触摸导航及启动请求有实机日志。
+独立 UAC 麦克风／喇叭测试另有通过记录。
+此后的 review 修复已有 host 测试和中文构建结果，尚未重新进行真机验收。
+音质、Cloud AEC、重连／长稳、USB 电流及修订后的 VCC 软启动仍需单独验证。操作见[板卡说明](docs/esp-mosaico-v1.2.zh-CN.md)，
 范围见[验证记录](docs/s31-validation.md)。
 
 ## 构建
@@ -63,8 +67,8 @@ idf.py --preview -B build/korvo-s31 \
   -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;ci/ptime60.defaults" build
 ```
 
-CI 在独立 job 中构建 Mosaico／Korvo 的中英文变体。[交付文档](docs/RELEASING.zh-CN.md)说明打包 builder 和交付校验；
-本地开发使用上面的直接构建命令。直接烧录命令和板级硬件信息见
+CI 在独立 job 中构建 Mosaico／Korvo 的中英文变体。[交付文档](docs/RELEASING.zh-CN.md)说明在同一本地构建目录中
+合并镜像、保留构建来源并执行交付校验。直接烧录命令和板级硬件信息见
 [板卡说明](docs/esp-mosaico-v1.2.zh-CN.md)。
 
 固定版本 RTSA 头文件和库随工程提供于 `components/mybot_stack/agora_rtc`，无需下载或
@@ -84,7 +88,7 @@ NVS 中没有 Wi-Fi 凭据时，设备创建名为 `mybot-xxxx` 的配置 AP，�
 Mosaico 翻译固件通过 Type-C 提供 UAC2 声卡与 CDC 日志串口。会议互译同时处理电脑
 音频与板载麦克风，两路译音分别去设备喇叭和电脑 USB 麦克风；USB 与 SDK 边界完成
 48 kHz / 16 kHz 转换。操作见 [USB 接入说明](docs/MOSAICO_USB_AUDIO.zh-CN.md)。
-已通过的 [UAC 最小测试](diagnostics/mosaico_uac/README.zh-CN.md)独立保留，后续用于会议翻译。
+已通过的 [UAC 最小测试](diagnostics/mosaico_uac/README.zh-CN.md)作为独立 USB 音频参考保留。
 Korvo 专用 [CDC](docs/USB_CDC_PROBE.zh-CN.md) / [Host](docs/USB_HOST_PROBE.zh-CN.md) 探针默认关闭。
 
 使用 `idf.py --preview -B build/korvo-s31 menuconfig` 的 `mybot` 菜单选择产品语言、
