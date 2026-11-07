@@ -12,7 +12,7 @@
 
 Mosaico 使用 ES8311/I2S stereo/MCLK256；Korvo 使用 ES8389/TDM4。采集和播放独立使用引用计数的 codec 总线，对 SDK 保持 16 kHz、mono、signed-16 PCM，长度使用**帧数**。提示音结束需 drain。stop/destroy 有界等待；超时保留资源和所有权，后续初始化/清理可恢复。
 
-板级 panel 文件拥有面板及 DMA 缓冲；Mosaico 使用独立绘制／暂存区的 QSPI 局部刷新，Korvo 使用 RGB framebuffer／VSYNC。LVGL adapter 协调刷新、触摸及共享 view 生命周期。语言选择直接调用非阻塞的 `mybot_ui_submit()`，按值复制命令并检查是否接收；音量、暂停和按键事件经 S31 输入工作线程提交。显示回调不执行网络操作，detach 后不再发出旧回调。显示板自动使用共享原生 LVGL 翻译界面，场景行为见[界面说明](PLATFORM_UI.zh-CN.md)。
+板级 panel 文件拥有面板及 DMA 缓冲；Mosaico 使用独立绘制／暂存区的 QSPI 局部刷新，Korvo 使用 RGB framebuffer／VSYNC。LVGL adapter 协调刷新、触摸及共享 view 生命周期。语言、模式和方向选择直接调用非阻塞的 `mybot_ui_submit()`，按值复制命令并检查是否接收；音量、暂停和按键事件经 S31 输入工作线程提交。显示回调不执行网络操作，detach 后不再发出旧回调。显示板自动使用共享原生 LVGL 翻译界面，场景行为见[界面说明](PLATFORM_UI.zh-CN.md)。
 
 Mosaico 的 CO5300 QSPI/CST9220 adapter 使用 480×480 方屏布局和内部 DMA 暂存，
 RGB/GT1151 路径仅属于旧 Korvo。AI 键短按启停、长按配网，Type-C 提供复合 UAC2 音频及 CDC 日志。会议 LISTEN 输入电脑音频并播放到 codec，SPEAK 输入板载 MIC 并将译音送回 USB IN。

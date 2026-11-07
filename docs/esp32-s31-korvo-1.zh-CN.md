@@ -57,7 +57,7 @@ idf.py --preview -B build/korvo-s31 -p PORT flash monitor
 | ADC 按键 | GPIO42 电阻梯，使用官方软件校准源 |
 | 分区 | `partitions/v2/16m.csv`，两个 `0x3f0000` OTA slot |
 
-按官方文档要求使用 TDM，未照搬固定 factory BSP 的标准 stereo I2S 初始化。ES8389 `use_mclk=false`、`no_dac_ref=false`，适配器检查 STDM 寄存器，播放映射时隙、采集选定麦克风时隙。名义 BCLK 为 1.024 MHz、WS 为 16 kHz，未声称经仪器测量。
+按官方文档要求使用 TDM，未照搬固定 factory BSP 的标准 stereo I2S 初始化。ES8389 `use_mclk=false`、`no_dac_ref=false`，适配器检查 STDM 寄存器，将单声道播放样本复制到全部四个 TDM 时隙，并读取麦克风时隙 0。名义 BCLK 为 1.024 MHz、WS 为 16 kHz，未声称经仪器测量。
 
 基础音频互通通过不代表双麦/参考时隙归属、量化音质或长稳已验收；本地 AEC/波束成形/唤醒、视频、SD/USB 音频应用和低功耗均未移植。原生 USB CDC 仅有默认关闭的链路诊断。媒体翻译沿用板载 MIC 与扬声器路径，新界面与本地暂停需要各自的实机验收。
 

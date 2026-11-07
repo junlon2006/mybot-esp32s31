@@ -44,10 +44,13 @@ MYBOT_API const mybot_ui_language_t *mybot_ui_languages(size_t *count);
  * Copy a command into the bounded asynchronous control mailbox without waiting.
  * Returns 0 when accepted, -1 for invalid input, a full mailbox, contention or
  * a runtime which is not ready/is stopping. The caller retains its buffer.
- * Acceptance does not guarantee application: languages/mode/source require idle state;
- * pause and direction require an active session when the control owner applies
- * the command. Direction applies only to face-to-face and resumes local audio.
- * Observe LCD content for the actual languages, mode, source, direction, volume and pause.
+ * Acceptance does not guarantee application. Languages and mode/audio-source
+ * selection require an idle state. Volume is applied whenever the runtime accepts
+ * commands. Pause requires an active RTC translation session; face-to-face also
+ * requires an explicit direction. Direction applies only to the codec-backed
+ * face-to-face session, resumes local audio, and is rejected for USB meetings.
+ * Observe LCD content for the actual languages, mode, source, direction, volume
+ * and pause.
  */
 MYBOT_API int mybot_ui_submit(const mybot_ui_command_t *command);
 

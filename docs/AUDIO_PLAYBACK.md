@@ -2,7 +2,7 @@
 
 [English](AUDIO_PLAYBACK.md) · [简体中文](AUDIO_PLAYBACK.zh-CN.md)
 
-The public MyBot audio contract is 16 kHz mono signed 16-bit PCM with frame counts. Mosaico maps that PCM to ES8311 standard Philips I2S with two 16-bit slots and MCLK256; Korvo maps it to ES8389 four-slot 16-bit Philips TDM without MCLK. Capture/playback have independent handles and share reference-counted codec/I2S resources; the PA follows playback.
+The public MyBot audio contract is 16 kHz mono signed 16-bit PCM with frame counts. Mosaico maps that PCM to ES8311 standard Philips I2S with two 16-bit slots and MCLK256, duplicating playback into both slots and capturing slot 0. Korvo duplicates playback PCM into all four ES8389 16-bit Philips TDM slots without MCLK and captures slot 0. Capture/playback have independent handles and share reference-counted codec/I2S resources; the PA follows playback.
 
 The shared PCM buffer uses PSRAM for its FIFO, staging data and worker stack while synchronization state remains internal. The owner supplies bounded sink writes, waits for worker acknowledgement before releasing resources and retains pending resources when stop times out. Finite prompts wait for FIFO and DMA-tail drain before stopping playback.
 

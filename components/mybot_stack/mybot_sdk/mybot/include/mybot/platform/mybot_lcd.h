@@ -97,12 +97,12 @@ typedef struct {
     char pair_code[MYBOT_LCD_PAIR_CODE_CAPACITY];
     /**
      * Optional screen indicators, meaningful on MYBOT_LCD_SCREEN_IN_CONVERSATION.
-     * Other screens should
-     * normally be rendered with MYBOT_LCD_INDICATOR_NONE. The listening,
-     * thinking and speaking bits are mutually exclusive server-state overlays.
+     * Other screens should normally be rendered with
+     * MYBOT_LCD_INDICATOR_NONE. The listening, thinking and speaking bits are
+     * mutually exclusive server-state overlays.
      *
-     * @note The field is appended to the 1.1.0 content structure. Build the
-     *       SDK and platform LCD adapter against the same public header.
+     * @note This field was appended in SDK 1.1.0. Build the SDK and platform
+     *       LCD adapter against the same public header and SDK version.
      */
     uint32_t indicators;
     /** Media: input/output; face-to-face and meeting: my/other language. NUL-terminated. */

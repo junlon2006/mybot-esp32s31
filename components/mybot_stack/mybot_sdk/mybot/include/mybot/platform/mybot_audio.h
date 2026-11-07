@@ -155,11 +155,12 @@ typedef struct {
 /* ----------------------------------------------------------
  * Device volume operations (optional hook interface)
  *
- * The SDK owns volume control; there is no application-facing volume API.
- * When a device volume implementation is registered, the SDK drives real hardware
+ * The SDK owns volume policy. Applications request logical volume through
+ * mybot_ui_submit() and do not access the hardware controls directly. When a
+ * device volume implementation is registered, the SDK drives real hardware
  * (codec / amplifier / mixer) through set_volume()/get_volume(). Without a
- * registered implementation the SDK falls back to a software media gain applied to
- * the playback PCM stream.
+ * registered implementation the SDK falls back to a software media gain applied
+ * to the playback PCM stream.
  * ---------------------------------------------------------- */
 
 /**
