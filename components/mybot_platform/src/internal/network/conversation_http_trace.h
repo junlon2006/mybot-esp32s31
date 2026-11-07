@@ -7,7 +7,8 @@
 
 typedef struct mybot_conversation_http_trace mybot_conversation_http_trace_t;
 
-/* Optional diagnostics only. All functions accept NULL after allocation failure.
+/* Project HTTPS diagnostics. The platform currently attaches one trace to every
+ * native HTTPS connection. All functions accept NULL after allocation failure.
  * Feed only bytes actually accepted by TLS, never the attempted write length.
  * One trace belongs to one sequential HTTP connection. */
 mybot_conversation_http_trace_t *mybot_conversation_http_trace_create(void);
