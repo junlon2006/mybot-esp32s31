@@ -999,7 +999,7 @@ void redraw() {
         confirmation(true);
         break;
     case Page::Complete:
-        heading(tr("翻译已结束", "Translation ended"));
+        heading(tr("翻译已结束", "Translation ended"), Home);
         label(s_view.body, margin(), 112, content_width(), 100,
               tr("服务端已确认结束", "The service has confirmed the session ended"),
               &mybot_lvgl_font_28);

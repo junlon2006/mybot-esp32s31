@@ -558,6 +558,8 @@ static void test_face_flow(int width) {
     CHECK(events.back() == MYBOT_KEY_EVENT_CONVERSATION_STOP);
     content.screen = MYBOT_LCD_SCREEN_READY;
     update(display, content);
+    CHECK(find(&display.root, tr("翻译已结束", "Translation ended")));
+    CHECK(find(&display.root, tr("< 返回", "< Back")));
     click(find(&display.root, tr("查看本次字幕", "View captions")));
     CHECK(find(&display.root, tr("英语  >  中文", "English  >  Chinese")));
     click(find(&display.root, tr("返回结束页", "Back to summary")));
@@ -580,6 +582,16 @@ static void test_face_flow(int width) {
     update(display, content);
     CHECK(find(&display.root, tr("媒体翻译", "Media translation")));
     CHECK(!find(&display.root, tr("面对面翻译", "Face-to-face translation")));
+    click(find(&display.root, tr("更多 ...", "More ...")));
+    click(find(&display.root, tr("结束这次翻译", "End this translation")));
+    click(find(&display.root, tr("结束翻译", "End translation")));
+    content.screen = MYBOT_LCD_SCREEN_TRANSLATION_STOPPING;
+    update(display, content);
+    content.screen = MYBOT_LCD_SCREEN_READY;
+    update(display, content);
+    CHECK(find(&display.root, tr("翻译已结束", "Translation ended")));
+    click(find(&display.root, tr("< 返回", "< Back")));
+    CHECK(find(&display.root, home_action(width)));
     mybot_lvgl_view_destroy();
     CHECK(!live && !timer && display.root.children.empty());
     std::puts(
