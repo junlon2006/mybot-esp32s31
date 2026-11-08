@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 #include "host_input.h"
 #include "mybot_platform/board.h"
+#include "mybot_platform/factory_reset.h"
 #ifndef TEST_MOSAICO
 #define TEST_MOSAICO 0
 #endif
@@ -56,6 +57,7 @@ static bool stop_worker;
 static std::atomic<int64_t> time_us;
 static std::atomic<mybot_state_t> state{MYBOT_STATE_READY};
 static std::atomic<unsigned> provisioning;
+static std::atomic<unsigned> factory_resets;
 static unsigned adc_news, task_news;
 static std::string failure;
 static unsigned cleanup_failures;
@@ -198,6 +200,9 @@ int mybot_ui_submit(const mybot_ui_command_t *command) {
 void mybot_board_request_wifi_provisioning() {
     ++provisioning;
 }
+void mybot_factory_reset_request() {
+    ++factory_resets;
+}
 int mybot_korvo_s31_keys_start();
 const mybot_key_ops_t *mybot_korvo_s31_key_ops();
 }
@@ -254,8 +259,7 @@ int main(int argc, char **argv) {
     CHECK(ops->init(&ctx, emit, &events) < 0 && !ctx); // source not prepared
     if (scenario != "behavior" && scenario != "ordering" && scenario != "touch" &&
         scenario != "touch_stale" && scenario != "touch_ordering" && scenario != "ui_controls" &&
-        scenario != "ui_commands" && scenario != "late_cancel" && scenario != "gpio_behavior" &&
-        scenario != "physical_stale") {
+        scenario != "ui_commands" && scenario != "late_cancel" && scenario != "gpio_behavior") {
         failure = scenario == "cleanup_retry" ? "channel" : scenario;
         if (scenario == "partial_adc_new") {
             failure = "adc_new";
@@ -278,7 +282,7 @@ int main(int argc, char **argv) {
     CHECK(ops->init(&other, emit, &events) < 0 && !other);
     if (scenario == "gpio_behavior") {
         feed(1340, 170);
-        CHECK(events.empty() && provisioning == 0); // held through boot is ignored
+        CHECK(events.empty() && provisioning == 0 && factory_resets == 0);
     }
     feed(2000, 4);
     if (scenario == "gpio_behavior") {
@@ -286,82 +290,31 @@ int main(int argc, char **argv) {
         feed(2000, 4);
         CHECK(events.empty()); // bounce
         press(1340);
-        CHECK(events.size() == 1 && events.back() == MYBOT_KEY_EVENT_CONVERSATION_START);
+        CHECK(events.empty() && provisioning == 0 && factory_resets == 0);
         state = MYBOT_STATE_IN_CONVERSATION;
         press(1340);
-        CHECK(events.size() == 2 && events.back() == MYBOT_KEY_EVENT_CONVERSATION_STOP);
-        state = MYBOT_STATE_START_UNKNOWN;
-        press(1340);
-        CHECK(events.size() == 2);
+        CHECK(events.empty() && provisioning == 0 && factory_resets == 0);
+        feed(1340, 140);
+        feed(2000, 4);
+        CHECK(events.empty() && provisioning == 0 && factory_resets == 0);
         feed(1340, 160);
         CHECK(provisioning == 1);
         feed(1340, 20);
         feed(2000, 4);
-        CHECK(events.size() == 2 && provisioning == 1); // no click after long hold
+        CHECK(events.empty() && provisioning == 1 && factory_resets == 0);
+        feed(1340, 8);
+        feed(1340, 490);
+        CHECK(provisioning == 2 && factory_resets == 0); // reset requires ten full seconds
+        feed(1340, 20);
+        CHECK(provisioning == 2 && factory_resets == 1);
+        feed(1340, 20);
+        CHECK(factory_resets == 1);
+        feed(2000, 4);
+        CHECK(events.empty());
         ops->destroy(ctx);
         feed(1340, 160);
         feed(2000, 4);
-        CHECK(provisioning == 2 && events.size() == 2); // provisioning works detached
-        CHECK(ops->init(&ctx, emit, &events) == 0);
-    } else if (scenario == "physical_stale") {
-        state = MYBOT_STATE_IN_CONVERSATION;
-        feed(1340, 8);
-        state = MYBOT_STATE_READY;
-        feed(2000, 4);
-        CHECK(events.empty()); // A stop press cannot become a start after the session ends.
-        feed(1340, 8);
-        state = MYBOT_STATE_IN_CONVERSATION;
-        feed(2000, 4);
-        CHECK(events.empty()); // A start press cannot stop a session opened by another input.
-        feed(1340, 8);
-        state = MYBOT_STATE_READY;
-        feed(1340, 1);
-        state = MYBOT_STATE_IN_CONVERSATION;
-        feed(2000, 4);
-        CHECK(events.empty()); // Returning to the pressed state cannot revive an expired gesture.
-        state = MYBOT_STATE_READY;
-        feed(1340, 8);
-        state = MYBOT_STATE_PAIRING;
-        feed(1340, 1);
-        state = MYBOT_STATE_READY;
-        feed(2000, 4);
-        CHECK(events.empty());
-        feed(1340, 8);
-        ops->destroy(ctx);
-        CHECK(ops->init(&ctx, emit, &events) == 0);
-        feed(2000, 4);
-        CHECK(events.empty()); // SDK reattachment cannot inherit a physical press.
-        ops->destroy(ctx);
-        feed(1340, 8);
-        CHECK(ops->init(&ctx, emit, &events) == 0);
-        feed(2000, 4);
-        CHECK(events.empty()); // A detached press stays invalid after attachment.
-        state = MYBOT_STATE_TRANSLATION_STARTING;
-        feed(1340, 8);
-        state = MYBOT_STATE_IN_CONVERSATION;
-        feed(2000, 4);
-        CHECK(events.size() == 1 && events.back() == MYBOT_KEY_EVENT_CONVERSATION_STOP);
-        state = MYBOT_STATE_TRANSLATION_STARTING;
-        feed(1340, 8);
-        state = MYBOT_STATE_CLEANUP_PENDING;
-        feed(2000, 4);
-        CHECK(events.size() == 2 && events.back() == MYBOT_KEY_EVENT_CONVERSATION_STOP);
-        state = MYBOT_STATE_READY;
-        press(1340);
-        press(1340);
-        CHECK(events.size() == 4 && events[2] == MYBOT_KEY_EVENT_CONVERSATION_START &&
-              events[3] == MYBOT_KEY_EVENT_CONVERSATION_START);
-        state = MYBOT_STATE_IN_CONVERSATION;
-        press(1340);
-        press(1340);
-        CHECK(events.size() == 6 && events[4] == MYBOT_KEY_EVENT_CONVERSATION_STOP &&
-              events[5] == MYBOT_KEY_EVENT_CONVERSATION_STOP);
-        ops->destroy(ctx);
-        state = MYBOT_STATE_STOPPED;
-        feed(TEST_MOSAICO ? 1340 : 1870, 170);
-        feed(2000, 4);
-        CHECK(events.size() == 6 &&
-              provisioning == 1); // Board-owned long provisioning is unchanged.
+        CHECK(provisioning == 3 && factory_resets == 1 && events.empty());
         CHECK(ops->init(&ctx, emit, &events) == 0);
     } else if (scenario == "touch") {
         tap();
@@ -555,18 +508,20 @@ int main(int argc, char **argv) {
         feed(2000, 1);
         CHECK(events.size() == 3 && events.back() == MYBOT_KEY_EVENT_VOLUME_DOWN);
         state = MYBOT_STATE_TRANSLATION_STARTING;
-        press(1340);
+        button(MYBOT_KEY_EVENT_CONVERSATION_STOP);
+        feed(2000, 1);
         CHECK(events.size() == 4 && events.back() == MYBOT_KEY_EVENT_CONVERSATION_STOP);
         state = MYBOT_STATE_CLEANUP_PENDING;
-        press(1340);
+        button(MYBOT_KEY_EVENT_CONVERSATION_STOP);
+        feed(2000, 1);
         CHECK(events.size() == 5 && events.back() == MYBOT_KEY_EVENT_CONVERSATION_STOP);
         state = MYBOT_STATE_START_UNKNOWN;
-        press(1340);
         button(MYBOT_KEY_EVENT_CONVERSATION_START);
         feed(2000, 1);
         CHECK(events.size() == 5);
         state = MYBOT_STATE_TRANSLATION_ERROR;
-        press(1340);
+        button(MYBOT_KEY_EVENT_CONVERSATION_START);
+        feed(2000, 1);
         CHECK(events.size() == 6 && events.back() == MYBOT_KEY_EVENT_CONVERSATION_START);
         state = MYBOT_STATE_READY;
         touch_sample(true, true);

@@ -15,6 +15,7 @@
 #include "storage_init.h"
 #include "psa/crypto.h"
 #include "mybot_platform/board.h"
+#include "mybot_platform/factory_reset.h"
 #if CONFIG_MYBOT_DEBUG_RESOURCE_MONITOR
 #include "resource_monitor.h"
 #endif
@@ -152,6 +153,10 @@ void app_main(void) {
     ESP_LOGI(TAG, "mybot %s, Agora RTSA %s, ESP-IDF %s, build %s %s", mybot_version_string(),
              agora_rtc_get_version(), esp_get_idf_version(), app_description->date,
              app_description->time);
+
+    if (mybot_factory_reset_handle_pending()) {
+        return;
+    }
 
 #if CONFIG_MYBOT_USB_HOST_PROBE
     esp_err_t host_result = mybot_usb_host_probe_start();

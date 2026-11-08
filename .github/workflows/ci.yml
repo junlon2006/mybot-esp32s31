@@ -27,7 +27,7 @@ jobs:
           find main diagnostics/mosaico_uac components/mybot_platform components/mybot_stack/aosl/s31_port tests/aosl_s31_tasks tests/korvo_s31_display tests/mosaico_display tests/mosaico_hardware tests/mosaico_usb tests/mosaico_usb_audio \
             tests/korvo_s31_audio tests/korvo_s31_input tests/pcm_playback_buffer tests/media_pause \
             tests/conversation_http_trace tests/http_time_sync tests/translation_http tests/translation_ui tests/translation_client \
-            tests/translation_lifecycle tests/translation_rtc tests/translation_control tests/translation_state tests/translation_volume tests/translation_captions tests/kv_store tests/storage_init tests/usb_cdc_probe tests/usb_host_probe \
+            tests/translation_lifecycle tests/translation_rtc tests/translation_control tests/translation_state tests/translation_volume tests/translation_captions tests/kv_store tests/storage_init tests/factory_reset tests/usb_cdc_probe tests/usb_host_probe \
             -path '*/mybot_stack/agora_rtc' -prune -o \
             -type f ! -path '*/boards/esp32-s31-korvo-1/reference/*' \
             \( -name '*.c' -o -name '*.h' -o -name '*.cc' -o -name '*.cpp' \) \
@@ -68,7 +68,7 @@ jobs:
           find main diagnostics/mosaico_uac components/mybot_platform components/mybot_stack/aosl/s31_port tests/aosl_s31_tasks tests/korvo_s31_display tests/mosaico_display tests/mosaico_hardware tests/mosaico_usb tests/mosaico_usb_audio \
             tests/korvo_s31_audio tests/korvo_s31_input tests/pcm_playback_buffer tests/media_pause \
             tests/conversation_http_trace tests/http_time_sync tests/translation_http tests/translation_ui tests/translation_client \
-            tests/translation_lifecycle tests/translation_rtc tests/translation_control tests/translation_state tests/translation_volume tests/translation_captions tests/kv_store tests/storage_init tests/usb_cdc_probe tests/usb_host_probe \
+            tests/translation_lifecycle tests/translation_rtc tests/translation_control tests/translation_state tests/translation_volume tests/translation_captions tests/kv_store tests/storage_init tests/factory_reset tests/usb_cdc_probe tests/usb_host_probe \
             -path '*/mybot_stack/agora_rtc' -prune -o -type f \
             \( -name '*.c' -o -name '*.h' -o -name '*.cc' -o -name '*.cpp' \) \
             -print0 | while IFS= read -r -d '' file; do
@@ -107,6 +107,7 @@ jobs:
         run: |
           sh tests/kv_store/run.sh
           sh tests/storage_init/run.sh
+          sh tests/factory_reset/run.sh
       - name: Mosaico composite audio transport host tests
         env:
           TEST_SANITIZE_FLAGS: -fsanitize=undefined -fno-sanitize-recover=all

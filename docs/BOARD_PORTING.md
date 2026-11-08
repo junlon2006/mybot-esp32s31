@@ -21,7 +21,7 @@ components/mybot_platform/
 
 The platform uses MyBot through its public `include/mybot/` API. The SDK is a project-maintained V2VT media/face-to-face/meeting fork; hardware details stay in the platform component. AOSL outside its wrapper/S31 adapter and retained dependency snapshots remain immutable. Root CMake registers the three independent runtime components under `components/mybot_stack`; the stack parent directory is a bundle, not an IDF component.
 
-The board profile owns target, defaults, partition, component dependencies and capabilities. `prepare()` initializes hardware before registering the platform; `ensure_network()` returns only after usable connectivity. Provisioning stops MyBot first and returns after reconnection. Input remains board-owned so AI (Mosaico) or SET (Korvo) can request provisioning while SDK key callbacks are detached.
+The board profile owns target, defaults, partition, component dependencies and capabilities. `prepare()` initializes hardware before registering the platform; `ensure_network()` returns only after usable connectivity. Provisioning stops MyBot first and returns after reconnection. Input remains board-owned so maintenance gestures can request provisioning while SDK key callbacks are detached.
 
 Capture and playback expose 16 kHz mono signed-16 PCM **frame counts**. They attach independently to one reference-counted codec bus: ES8311/I2S stereo/MCLK256 on Mosaico or ES8389/TDM4 on Korvo. Finite prompts drain their playback buffer. Bounded stop/destroy retains ownership on timeout so subsequent initialization/cleanup can recover safely.
 
@@ -31,4 +31,4 @@ Current build contract: ESP-IDF v6.1 preview `esp32s31`, 16 MB Flash, Octal PSRA
 
 Any new lifecycle or callback change needs host failure/timeout/repeated-start tests and separate physical-board results. Source compatibility and compilation do not establish pin routing, acoustic quality or hardware readiness.
 
-Mosaico uses ES8311 standard I2S stereo/MCLK256 and a native 480×480 CO5300 QSPI/CST9220 view. Shared audio lifecycle keeps bounded I/O and independent capture/playback. The AI key controls sessions/provisioning; Type-C provides composite UAC2 audio and CDC logs. Meeting LISTEN uses PC audio and plays on the codec; SPEAK uses physical MIC and returns translated speech to USB IN. See the [Mosaico board guide](esp-mosaico-v1.2.zh-CN.md).
+Mosaico uses ES8311 standard I2S stereo/MCLK256 and a native 480×480 CO5300 QSPI/CST9220 view. Shared audio lifecycle keeps bounded I/O and independent capture/playback. Touch controls translation; the AI key is maintenance-only: short presses do nothing, three seconds provisions Wi-Fi and ten seconds requests factory reset. Type-C provides composite UAC2 audio and CDC logs. Meeting LISTEN uses PC audio and plays on the codec; SPEAK uses physical MIC and returns translated speech to USB IN. See the [Mosaico board guide](esp-mosaico-v1.2.zh-CN.md).
