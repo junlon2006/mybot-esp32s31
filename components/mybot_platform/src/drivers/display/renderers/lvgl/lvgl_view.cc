@@ -1,12 +1,8 @@
 /* SPDX-License-Identifier: MIT */
 /* Copyright (c) 2026 Project Contributors */
 #include "display/lvgl_view.h"
-#include "input/board_keys.h"
-#include "network/wifi_control.h"
 #include "sdkconfig.h"
-
-#include <mybot/mybot_ui.h>
-#include <mybot/mybot_captions.h>
+#include "ui/ui_port.h"
 
 #include <cstdio>
 #include <cstring>
@@ -99,7 +95,6 @@ struct Slider {
     lv_obj_t *knob{};
     int width = 0;
     int value = 0;
-    bool brightness = false;
     bool dragging = false;
 };
 struct View {
@@ -111,7 +106,6 @@ struct View {
     lv_obj_t *home_date{};
     lv_obj_t *volume_label{};
     Slider volume_slider;
-    Slider brightness_slider;
     lv_timer_t *timer{};
     mybot_caption_t *caption{};
     lv_obj_t *caption_source{};
@@ -145,18 +139,14 @@ struct View {
     unsigned language_page = 0;
     char pending_source[33]{};
     char pending_target[33]{};
-    int brightness = 60;
-    int width = 800;
+    int width = 480;
     char preview_source[33] = "zh-CN";
     char preview_target[33] = "en-US";
 };
 View s_view;
 
-bool compact() {
-    return s_view.width == 480;
-}
 int margin() {
-    return compact() ? 32 : 24;
+    return 32;
 }
 int content_width() {
     return s_view.width - 2 * margin();
@@ -288,20 +278,19 @@ lv_obj_t *button(int x, int y, int width, int height, const char *text, Action a
 }
 void heading(const char *title, Action back = NoAction, const char *right = nullptr,
              Action right_action = NoAction) {
-    const int side = compact() ? 96 : 124;
+    const int side = 96;
     const int inset = margin();
     if (back != NoAction)
         button(inset, 10, side, 44, tr("< 返回", "< Back"), back, kSoft);
     const int left = back != NoAction ? inset + side + 8 : inset;
     const int edge = right ? inset + side + 8 : inset;
-    label(s_view.body, left, 17, s_view.width - left - edge, 48, title,
-          compact() ? &mybot_lvgl_font_20 : &mybot_lvgl_font_28);
+    label(s_view.body, left, 17, s_view.width - left - edge, 48, title, &mybot_lvgl_font_20);
     if (right)
         button(s_view.width - inset - side, 10, side, 44, right, right_action, kSoft);
 }
 const char *language_name(const char *code) {
     size_t count = 0;
-    const mybot_ui_language_t *languages = mybot_ui_languages(&count);
+    const mybot_ui_language_t *languages = mybot_ui_port_languages(&count);
     for (size_t i = 0; i < count; ++i)
         if (std::strcmp(code, languages[i].code) == 0)
             return tr(languages[i].name_zh, languages[i].name_en);
@@ -350,7 +339,7 @@ void update_clock(lv_timer_t *timer) {
     if (s_view.home_date)
         lv_label_set_text(s_view.home_date, date);
     if (s_view.network)
-        lv_label_set_text(s_view.network, mybot_wifi_is_connected()
+        lv_label_set_text(s_view.network, mybot_ui_port_wifi_connected()
                                               ? tr("Wi-Fi 已连接", "Wi-Fi connected")
                                               : tr("Wi-Fi 未连接", "Wi-Fi offline"));
 }
@@ -375,16 +364,12 @@ void update_volume() {
         set_slider(s_view.volume_slider, s_view.content.volume);
     enabled(s_view.volume_slider.object, volume_allowed());
 }
-void slider(int x, int y, int width, bool brightness) {
-    lv_obj_t *card = panel(s_view.body, x, y, width, 86, brightness ? kPink : kMint, 22);
-    lv_obj_t *caption = label(card, 14, 8, width - 28, 28,
-                              brightness ? tr("亮度 · 演示", "Brightness · Demo") : "");
-    if (!brightness)
-        s_view.volume_label = caption;
-    Slider &control = brightness ? s_view.brightness_slider : s_view.volume_slider;
-    control.brightness = brightness;
+void slider(int x, int y, int width) {
+    lv_obj_t *card = panel(s_view.body, x, y, width, 86, kMint, 22);
+    s_view.volume_label = label(card, 14, 8, width - 28, 28, "");
+    Slider &control = s_view.volume_slider;
     control.width = width - 60;
-    control.object = panel(card, 30, 38, control.width, 44, brightness ? kPink : kMint, 0);
+    control.object = panel(card, 30, 38, control.width, 44, kMint, 0);
     panel(control.object, 13, 13, control.width - 26, 10, kWhite, 5);
     control.fill = panel(control.object, 13, 13, 0, 10, kMuted, 5);
     control.knob = panel(control.object, 0, 5, 26, 26, kInk, 13);
@@ -395,7 +380,7 @@ void slider(int x, int y, int width, bool brightness) {
     lv_obj_add_flag(control.object, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_flag(control.object, LV_OBJ_FLAG_PRESS_LOCK);
     lv_obj_add_event_cb(control.object, slider_event, LV_EVENT_ALL, &control);
-    set_slider(control, brightness ? s_view.brightness : s_view.content.volume);
+    set_slider(control, s_view.content.volume);
 }
 void slider_event(lv_event_t *event) {
     const auto code = lv_event_get_code(event);
@@ -408,7 +393,7 @@ void slider_event(lv_event_t *event) {
         return;
     if (code == LV_EVENT_PRESS_LOST) {
         control->dragging = false;
-        set_slider(*control, control->brightness ? s_view.brightness : s_view.content.volume);
+        set_slider(*control, s_view.content.volume);
         return;
     }
     if (code == LV_EVENT_PRESSED || code == LV_EVENT_PRESSING) {
@@ -427,9 +412,7 @@ void slider_event(lv_event_t *event) {
         set_slider(*control, ((point.x - bounds.x1 - 13) * 100 + travel / 2) / travel);
     } else if (code == LV_EVENT_RELEASED && control->dragging) {
         control->dragging = false;
-        if (control->brightness)
-            s_view.brightness = control->value;
-        else if (volume_allowed()) {
+        if (volume_allowed()) {
             command(MYBOT_UI_SET_VOLUME, control->value);
             update_volume();
         }
@@ -437,39 +420,25 @@ void slider_event(lv_event_t *event) {
 }
 
 void utilities(int y) {
-    if (compact()) {
-        slider(margin(), y > 326 ? 326 : y, content_width(), false);
-    } else {
-        slider(24, y, 364, false);
-        slider(412, y, 364, true);
-    }
+    slider(margin(), y > 326 ? 326 : y, content_width());
     update_volume();
 }
 void home() {
-    const int left = compact() ? margin() : 40;
-    label(s_view.body, left, compact() ? 12 : 30, compact() ? content_width() : 350, 38,
+    const int left = margin();
+    label(s_view.body, left, 12, content_width(), 38,
           tr("你好，今天也有新发现", "Hello, Sunshine!"), &mybot_lvgl_font_28, LV_TEXT_ALIGN_LEFT);
-    s_view.home_date = label(s_view.body, left, compact() ? 58 : 82, 360, 30, "",
-                             &mybot_lvgl_font_20, LV_TEXT_ALIGN_LEFT, kMuted);
-    s_view.home_time = label(s_view.body, left, compact() ? 94 : 122, 340, compact() ? 56 : 70, "",
-                             &mybot_lvgl_font_40, LV_TEXT_ALIGN_LEFT);
-    if (!compact())
-        label(s_view.body, 42, 198, 350, 32, tr("北京时间 / UTC+8", "Beijing time / UTC+8"),
-              &mybot_lvgl_font_20, LV_TEXT_ALIGN_LEFT, kMuted);
-    auto *orb = compact() ? panel(s_view.body, margin(), 174, content_width(), 96, kTeal, 24)
-                          : panel(s_view.body, 454, 28, 236, 236, kTeal, 118);
+    s_view.home_date =
+        label(s_view.body, left, 58, 360, 30, "", &mybot_lvgl_font_20, LV_TEXT_ALIGN_LEFT, kMuted);
+    s_view.home_time =
+        label(s_view.body, left, 94, 340, 56, "", &mybot_lvgl_font_40, LV_TEXT_ALIGN_LEFT);
+    auto *orb = panel(s_view.body, margin(), 174, content_width(), 96, kTeal, 24);
     if (orb) {
         lv_obj_add_flag(orb, LV_OBJ_FLAG_CLICKABLE);
         lv_obj_add_event_cb(orb, clicked, LV_EVENT_CLICKED, reinterpret_cast<void *>(Entry));
-        label(orb, 18, compact() ? 28 : 72, compact() ? content_width() - 36 : 200,
-              compact() ? 40 : 92,
-              compact() ? tr("开始翻译 >", "Start translation >")
-                        : tr("开始\n翻译  >", "Let's\ntranslate  >"),
+        label(orb, 18, 28, content_width() - 36, 40, tr("开始翻译 >", "Start translation >"),
               &mybot_lvgl_font_28);
     }
-    if (!compact())
-        label(s_view.body, 650, 258, 140, 30, tr("电量 --", "Battery --"));
-    utilities(compact() ? 286 : 318);
+    utilities(286);
 }
 void entry() {
     heading(tr("选择翻译方式", "Choose a translation scene"), Home);
@@ -482,24 +451,17 @@ void entry() {
     const Action actions[] = {Media, Face, Meeting};
     const uint32_t colors[] = {kTeal, kPurple, kYellow};
     for (unsigned i = 0; i < 3; ++i) {
-        auto *card = button(
-            compact() ? margin() : 24 + i * 256, compact() ? 78 + i * 112 : 108,
-            compact() ? content_width() : 240, compact() ? 100 : 212, "", actions[i], colors[i],
-            s_view.pending_mode < 0 && !s_view.command_pending && !languages_pending());
-        label(card, 12, compact() ? 12 : 54, compact() ? content_width() - 24 : 216, 40, names[i],
-              &mybot_lvgl_font_28);
-        label(card, 12, compact() ? 58 : 116, compact() ? content_width() - 24 : 216,
-              compact() ? 30 : 60, notes[i], &mybot_lvgl_font_20);
+        auto *card =
+            button(margin(), 78 + i * 112, content_width(), 100, "", actions[i], colors[i],
+                   s_view.pending_mode < 0 && !s_view.command_pending && !languages_pending());
+        label(card, 12, 12, content_width() - 24, 40, names[i], &mybot_lvgl_font_28);
+        label(card, 12, 58, content_width() - 24, 30, notes[i], &mybot_lvgl_font_20);
     }
-    if (!compact())
-        label(s_view.body, 24, 348, 752, 46,
-              tr("请选择适合的翻译方式", "Choose the translation scene that suits you"),
-              &mybot_lvgl_font_20, LV_TEXT_ALIGN_CENTER, kMuted);
 }
 void setup() {
     heading(scene_name(), Entry);
-    const int column = compact() ? 184 : 330;
-    const int left = compact() ? margin() : 28;
+    const int column = 184;
+    const int left = margin();
     const int right = s_view.width - left - column;
     label(s_view.body, left, 78, column, 30,
           s_view.scene == Scene::Media ? tr("输入语言", "Input language")
@@ -538,7 +500,7 @@ void languages() {
                                                                : tr("我的语言", "My language")),
             Setup);
     size_t count = 0;
-    const auto *list = mybot_ui_languages(&count);
+    const auto *list = mybot_ui_port_languages(&count);
     const unsigned begin = s_view.language_page * kLanguagesPerPage;
     const char *other = s_view.pick_target ? source_code() : target_code();
     const char *selected = s_view.pick_target ? target_code() : source_code();
@@ -551,14 +513,14 @@ void languages() {
                tr(item.name_zh, item.name_en), static_cast<Action>(LanguageBase + begin + i),
                chosen ? kTeal : kWhite, std::strcmp(item.code, other) != 0 && languages_allowed());
     }
-    button(margin(), 358, compact() ? 142 : 190, 48, tr("< 上一页", "< Previous"), LanguagePrevious,
-           kSoft, s_view.language_page > 0);
+    button(margin(), 358, 142, 48, tr("< 上一页", "< Previous"), LanguagePrevious, kSoft,
+           s_view.language_page > 0);
     char text[32];
     std::snprintf(text, sizeof(text), "%u / %u", s_view.language_page + 1,
                   static_cast<unsigned>((count + kLanguagesPerPage - 1) / kLanguagesPerPage));
     label(s_view.body, (s_view.width - 120) / 2, 366, 120, 32, text);
-    button(s_view.width - margin() - (compact() ? 142 : 190), 358, compact() ? 142 : 190, 48,
-           tr("下一页 >", "Next >"), LanguageNext, kSoft, begin + kLanguagesPerPage < count);
+    button(s_view.width - margin() - 142, 358, 142, 48, tr("下一页 >", "Next >"), LanguageNext,
+           kSoft, begin + kLanguagesPerPage < count);
 }
 void format_route(char *text, size_t capacity, mybot_translation_direction_t direction) {
     const bool reverse = s_view.content.translation_mode == MYBOT_TRANSLATION_LISTEN_SPEAK &&
@@ -584,8 +546,8 @@ void route_label(int y) {
                       language_name(s_view.content.target_language));
     else
         format_route(text, sizeof(text), s_view.content.input_direction);
-    auto *route = label(s_view.body, margin(), y, compact() ? content_width() - 116 : 570,
-                        compact() ? 52 : 36, text, &mybot_lvgl_font_20, LV_TEXT_ALIGN_LEFT);
+    auto *route = label(s_view.body, margin(), y, content_width() - 116, 52, text,
+                        &mybot_lvgl_font_20, LV_TEXT_ALIGN_LEFT);
     if (route)
         lv_label_set_long_mode(route, LV_LABEL_LONG_DOT);
     if (meeting_session())
@@ -597,22 +559,21 @@ void live() {
             : meeting_session() ? tr("会议互译", "Meeting translation")
                                 : tr("媒体翻译", "Media translation"),
             NoAction, tr("更多 ...", "More ..."), Menu);
-    auto *card = button(margin(), compact() ? 74 : 82, content_width(), compact() ? 204 : 202, "",
-                        Full, kWhite);
+    auto *card = button(margin(), 74, content_width(), 204, "", Full, kWhite);
     const int text_width = content_width() - 40;
     s_view.caption_notice =
         label(card, 20, 12, text_width, 32, "", &mybot_lvgl_font_20, LV_TEXT_ALIGN_LEFT, kMuted);
     s_view.caption_target =
         label(card, 20, 58, text_width, 78, tr("等待字幕", "Waiting for captions"),
               &mybot_caption_font_28, LV_TEXT_ALIGN_LEFT);
-    s_view.caption_source = label(card, 20, 140, text_width, compact() ? 52 : 30, "",
-                                  &mybot_caption_font_20, LV_TEXT_ALIGN_LEFT);
+    s_view.caption_source =
+        label(card, 20, 140, text_width, 52, "", &mybot_caption_font_20, LV_TEXT_ALIGN_LEFT);
     if (s_view.caption_target)
         lv_label_set_long_mode(s_view.caption_target, LV_LABEL_LONG_DOT);
     if (s_view.caption_source)
         lv_label_set_long_mode(s_view.caption_source, LV_LABEL_LONG_DOT);
-    route_label(compact() ? 282 : 290);
-    button(s_view.width - margin() - (compact() ? 108 : 148), 284, compact() ? 108 : 148, 44,
+    route_label(282);
+    button(s_view.width - margin() - 108, 284, 108, 44,
            s_view.content.paused ? tr("继续", "Resume") : tr("暂停", "Pause"), Pause, kPurple,
            !s_view.command_pending && s_view.pending_direction < 0 &&
                (!face || s_view.content.input_direction != MYBOT_TRANSLATION_DIRECTION_NONE));
@@ -626,8 +587,7 @@ void live() {
             auto *choice =
                 button(margin() + i * (column + 24), 338, column, 76, "", i ? Listen : Speak,
                        s_view.content.input_direction == directions[i] ? kTeal : kWhite, allow);
-            label(choice, 12, 12, column - 24, 52, language_name(codes[i]),
-                  compact() ? &mybot_lvgl_font_20 : &mybot_lvgl_font_28);
+            label(choice, 12, 12, column - 24, 52, language_name(codes[i]), &mybot_lvgl_font_20);
         }
     } else {
         utilities(338);
@@ -637,10 +597,7 @@ void menu() {
     heading(tr("翻译选项", "Translation options"), Live);
     button(margin(), 92, content_width(), 64, tr("本次字幕与全文  >", "Captions and full text  >"),
            History, kWhite);
-    button(margin(), 174, content_width(), 64,
-           compact() ? tr("输出音量", "Output volume")
-                     : tr("音量与亮度  >", "Volume and brightness  >"),
-           Sound, kMint);
+    button(margin(), 174, content_width(), 64, tr("输出音量", "Output volume"), Sound, kMint);
     button(margin(), 256, content_width(), 64,
            tr("更改语言与使用方式  >", "Change languages and scene  >"), Change, kPurple);
     button(margin(), 338, content_width(), 64, tr("结束这次翻译", "End this translation"), End,
@@ -667,17 +624,13 @@ void captions(bool history) {
             if (s_view.history_route[i])
                 lv_label_set_long_mode(s_view.history_route[i], LV_LABEL_LONG_DOT);
         }
-        s_view.history_previous =
-            button(margin(), compact() ? 354 : 370, compact() ? 120 : 190, compact() ? 64 : 44,
-                   tr("< 上一页", "< Previous"), HistoryPrevious, kSoft, false);
-        button(compact() ? 164 : 242, compact() ? 354 : 370, compact() ? 152 : 316,
-               compact() ? 64 : 44,
+        s_view.history_previous = button(margin(), 354, 120, 64, tr("< 上一页", "< Previous"),
+                                         HistoryPrevious, kSoft, false);
+        button(164, 354, 152, 64,
                active() ? tr("返回实时翻译", "Back to live") : tr("返回结束页", "Back to summary"),
                CaptionExit, kTeal);
-        s_view.history_next =
-            button(s_view.width - margin() - (compact() ? 120 : 190), compact() ? 354 : 370,
-                   compact() ? 120 : 190, compact() ? 64 : 44, tr("下一页 >", "Next >"),
-                   HistoryNext, kSoft, false);
+        s_view.history_next = button(s_view.width - margin() - 120, 354, 120, 64,
+                                     tr("下一页 >", "Next >"), HistoryNext, kSoft, false);
     } else {
         s_view.caption_route = label(s_view.body, margin() + 8, 64, content_width() - 16, 32, "",
                                      &mybot_lvgl_font_20, LV_TEXT_ALIGN_LEFT, kMuted);
@@ -754,8 +707,8 @@ void refresh_captions() {
                 caption_text(s_view.history_target[i], "");
                 caption_text(s_view.history_route[i], "");
                 enabled(s_view.history_buttons[i], false);
-            } else if (mybot_ui_copy_caption(state.caption_generation, sequence, s_view.caption) ==
-                       0) {
+            } else if (mybot_ui_port_copy_caption(state.caption_generation, sequence,
+                                                  s_view.caption) == 0) {
                 s_view.history_sequences[i] = sequence;
                 caption_text(s_view.history_target[i],
                              s_view.caption->target_text[0]
@@ -806,7 +759,8 @@ void refresh_captions() {
         s_view.captions_dirty = false;
         return;
     }
-    if (!evicted && mybot_ui_copy_caption(state.caption_generation, sequence, s_view.caption) != 0)
+    if (!evicted &&
+        mybot_ui_port_copy_caption(state.caption_generation, sequence, s_view.caption) != 0)
         return; /* Nonblocking read: retain the last snapshot and retry on the owned timer. */
     s_view.selected_sequence = sequence;
     char route[128];
@@ -915,11 +869,11 @@ void service() {
     label(s_view.body, margin() + 12, 102, content_width() - 24, 112, message.notice,
           &mybot_lvgl_font_28);
     const char *detail = s_view.content.error_code;
-    char ssid[MYBOT_WIFI_PROVISIONING_SSID_CAPACITY]{};
+    char ssid[MYBOT_UI_PORT_SSID_CAPACITY]{};
     if (s_view.content.screen == MYBOT_LCD_SCREEN_PAIR_CODE)
         detail = s_view.content.pair_code;
     else if (s_view.content.screen == MYBOT_LCD_SCREEN_WIFI_PROVISIONING) {
-        (void)mybot_wifi_get_provisioning_ssid(ssid, sizeof(ssid));
+        (void)mybot_ui_port_provisioning_ssid(ssid, sizeof(ssid));
         detail = ssid;
     }
     label(s_view.body, margin(), 222, content_width(), 72, detail,
@@ -955,7 +909,6 @@ void redraw() {
     }
     s_view.captions_dirty = true;
     s_view.volume_slider = Slider{};
-    s_view.brightness_slider = Slider{};
     lv_obj_clean(s_view.body);
     s_view.failed = false;
     switch (s_view.page) {
@@ -978,13 +931,8 @@ void redraw() {
         menu();
         break;
     case Page::Sound:
-        heading(compact() ? tr("输出音量", "Output volume")
-                          : tr("音量与亮度", "Volume and brightness"),
-                Live);
+        heading(tr("输出音量", "Output volume"), Live);
         utilities(144);
-        if (!compact())
-            label(s_view.body, 40, 264, 720, 52,
-                  tr("亮度滑条仅供界面演示", "Brightness slider is a UI demo"));
         break;
     case Page::Full:
         captions(false);
@@ -1020,7 +968,7 @@ void command(mybot_ui_command_type_t type, int value) {
     mybot_ui_command_t request{};
     request.type = type;
     request.value = value;
-    mybot_board_keys_ui_command(&request);
+    mybot_ui_port_gesture_command(&request);
 }
 void stop(bool change) {
     if (!active())
@@ -1030,7 +978,7 @@ void stop(bool change) {
     mark_pending();
     s_view.page = Page::Service;
     redraw();
-    mybot_board_keys_ui_event(MYBOT_KEY_EVENT_CONVERSATION_STOP);
+    mybot_ui_port_event(MYBOT_KEY_EVENT_CONVERSATION_STOP);
 }
 void clicked(lv_event_t *event) {
     auto *target = lv_event_get_current_target_obj(event);
@@ -1051,7 +999,7 @@ void clicked(lv_event_t *event) {
         if (!idle() || s_view.page != Page::Languages || !languages_allowed())
             return;
         size_t count = 0;
-        const auto *list = mybot_ui_languages(&count);
+        const auto *list = mybot_ui_port_languages(&count);
         const auto index = static_cast<unsigned>(action - LanguageBase);
         if (index >= count)
             return;
@@ -1067,7 +1015,7 @@ void clicked(lv_event_t *event) {
                           destination);
             /* A language pair must be read back before another pair is built.
              * Submit directly so a rejected mailbox cannot leave a permanent guard. */
-            if (mybot_ui_submit(&request) == 0) {
+            if (mybot_ui_port_submit(&request) == 0) {
                 std::memcpy(s_view.pending_source, request.source_language,
                             sizeof(s_view.pending_source));
                 std::memcpy(s_view.pending_target, request.target_language,
@@ -1112,7 +1060,7 @@ void clicked(lv_event_t *event) {
             request.type = MYBOT_UI_SET_MODE;
             request.value = mode;
             request.audio_source = audio_source;
-            if (mybot_ui_submit(&request) < 0)
+            if (mybot_ui_port_submit(&request) < 0)
                 return;
             s_view.pending_mode = mode;
             s_view.pending_audio_source = audio_source;
@@ -1140,7 +1088,7 @@ void clicked(lv_event_t *event) {
         break;
     case LanguageNext: {
         size_t count = 0;
-        (void)mybot_ui_languages(&count);
+        (void)mybot_ui_port_languages(&count);
         if ((s_view.language_page + 1) * kLanguagesPerPage < count)
             ++s_view.language_page;
         break;
@@ -1150,7 +1098,7 @@ void clicked(lv_event_t *event) {
             return;
         mark_pending();
         s_view.start_requested = true;
-        mybot_board_keys_ui_event(MYBOT_KEY_EVENT_CONVERSATION_START);
+        mybot_ui_port_event(MYBOT_KEY_EVENT_CONVERSATION_START);
         break;
     case CancelStart:
         if (s_view.content.screen != MYBOT_LCD_SCREEN_TRANSLATION_STARTING ||
@@ -1158,7 +1106,7 @@ void clicked(lv_event_t *event) {
             return;
         s_view.cancel_requested = true;
         s_view.stop_requested = true;
-        mybot_board_keys_ui_event(MYBOT_KEY_EVENT_CONVERSATION_STOP);
+        mybot_ui_port_event(MYBOT_KEY_EVENT_CONVERSATION_STOP);
         break;
     case Menu:
         if (active())
@@ -1211,7 +1159,7 @@ void clicked(lv_event_t *event) {
         mybot_ui_command_t request{};
         request.type = MYBOT_UI_SET_DIRECTION;
         request.value = direction;
-        if (mybot_ui_submit(&request) < 0)
+        if (mybot_ui_port_submit(&request) < 0)
             return;
         s_view.pending_direction = direction;
         s_view.pending_selection_revision = s_view.content.selection_revision;
@@ -1245,7 +1193,7 @@ void clicked(lv_event_t *event) {
             return;
         s_view.stop_requested = true;
         mark_pending();
-        mybot_board_keys_ui_event(MYBOT_KEY_EVENT_CONVERSATION_STOP);
+        mybot_ui_port_event(MYBOT_KEY_EVENT_CONVERSATION_STOP);
         break;
     default:
         return;
@@ -1255,9 +1203,7 @@ void clicked(lv_event_t *event) {
 } // namespace
 
 int mybot_lvgl_view_create_sized(lv_display_t *display, int width, int height) {
-    /* Both layouts retain native font and touch sizes; the square panel reflows
-     * scene cards and utility controls instead of shrinking the wide view. */
-    if (!display || s_view.root || (width != 800 && width != 480) || height != 480 ||
+    if (!display || s_view.root || width != 480 || height != 480 ||
         lv_display_get_horizontal_resolution(display) != width ||
         lv_display_get_vertical_resolution(display) != height)
         return -1;
@@ -1267,14 +1213,12 @@ int mybot_lvgl_view_create_sized(lv_display_t *display, int width, int height) {
     s_view.root = panel(lv_display_get_screen_active(display), 0, 0, width, height, kBackground, 0);
     /* The Mosaico cover glass masks the panel corners. Keep the status strip
      * inside the straight top edge; body controls also leave a wider margin. */
-    const int status_inset = compact() ? 60 : margin();
-    s_view.network = label(s_view.root, status_inset, compact() ? 16 : 14, compact() ? 240 : 260,
-                           30, "", &mybot_lvgl_font_20, LV_TEXT_ALIGN_LEFT);
-    if (!compact())
-        label(s_view.root, 300, 14, 200, 30, "BotStation");
-    const int clock_width = compact() ? 100 : 120;
-    s_view.clock = label(s_view.root, width - status_inset - clock_width, compact() ? 16 : 14,
-                         clock_width, 30, "--:--", &mybot_lvgl_font_20, LV_TEXT_ALIGN_RIGHT);
+    const int status_inset = 60;
+    s_view.network =
+        label(s_view.root, status_inset, 16, 240, 30, "", &mybot_lvgl_font_20, LV_TEXT_ALIGN_LEFT);
+    const int clock_width = 100;
+    s_view.clock = label(s_view.root, width - status_inset - clock_width, 16, clock_width, 30,
+                         "--:--", &mybot_lvgl_font_20, LV_TEXT_ALIGN_RIGHT);
     s_view.body = panel(s_view.root, 0, 52, width, height - 52, kBackground, 0);
     if (!s_view.root || !s_view.network || !s_view.clock || !s_view.body || s_view.failed) {
         mybot_lvgl_view_destroy();

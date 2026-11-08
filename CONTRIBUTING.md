@@ -2,7 +2,8 @@
 
 [English](CONTRIBUTING.md) · [简体中文](CONTRIBUTING.zh-CN.md)
 
-The default and future target is ESP-Mosaico CoreBoard V1.2; the earlier ESP32-S31-Korvo-1 V1.1 profile remains available. Both use ESP-IDF v6.1 preview and 60 ms RTSA audio frames. Keep changes focused and preserve unrelated work.
+The only supported target is ESP-Mosaico CoreBoard V1.2 with ESP-IDF v6.1 preview
+and 60 ms RTSA audio frames. Keep changes focused and preserve unrelated work.
 
 ## Boundaries
 
@@ -14,17 +15,16 @@ Never commit credentials, device identifiers, Wi-Fi passwords, original RTSA arc
 
 ## Validation
 
-Install ffmpeg and ESP-IDF v6.1. The pinned RTSA payload is bundled. Build Chinese firmware directly with `idf.py`, always using `build/korvo-s31` and `build/korvo-s31/sdkconfig` locally:
+Install ffmpeg and ESP-IDF v6.1. The pinned RTSA payload is bundled. Build Chinese firmware directly with `idf.py`, always using `build/mosaico-v1.2` and `build/mosaico-v1.2/sdkconfig` locally:
 
 ```sh
 . /path/to/esp-idf/export.sh
 test "$(idf.py --preview --version)" = "ESP-IDF v6.1"
-idf.py --preview -B build/korvo-s31 \
-  -DMYBOT_BOARD=esp-mosaico-v1.2 \
+idf.py --preview -B build/mosaico-v1.2 \
   -DMYBOT_MOSAICO_UAC_TEST=OFF \
-  -DSDKCONFIG=build/korvo-s31/sdkconfig \
+  -DSDKCONFIG=build/mosaico-v1.2/sdkconfig \
   -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;ci/ptime60.defaults" build size
-python3 scripts/check_s31_build.py --build-dir build/korvo-s31 --language zh-CN
+python3 scripts/check_s31_build.py --build-dir build/mosaico-v1.2 --language zh-CN
 git diff --check
 ```
 

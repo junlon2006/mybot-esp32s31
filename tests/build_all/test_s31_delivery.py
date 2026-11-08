@@ -34,8 +34,8 @@ class S31DeliveryTests(unittest.TestCase):
         self.root = Path(self.temporary.name).resolve()
         self.build = self.root / "build"
         self.build.mkdir()
-        (self.build / "CMakeCache.txt").write_text("MYBOT_BOARD:STRING=esp32-s31-korvo-1\n")
-        self.merged = self.root / "esp32-s31-korvo-1-zh-CN.bin"
+        (self.build / "CMakeCache.txt").write_text("MYBOT_BOARD:INTERNAL=esp-mosaico-v1.2\n")
+        self.merged = self.root / "esp-mosaico-v1.2-zh-CN.bin"
         self.description = {
             "target": "esp32s31", "git_revision": "v6.1", "app_elf": "mybot_esp32s31.elf",
             "app_bin": "mybot_esp32s31.bin", "project_name": "mybot_esp32s31", "project_version": "0.1.0",
@@ -43,7 +43,8 @@ class S31DeliveryTests(unittest.TestCase):
         self.write_description()
         self.config = (
             'CONFIG_IDF_TARGET="esp32s31"\nCONFIG_ESPTOOLPY_FLASHSIZE_16MB=y\n'
-            'CONFIG_SPIRAM=y\nCONFIG_SPIRAM_MODE_OCT=y\nCONFIG_CODEC_ES8389_SUPPORT=y\n'
+            'CONFIG_SPIRAM=y\nCONFIG_SPIRAM_MODE_OCT=y\nCONFIG_CODEC_ES8311_SUPPORT=y\n'
+            '# CONFIG_CODEC_ES8389_SUPPORT is not set\n'
             'CONFIG_MYBOT_LVGL_UI=y\nCONFIG_MYBOT_AUDIO_PTIME_60=y\nCONFIG_MYBOT_AUDIO_PTIME_MS=60\n'
             'CONFIG_MYBOT_LANGUAGE_TAG="zh-CN"\n# CONFIG_MYBOT_ENABLE_VIDEO is not set\n'
         )
@@ -138,20 +139,19 @@ class S31DeliveryTests(unittest.TestCase):
             image[offset:offset + len(data)] = data
         self.merged.write_bytes(image)
 
-    def test_mosaico_delivery_uses_selected_board_and_codec(self) -> None:
-        (self.build / "CMakeCache.txt").write_text("MYBOT_BOARD:STRING=esp-mosaico-v1.2\n")
-        with self.assertRaisesRegex(RuntimeError, "CONFIG_CODEC_ES8311_SUPPORT"):
+    def test_mosaico_delivery_uses_fixed_board_and_codec(self) -> None:
+        (self.build / "sdkconfig").write_text(self.config.replace("ES8311", "ES8389"))
+        with self.assertRaisesRegex(RuntimeError, "must not enable CONFIG_CODEC_ES8389_SUPPORT"):
             checker.verify_build(self.build, "zh-CN")
-        (self.build / "sdkconfig").write_text(self.config.replace("ES8389", "ES8311"))
+        (self.build / "sdkconfig").write_text(self.config)
         self.refresh_provenance()
         metadata = checker.package(self.build, self.merged, "zh-CN")
         self.assertEqual(metadata["board"], "esp-mosaico-v1.2")
         self.assertIn("Board: esp-mosaico-v1.2", self.merged.with_suffix(".flash.txt").read_text())
 
     def enable_mosaico_uac(self) -> None:
-        (self.build / "CMakeCache.txt").write_text("MYBOT_BOARD:STRING=esp-mosaico-v1.2\n")
         (self.build / "sdkconfig").write_text(
-            self.config.replace("ES8389", "ES8311") + "CONFIG_USB_DEVICE_UAC_AS_PART=y\n"
+            self.config + "CONFIG_USB_DEVICE_UAC_AS_PART=y\n"
         )
         (self.build / "compile_commands.json").write_text("[]")
         self.usb_link_flags = (
@@ -277,14 +277,7 @@ class S31DeliveryTests(unittest.TestCase):
                     with self.assertRaisesRegex(RuntimeError, f"__wrap_{symbol}.*nonzero live"):
                         checker.verify_build(self.build, "zh-CN")
 
-    def test_usb_wrapper_check_is_scoped_to_mosaico_composite_audio(self) -> None:
-        # Korvo can carry an unrelated UAC config symbol without using Mosaico wrappers.
-        (self.build / "sdkconfig").write_text(self.config + "CONFIG_USB_DEVICE_UAC_AS_PART=y\n")
-        self.refresh_provenance()
-        checker.verify_build(self.build, "zh-CN")
-        (self.build / "CMakeCache.txt").write_text("MYBOT_BOARD:STRING=esp-mosaico-v1.2\n")
-        (self.build / "sdkconfig").write_text(self.config.replace("ES8389", "ES8311"))
-        self.refresh_provenance()
+    def test_disabled_es8389_comment_is_accepted_without_uac(self) -> None:
         checker.verify_build(self.build, "zh-CN")
 
     def test_delivery_rejects_unknown_board(self) -> None:
@@ -293,9 +286,6 @@ class S31DeliveryTests(unittest.TestCase):
             checker.verify_build(self.build, "zh-CN")
 
     def test_cli_reports_selected_board(self) -> None:
-        (self.build / "CMakeCache.txt").write_text("MYBOT_BOARD:STRING=esp-mosaico-v1.2\n")
-        (self.build / "sdkconfig").write_text(self.config.replace("ES8389", "ES8311"))
-        self.refresh_provenance()
         output = io.StringIO()
         with mock.patch.object(sys, "argv", ["check_s31_build.py", "--build-dir", str(self.build),
                                             "--language", "zh-CN"]), contextlib.redirect_stdout(output):
@@ -617,29 +607,34 @@ class WorkflowDeliveryTests(unittest.TestCase):
         self.assertIn('git -C "$GITHUB_WORKSPACE" rev-parse --verify HEAD', body)
         self.assertNotIn("*", body)
 
-    def test_ci_builds_both_boards_and_languages_with_isolated_outputs(self) -> None:
+    def test_ci_builds_both_languages_for_the_fixed_board(self) -> None:
         workflow = (ROOT / ".github/workflows/ci.yml").read_text()
         build_job = workflow.split("  idf-build:", 1)[1]
         matrix = build_job.split("      matrix:\n", 1)[1].split("    steps:\n", 1)[0]
         entries = re.findall(
-            r"- board: (\S+)\n\s+language: (\S+)\n\s+defaults: ([^\n]+)", matrix
+            r"- language: (\S+)\n\s+defaults: ([^\n]+)", matrix
         )
         expected = {
-            (board, language, "ci/ptime60.defaults" +
+            (language, "ci/ptime60.defaults" +
              (";ci/en-us.defaults" if language == "en-US" else ""))
-            for board in ("esp-mosaico-v1.2", "esp32-s31-korvo-1")
             for language in ("zh-CN", "en-US")
         }
         self.assertEqual(set(entries), expected)
         self.assertEqual(len(entries), len(expected))
-        self.assertIn('BUILD_DIR: build/ci-${{ matrix.board }}-${{ matrix.language }}', build_job)
-        self.assertIn('-DMYBOT_BOARD="${{ matrix.board }}"', build_job)
+        self.assertIn(
+            'BUILD_DIR: build/ci-esp-mosaico-v1.2-${{ matrix.language }}',
+            build_job,
+        )
+        self.assertNotIn("-DMYBOT_BOARD", build_job)
         self.assertIn('-DSDKCONFIG="$BUILD_DIR/sdkconfig"', build_job)
-        self.assertIn('mybot-${{ matrix.board }}-${{ matrix.language }}-ptime60-no-video-', build_job)
+        self.assertIn(
+            'mybot-esp-mosaico-v1.2-${{ matrix.language }}-ptime60-no-video-',
+            build_job,
+        )
         descriptor_step = build_job.split(
             "      - name: Verify composite descriptors against pinned USB headers\n", 1
         )[1].split("      - name:", 1)[0]
-        self.assertIn("        if: matrix.board == 'esp-mosaico-v1.2'\n", descriptor_step)
+        self.assertNotIn("matrix.board", descriptor_step)
         self.assertIn("run: sh tests/mosaico_usb/run_descriptors.sh", descriptor_step)
 
     def test_ci_merge_output_is_absolute_and_uploads_only_delivery_files(self) -> None:
@@ -650,7 +645,10 @@ class WorkflowDeliveryTests(unittest.TestCase):
         self.assertIn('scripts/check_s31_build.py --build-dir "$BUILD_DIR"', workflow)
         upload = workflow.split("      - name: Upload firmware", 1)[1]
         for suffix in (".bin", ".manifest.json", ".sha256", ".flash.txt"):
-            self.assertIn('releases/${{ matrix.board }}-${{ matrix.language }}' + suffix, upload)
+            self.assertIn(
+                'releases/esp-mosaico-v1.2-${{ matrix.language }}' + suffix,
+                upload,
+            )
         self.assertNotIn(".map", upload)
         self.assertNotIn(".tgz", upload)
         self.assertNotIn("vendor", upload)

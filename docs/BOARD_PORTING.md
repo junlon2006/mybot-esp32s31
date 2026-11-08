@@ -2,7 +2,8 @@
 
 [English](BOARD_PORTING.md) · [简体中文](BOARD_PORTING.zh-CN.md)
 
-The default profile is `esp-mosaico-v1.2`, with the earlier `esp32-s31-korvo-1` retained, selected by the root `MYBOT_BOARD` CMake value. This is a dedicated ESP32-S31 project; earlier ESP32-S3 board profiles and generic drivers are not maintained here.
+The only supported hardware is ESP-Mosaico CoreBoard V1.2. This dedicated ESP32-S31
+project has no runtime board selector; earlier ESP32-S3 and multi-board profiles are not maintained.
 
 ```text
 main/                              startup, device identity, MyBot/network lifecycle
@@ -11,11 +12,10 @@ components/mybot_stack/
   aosl/                            upstream sources + S31 component wrapper
   agora_rtc/                       S31 RTSA header, library and component wrapper
 components/mybot_platform/
-  boards/esp-mosaico-v1.2/          current hardware, lifetime and defaults
-  boards/esp32-s31-korvo-1/         earlier hardware and ADC reference
+  boards/esp-mosaico-v1.2/          hardware, lifetime and defaults
   src/platform/                    platform registration
   src/services/                    Wi-Fi, HTTPS, NVS, prompts, PCM FIFO, diagnostics
-  src/drivers/                     ES8311/ES8389, keys, touch, QSPI/RGB/LVGL
+  src/drivers/                     ES8311, keys, touch, QSPI/LVGL
   src/internal/                    platform-private interfaces
 ```
 
@@ -23,9 +23,19 @@ The platform uses MyBot through its public `include/mybot/` API. The SDK is a pr
 
 The board profile owns target, defaults, partition, component dependencies and capabilities. `prepare()` initializes hardware before registering the platform; `ensure_network()` returns only after usable connectivity. Provisioning stops MyBot first and returns after reconnection. Input remains board-owned so maintenance gestures can request provisioning while SDK key callbacks are detached.
 
-Capture and playback expose 16 kHz mono signed-16 PCM **frame counts**. They attach independently to one reference-counted codec bus: ES8311/I2S stereo/MCLK256 on Mosaico or ES8389/TDM4 on Korvo. Finite prompts drain their playback buffer. Bounded stop/destroy retains ownership on timeout so subsequent initialization/cleanup can recover safely.
+Capture and playback expose 16 kHz mono signed-16 PCM **frame counts**. They attach
+independently to one reference-counted ES8311/I2S stereo/MCLK256 codec bus. Finite
+prompts drain their playback buffer. Bounded stop/destroy retains ownership on
+timeout so subsequent initialization/cleanup can recover safely.
 
-Board-specific panel files own controller/DMA buffers. Mosaico uses QSPI partial transfers with separate draw/staging buffers; Korvo uses RGB framebuffer/VSYNC. Both LVGL adapters coordinate touch reads and shared view lifetime. Language, mode and direction selections submit copied commands directly through the nonblocking `mybot_ui_submit()` API and check admission. Volume, pause and key events use the S31 input worker. Display callbacks perform no network work. Detach prevents late callbacks. Display boards use the shared native LVGL translation view automatically; scene behavior is described in [the UI guide](PLATFORM_UI.md).
+The panel file owns controller/DMA buffers and uses QSPI partial transfers with
+separate draw/staging buffers. The LVGL adapter coordinates touch reads and shared
+view lifetime. The shared view uses `ui/ui_port.h` for Wi-Fi status, captions and
+admitted UI actions instead of calling network, SDK or board-key internals directly.
+A common `input/ui_input_router.c` owns gesture epochs, UI-command mailboxes and
+maintenance holds; the board supplies only button sampling and hardware preparation.
+Display callbacks perform no network work. Detach prevents late callbacks. Scene
+behavior is described in [the UI guide](PLATFORM_UI.md).
 
 Current build contract: ESP-IDF v6.1 preview `esp32s31`, 16 MB Flash, Octal PSRAM, `partitions/v2/16m.csv`, board-specific codec, shared LVGL, Newlib and 60 ms RTSA frames. Video is unavailable. Check [the board guide](esp-mosaico-v1.2.zh-CN.md), [memory policy](PSRAM_MEMORY.md) and [validation](s31-validation.md) before changing this contract.
 

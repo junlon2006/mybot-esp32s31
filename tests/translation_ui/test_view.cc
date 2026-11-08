@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: MIT */
 #include "display/lvgl_view.h"
-#include "input/board_keys.h"
+#include "input/ui_input.h"
 #include "network/wifi_control.h"
 #include <mybot/mybot_ui.h>
 #include <mybot/mybot_captions.h>
@@ -40,7 +40,7 @@ struct lv_indev_t {
 static lv_indev_t pointer;
 struct lv_display_t {
     lv_obj_t root;
-    int width = 800, height = 480;
+    int width = 480, height = 480;
 };
 struct lv_timer_t {
     lv_timer_cb_t callback;
@@ -228,10 +228,10 @@ int mybot_ui_copy_caption(uint32_t generation, uint32_t sequence, mybot_caption_
 bool mybot_wifi_is_connected(void) {
     return wifi_connected;
 }
-void mybot_board_keys_ui_event(mybot_key_event_t event) {
+void mybot_ui_input_event(mybot_key_event_t event) {
     events.push_back(event);
 }
-void mybot_board_keys_ui_command(const mybot_ui_command_t *command) {
+void mybot_ui_input_command(const mybot_ui_command_t *command) {
     commands.push_back(*command);
 }
 int mybot_ui_submit(const mybot_ui_command_t *command) {
@@ -254,9 +254,8 @@ static const char *tr(const char *, const char *en) {
     return en;
 }
 #endif
-static const char *home_action(int width) {
-    return width == 480 ? tr("开始翻译 >", "Start translation >")
-                        : tr("开始\n翻译  >", "Let's\ntranslate  >");
+static const char *home_action() {
+    return tr("开始翻译 >", "Start translation >");
 }
 static lv_obj_t *find(lv_obj_t *root, const char *text) {
     if (root->text == text)
@@ -342,9 +341,9 @@ static void update(lv_display_t &display, const mybot_lcd_content_t &content) {
     mybot_lvgl_view_update(&content);
     bounds(&display.root);
 }
-static void test_face_flow(int width) {
+static void test_face_flow() {
     lv_display_t display;
-    display.width = display.root.width = width;
+    display.width = display.root.width = 480;
     display.root.height = 480;
     commands.clear();
     events.clear();
@@ -358,7 +357,7 @@ static void test_face_flow(int width) {
     std::strcpy(content.source_language, "zh-CN");
     std::strcpy(content.target_language, "en-US");
     update(display, content);
-    click(find(&display.root, home_action(width)));
+    click(find(&display.root, home_action()));
     accept_ui_commands = false;
     click(find(&display.root, tr("面对面", "In person")));
     CHECK(commands.empty());
@@ -527,11 +526,9 @@ static void test_face_flow(int width) {
     CHECK(find(&display.root, speak.target_text));
 
     click(find(&display.root, tr("更多 ...", "More ...")));
-    click(find(&display.root, width == 480 ? tr("输出音量", "Output volume")
-                                           : tr("音量与亮度  >", "Volume and brightness  >")));
+    click(find(&display.root, tr("输出音量", "Output volume")));
     CHECK(slider(&display.root));
-    CHECK((find(&display.root, tr("亮度 · 演示", "Brightness · Demo")) != nullptr) ==
-          (width == 800));
+    CHECK(!find(&display.root, tr("亮度 · 演示", "Brightness · Demo")));
     click(find(&display.root, tr("< 返回", "< Back")));
     click(find(&display.root, tr("更多 ...", "More ...")));
     click(find(&display.root, tr("本次字幕与全文  >", "Captions and full text  >")));
@@ -591,16 +588,16 @@ static void test_face_flow(int width) {
     update(display, content);
     CHECK(find(&display.root, tr("翻译已结束", "Translation ended")));
     click(find(&display.root, tr("< 返回", "< Back")));
-    CHECK(find(&display.root, home_action(width)));
+    CHECK(find(&display.root, home_action()));
     mybot_lvgl_view_destroy();
     CHECK(!live && !timer && display.root.children.empty());
     std::puts(
         "PASS face UI: mode/direction readback, turn selection, pause, per-direction captions "
         "and history, failures and unchanged media controls");
 }
-static void test_meeting_flow(int width) {
+static void test_meeting_flow() {
     lv_display_t display;
-    display.width = display.root.width = width;
+    display.width = display.root.width = 480;
     display.root.height = 480;
     commands.clear();
     events.clear();
@@ -615,7 +612,7 @@ static void test_meeting_flow(int width) {
     std::strcpy(content.source_language, "zh-CN");
     std::strcpy(content.target_language, "en-US");
     update(display, content);
-    click(find(&display.root, home_action(width)));
+    click(find(&display.root, home_action()));
     CHECK(find(&display.root, tr("双向会议翻译", "Two-way meeting audio")));
     accept_ui_commands = false;
     click(find(&display.root, tr("会议互译", "Meeting")));
@@ -812,16 +809,14 @@ static void test_meeting_flow(int width) {
         "PASS meeting UI: USB capability, acknowledged source selection, language mapping, "
         "pending locks, both caption routes, simultaneous pause and preserved scene languages");
 }
-int main(int argc, char **argv) {
-    const int width = argc > 1 ? std::atoi(argv[1]) : 480;
-    CHECK(width == 480 || width == 800);
+int main() {
     lv_display_t display;
-    display.root.width = width;
+    display.root.width = 480;
     display.root.height = 480;
     display.width = 480;
     display.height = 320;
     CHECK(mybot_lvgl_view_create(&display) < 0);
-    display.width = width;
+    display.width = 480;
     display.height = 480;
     CHECK(mybot_lvgl_view_create(&display) == 0);
     const unsigned initial_allocations = allocations;
@@ -844,12 +839,10 @@ int main(int argc, char **argv) {
     std::strcpy(content.target_language, "en-US");
     update(display, content);
     CHECK(find(&display.root, tr("Wi-Fi 已连接", "Wi-Fi connected")));
-    CHECK((find(&display.root, tr("电量 --", "Battery --")) != nullptr) == (width == 800));
-    if (width == 480) {
-        const auto *start_label = find(&display.root, home_action(width));
-        CHECK(start_label && start_label->text.find('\n') == std::string::npos);
-        CHECK(start_label->height == 40);
-    }
+    CHECK(!find(&display.root, tr("电量 --", "Battery --")));
+    const auto *start_label = find(&display.root, home_action());
+    CHECK(start_label && start_label->text.find('\n') == std::string::npos);
+    CHECK(start_label->height == 40);
     CHECK(find(&display.root, tr("输出音量 60%", "Output volume 60%")));
     bounds(&display.root);
     auto *volume = slider(&display.root);
@@ -867,7 +860,7 @@ int main(int argc, char **argv) {
     content.volume = 37;
     update(display, content);
     CHECK(find(&display.root, tr("输出音量 37%", "Output volume 37%")));
-    click(find(&display.root, home_action(width)));
+    click(find(&display.root, home_action()));
     bounds(&display.root);
     // The meeting preview can browse languages without changing a real session.
     click(find(&display.root, tr("会议互译", "Meeting")));
@@ -1264,7 +1257,7 @@ int main(int argc, char **argv) {
     content.screen = MYBOT_LCD_SCREEN_READY;
     content.error_code[0] = 0;
     update(display, content);
-    click(find(&display.root, home_action(width)));
+    click(find(&display.root, home_action()));
     click(find(&display.root, tr("媒体翻译", "Listen")));
     click(find(&display.root, tr("日语", "Japanese")));
     click(find(&display.root, tr("韩语", "Korean")));
@@ -1288,8 +1281,8 @@ int main(int argc, char **argv) {
     mybot_lvgl_view_destroy();
     mybot_lvgl_view_destroy();
     CHECK(!live && !timer && display.root.children.empty());
-    test_face_flow(width);
-    test_meeting_flow(width);
+    test_face_flow();
+    test_meeting_flow();
     std::puts("PASS native simulator UI: scene previews, direct language selection, real volume, "
               "pause, streamed captions/history, lifecycle gates and allocation cleanup");
 }

@@ -4,9 +4,9 @@
 
 The S31 board profile enables Octal PSRAM; target defaults select 320 MHz CPU, 200 MHz PSRAM, a 2,048-byte internal malloc preference threshold and 65,536-byte internal reserve. Actual memory use and long-duration stability must be measured on the physical board.
 
-Platform audio data, PCM FIFO/staging, supported task stacks, prompts and HTTPS wrappers request PSRAM when their lifecycle permits. LVGL draw buffers use PSRAM. Mosaico keeps 40-row partial buffers and an internal DMA staging area; Korvo uses two external RGB framebuffers. NVS uses IDF's PSRAM-preferred cache allocation; TLS selects external allocation. Driver allocators still own capabilities/alignment/cache requirements.
+Platform audio data, PCM FIFO/staging, supported task stacks, prompts and HTTPS wrappers request PSRAM when their lifecycle permits. LVGL draw buffers use PSRAM. The display keeps 40-row partial buffers and an internal DMA staging area. NVS uses IDF's PSRAM-preferred cache allocation; TLS selects external allocation. Driver allocators still own capabilities/alignment/cache requirements.
 
-Synchronization objects, task control blocks, ISR state and stacks that perform cache-disabled Flash/NVS operations remain internal where required. A reserve does not guarantee a single contiguous block. The ESP32-S31 supports selected DMA access to PSRAM; the earlier S3 rule that every DMA buffer must be internal does not apply. Respect each S31 peripheral driver's requirements and RGB cache/VSYNC synchronization.
+Synchronization objects, task control blocks, ISR state and stacks that perform cache-disabled Flash/NVS operations remain internal where required. A reserve does not guarantee a single contiguous block. The ESP32-S31 supports selected DMA access to PSRAM; the earlier S3 rule that every DMA buffer must be internal does not apply. Respect each S31 peripheral driver's requirements and QSPI cache synchronization.
 
 PSRAM task stacks use IDF capability-aware task allocation. Owners wait for I/O/callback completion and worker suspension before deleting the task and freeing its stack. Timeout preserves ownership for later cleanup. The shared PCM tests cover failure, partial cleanup, timeout and repeated lifecycle operations.
 

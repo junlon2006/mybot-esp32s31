@@ -18,10 +18,8 @@ import sys
 
 from capture_build_source import verify as verify_build_provenance
 
-BOARD_CODECS = {
-    "esp-mosaico-v1.2": "CONFIG_CODEC_ES8311_SUPPORT",
-    "esp32-s31-korvo-1": "CONFIG_CODEC_ES8389_SUPPORT",
-}
+SUPPORTED_BOARD = "esp-mosaico-v1.2"
+BOARD_CODEC = "CONFIG_CODEC_ES8311_SUPPORT"
 RTSA_SHA256 = "7c6a81ab91f3b44c0cd581f84f779d7a022dac159020c19bdddd07c95da31dea"
 RTSA_FILES = {
     "lib/riscv32/libagora-rtc-sdk.a": "573a00d58ad19cc0b66fc1e41f17e23ada34b77fe5c7a8c3e8fa8729f73fb6c5",
@@ -222,17 +220,19 @@ def verify_build(build_dir: Path, language: str) -> dict:
         build_file(build_dir, "CMakeCache.txt").read_text(), re.MULTILINE,
     )
     board = board_match.group(1).strip() if board_match else None
-    if board not in BOARD_CODECS:
-        raise RuntimeError(f"unsupported or missing MYBOT_BOARD in build: {board}")
+    if board != SUPPORTED_BOARD:
+        raise RuntimeError(f"unsupported or missing MYBOT_BOARD: expected {SUPPORTED_BOARD}, got {board}")
     config = dict(re.findall(
         r"^(CONFIG_\w+)=(.*)$", build_file(build_dir, "sdkconfig").read_text(), re.MULTILINE
     ))
+    if config.get("CONFIG_CODEC_ES8389_SUPPORT") == "y":
+        raise RuntimeError("Mosaico V1.2 must not enable CONFIG_CODEC_ES8389_SUPPORT")
     required = {
         "CONFIG_IDF_TARGET": '"esp32s31"',
         "CONFIG_ESPTOOLPY_FLASHSIZE_16MB": "y",
         "CONFIG_SPIRAM": "y",
         "CONFIG_SPIRAM_MODE_OCT": "y",
-        BOARD_CODECS[board]: "y",
+        BOARD_CODEC: "y",
         "CONFIG_MYBOT_LVGL_UI": "y",
         "CONFIG_MYBOT_AUDIO_PTIME_60": "y",
         "CONFIG_MYBOT_AUDIO_PTIME_MS": "60",
@@ -255,7 +255,7 @@ def verify_build(build_dir: Path, language: str) -> dict:
     for symbol in AOSL_SYMBOLS:
         if not re.search(rf"^{symbol}\s+esp-idf/aosl/libaosl\.a\(", map_text, re.MULTILINE):
             raise RuntimeError(f"{symbol} must come from local S31 AOSL")
-    if board == "esp-mosaico-v1.2" and config.get("CONFIG_USB_DEVICE_UAC_AS_PART") == "y":
+    if config.get("CONFIG_USB_DEVICE_UAC_AS_PART") == "y":
         verify_project_uac_runtime(build_dir, map_text)
         verify_usb_wrappers(build_dir, description["app_elf"], map_text)
     flash = json.loads(build_file(build_dir, "flasher_args.json").read_text())

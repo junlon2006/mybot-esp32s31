@@ -3,4 +3,4 @@ config MYBOT_LVGL_UI
     bool
     default y
     help
-        All display boards use LVGL. This capability is selected by MYBOT_BOARD.
+        The Mosaico firmware uses the shared LVGL workflow.

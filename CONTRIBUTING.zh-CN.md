@@ -2,7 +2,8 @@
 
 [English](CONTRIBUTING.md) · [简体中文](CONTRIBUTING.zh-CN.md)
 
-默认及后续目标为 ESP-Mosaico CoreBoard V1.2；旧 ESP32-S31-Korvo-1 V1.1 profile 继续保留。两者使用 ESP-IDF v6.1 preview 和 60 ms RTSA 音频帧。改动应聚焦目标，保留无关工作。
+仅支持 ESP-Mosaico CoreBoard V1.2，使用 ESP-IDF v6.1 preview 和 60 ms RTSA
+音频帧。改动应聚焦目标，保留无关工作。
 
 ## 职责边界
 
@@ -14,17 +15,16 @@ MyBot SDK 是项目维护的 V2VT 媒体／面对面／会议翻译分支，保�
 
 ## 验证
 
-安装 ffmpeg 和 ESP-IDF v6.1。固定版本 RTSA payload 随工程提供。开发直接使用 `idf.py` 构建中文，所有本地编译固定使用 `build/korvo-s31` 和 `build/korvo-s31/sdkconfig`：
+安装 ffmpeg 和 ESP-IDF v6.1。固定版本 RTSA payload 随工程提供。开发直接使用 `idf.py` 构建中文，所有本地编译固定使用 `build/mosaico-v1.2` 和 `build/mosaico-v1.2/sdkconfig`：
 
 ```sh
 . /path/to/esp-idf/export.sh
 test "$(idf.py --preview --version)" = "ESP-IDF v6.1"
-idf.py --preview -B build/korvo-s31 \
-  -DMYBOT_BOARD=esp-mosaico-v1.2 \
+idf.py --preview -B build/mosaico-v1.2 \
   -DMYBOT_MOSAICO_UAC_TEST=OFF \
-  -DSDKCONFIG=build/korvo-s31/sdkconfig \
+  -DSDKCONFIG=build/mosaico-v1.2/sdkconfig \
   -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;ci/ptime60.defaults" build size
-python3 scripts/check_s31_build.py --build-dir build/korvo-s31 --language zh-CN
+python3 scripts/check_s31_build.py --build-dir build/mosaico-v1.2 --language zh-CN
 git diff --check
 ```
 

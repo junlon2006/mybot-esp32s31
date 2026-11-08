@@ -1,5 +1,0 @@
-# SPDX-License-Identifier: Apache-2.0
-# Diagnostic-only boot: UART console and USB Host enumeration, no translation.
-# CONFIG_MYBOT_USB_CDC_PROBE is not set
-CONFIG_MYBOT_USB_HOST_PROBE=y
-CONFIG_USB_HOST_CONTROL_TRANSFER_MAX_SIZE=1024

@@ -24,12 +24,12 @@ jobs:
           clang-format --version
       - name: Format check
         run: |
-          find main diagnostics/mosaico_uac components/mybot_platform components/mybot_stack/aosl/s31_port tests/aosl_s31_tasks tests/korvo_s31_display tests/mosaico_display tests/mosaico_hardware tests/mosaico_usb tests/mosaico_usb_audio \
-            tests/korvo_s31_audio tests/korvo_s31_input tests/pcm_playback_buffer tests/media_pause \
+          find main diagnostics/mosaico_uac components/mybot_platform components/mybot_stack/aosl/s31_port tests/aosl_s31_tasks tests/mosaico_display tests/mosaico_hardware tests/mosaico_usb tests/mosaico_usb_audio \
+            tests/codec_audio tests/mosaico_input tests/pcm_playback_buffer tests/media_pause \
             tests/conversation_http_trace tests/http_time_sync tests/translation_http tests/translation_ui tests/translation_client \
-            tests/translation_lifecycle tests/translation_rtc tests/translation_control tests/translation_state tests/translation_volume tests/translation_captions tests/kv_store tests/storage_init tests/factory_reset tests/usb_cdc_probe tests/usb_host_probe \
+            tests/translation_lifecycle tests/translation_rtc tests/translation_control tests/translation_state tests/translation_volume tests/translation_captions tests/kv_store tests/storage_init tests/factory_reset \
             -path '*/mybot_stack/agora_rtc' -prune -o \
-            -type f ! -path '*/boards/esp32-s31-korvo-1/reference/*' \
+            -type f \
             \( -name '*.c' -o -name '*.h' -o -name '*.cc' -o -name '*.cpp' \) \
             -exec clang-format --dry-run --Werror {} +
       - name: Translation SDK format and SPDX
@@ -65,10 +65,10 @@ jobs:
           fi
       - name: SPDX check
         run: |
-          find main diagnostics/mosaico_uac components/mybot_platform components/mybot_stack/aosl/s31_port tests/aosl_s31_tasks tests/korvo_s31_display tests/mosaico_display tests/mosaico_hardware tests/mosaico_usb tests/mosaico_usb_audio \
-            tests/korvo_s31_audio tests/korvo_s31_input tests/pcm_playback_buffer tests/media_pause \
+          find main diagnostics/mosaico_uac components/mybot_platform components/mybot_stack/aosl/s31_port tests/aosl_s31_tasks tests/mosaico_display tests/mosaico_hardware tests/mosaico_usb tests/mosaico_usb_audio \
+            tests/codec_audio tests/mosaico_input tests/pcm_playback_buffer tests/media_pause \
             tests/conversation_http_trace tests/http_time_sync tests/translation_http tests/translation_ui tests/translation_client \
-            tests/translation_lifecycle tests/translation_rtc tests/translation_control tests/translation_state tests/translation_volume tests/translation_captions tests/kv_store tests/storage_init tests/factory_reset tests/usb_cdc_probe tests/usb_host_probe \
+            tests/translation_lifecycle tests/translation_rtc tests/translation_control tests/translation_state tests/translation_volume tests/translation_captions tests/kv_store tests/storage_init tests/factory_reset \
             -path '*/mybot_stack/agora_rtc' -prune -o -type f \
             \( -name '*.c' -o -name '*.h' -o -name '*.cc' -o -name '*.cpp' \) \
             -print0 | while IFS= read -r -d '' file; do
@@ -79,16 +79,15 @@ jobs:
             done
       - name: S31 display and touch host lifecycle tests
         run: |
-          sh tests/korvo_s31_display/run.sh
           sh tests/mosaico_display/run.sh
-          sh tests/korvo_s31_input/run.sh
+          sh tests/mosaico_input/run.sh
           sh tests/translation_ui/run.sh
       - name: S31 AOSL task allocation and deletion tests
         run: sh tests/aosl_s31_tasks/run.sh
       - name: Mosaico hardware revision and power initialization tests
         run: sh tests/mosaico_hardware/run.sh
-      - name: S31 TDM audio and ADC input host lifecycle tests
-        run: sh tests/korvo_s31_audio/run.sh
+      - name: Mosaico codec audio lifecycle tests
+        run: sh tests/codec_audio/run.sh
       - name: Translation protocol, lifecycle and RTC ownership tests
         run: |
           sh tests/translation_http/run.sh
@@ -114,11 +113,6 @@ jobs:
         run: |
           sh tests/mosaico_usb/run_init.sh
           sh tests/mosaico_usb_audio/run.sh
-      - name: Native USB probe host tests
-        run: |
-          sh tests/usb_cdc_probe/run.sh
-          sh tests/usb_host_probe/run.sh
-          PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests/usb_cdc_probe -p 'test_*.py' -v
       - name: Shared PCM playback buffer lifecycle regression tests
         run: |
           sh tests/pcm_playback_buffer/run.sh
@@ -129,12 +123,12 @@ jobs:
         run: |
           cat >> "$GITHUB_STEP_SUMMARY" <<'SUMMARY'
           Source formatting, SPDX and host lifecycle tests run on every push and pull request.
-          Both boards and firmware languages build on push, pull request and manual dispatch using the pinned bundled RTSA library.
+          Both firmware languages build on push, pull request and manual dispatch using the pinned bundled RTSA library.
           Artifacts contain the merged image, checksums, manifest and flash instructions. These checks do not run on hardware.
           SUMMARY
 
   idf-build:
-    name: idf-6.1-${{ matrix.board }}-${{ matrix.language }}-ptime60-no-video
+    name: idf-6.1-esp-mosaico-v1.2-${{ matrix.language }}-ptime60-no-video
     needs: quality
     runs-on: ubuntu-24.04
     container:
@@ -143,22 +137,14 @@ jobs:
       run:
         shell: bash
     env:
-      BUILD_DIR: build/ci-${{ matrix.board }}-${{ matrix.language }}
+      BUILD_DIR: build/ci-esp-mosaico-v1.2-${{ matrix.language }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - board: esp-mosaico-v1.2
-            language: zh-CN
+          - language: zh-CN
             defaults: ci/ptime60.defaults
-          - board: esp-mosaico-v1.2
-            language: en-US
-            defaults: ci/ptime60.defaults;ci/en-us.defaults
-          - board: esp32-s31-korvo-1
-            language: zh-CN
-            defaults: ci/ptime60.defaults
-          - board: esp32-s31-korvo-1
-            language: en-US
+          - language: en-US
             defaults: ci/ptime60.defaults;ci/en-us.defaults
     steps:
       - uses: actions/checkout@v4
@@ -178,29 +164,27 @@ jobs:
         run: |
           source /opt/esp/idf/export.sh >/dev/null
           idf.py --preview -B "$BUILD_DIR" \
-            -DMYBOT_BOARD="${{ matrix.board }}" \
             -DSDKCONFIG="$BUILD_DIR/sdkconfig" \
             -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;${{ matrix.defaults }}" \
             build
       - name: Verify composite descriptors against pinned USB headers
-        if: matrix.board == 'esp-mosaico-v1.2'
         run: sh tests/mosaico_usb/run_descriptors.sh
       - name: Report size, verify S31 link and package firmware
         run: |
           source /opt/esp/idf/export.sh >/dev/null
           idf.py --preview -B "$BUILD_DIR" size
           mkdir -p "$GITHUB_WORKSPACE/releases"
-          merged="$GITHUB_WORKSPACE/releases/${{ matrix.board }}-${{ matrix.language }}.bin"
+          merged="$GITHUB_WORKSPACE/releases/esp-mosaico-v1.2-${{ matrix.language }}.bin"
           idf.py --preview -B "$BUILD_DIR" merge-bin -o "$merged"
           python3 scripts/check_s31_build.py --build-dir "$BUILD_DIR" \
             --language "${{ matrix.language }}" --merged "$merged"
       - name: Upload firmware
         uses: actions/upload-artifact@v4
         with:
-          name: mybot-${{ matrix.board }}-${{ matrix.language }}-ptime60-no-video-${{ github.sha }}
+          name: mybot-esp-mosaico-v1.2-${{ matrix.language }}-ptime60-no-video-${{ github.sha }}
           if-no-files-found: error
           path: |
-            releases/${{ matrix.board }}-${{ matrix.language }}.bin
-            releases/${{ matrix.board }}-${{ matrix.language }}.manifest.json
-            releases/${{ matrix.board }}-${{ matrix.language }}.sha256
-            releases/${{ matrix.board }}-${{ matrix.language }}.flash.txt
+            releases/esp-mosaico-v1.2-${{ matrix.language }}.bin
+            releases/esp-mosaico-v1.2-${{ matrix.language }}.manifest.json
+            releases/esp-mosaico-v1.2-${{ matrix.language }}.sha256
+            releases/esp-mosaico-v1.2-${{ matrix.language }}.flash.txt

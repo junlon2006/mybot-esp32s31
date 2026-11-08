@@ -22,18 +22,8 @@ if(MYBOT_MOSAICO_UAC_TEST)
     return()
 endif()
 
-set(MYBOT_BOARD "esp-mosaico-v1.2" CACHE STRING "mybot target board")
-include("${CMAKE_CURRENT_LIST_DIR}/components/mybot_platform/boards/boards.cmake")
-set_property(CACHE MYBOT_BOARD PROPERTY STRINGS ${MYBOT_SUPPORTED_BOARDS})
-mybot_resolve_board("${MYBOT_BOARD}")
-include("${MYBOT_BOARD_PROFILE}")
-
-if(DEFINED MYBOT_CONFIGURED_BOARD AND NOT MYBOT_CONFIGURED_BOARD STREQUAL MYBOT_BOARD)
-    message(FATAL_ERROR
-        "Build directory was configured for MYBOT_BOARD=${MYBOT_CONFIGURED_BOARD}; "
-        "use a clean build directory for ${MYBOT_BOARD}")
-endif()
-set(MYBOT_CONFIGURED_BOARD "${MYBOT_BOARD}" CACHE INTERNAL "configured mybot board")
+set(MYBOT_BOARD "esp-mosaico-v1.2" CACHE INTERNAL "fixed mybot target board")
+include("${CMAKE_CURRENT_LIST_DIR}/components/mybot_platform/boards/esp-mosaico-v1.2/board.cmake")
 
 if(DEFINED IDF_TARGET AND NOT IDF_TARGET STREQUAL MYBOT_BOARD_TARGET)
     message(FATAL_ERROR
@@ -50,15 +40,10 @@ if(NOT SDKCONFIG_DEFAULTS)
 endif()
 set(_mybot_sdkconfig_defaults ${SDKCONFIG_DEFAULTS})
 set(_mybot_common_defaults "${CMAKE_CURRENT_LIST_DIR}/sdkconfig.defaults")
-list(REMOVE_ITEM _mybot_sdkconfig_defaults "sdkconfig.defaults" "${_mybot_common_defaults}")
-list(PREPEND _mybot_sdkconfig_defaults "${_mybot_common_defaults}")
-list(FILTER _mybot_sdkconfig_defaults EXCLUDE REGEX
-     "/components/mybot_platform/boards/[^/]+/sdkconfig\\.defaults$")
-list(FIND _mybot_sdkconfig_defaults "${MYBOT_BOARD_SDKCONFIG_DEFAULTS}"
-     _mybot_board_defaults_index)
-if(_mybot_board_defaults_index EQUAL -1)
-    list(APPEND _mybot_sdkconfig_defaults "${MYBOT_BOARD_SDKCONFIG_DEFAULTS}")
-endif()
+list(REMOVE_ITEM _mybot_sdkconfig_defaults "sdkconfig.defaults" "${_mybot_common_defaults}"
+     "${MYBOT_BOARD_SDKCONFIG_DEFAULTS}")
+list(PREPEND _mybot_sdkconfig_defaults "${_mybot_common_defaults}"
+     "${MYBOT_BOARD_SDKCONFIG_DEFAULTS}")
 set(SDKCONFIG_DEFAULTS "${_mybot_sdkconfig_defaults}")
 
 set(PROJECT_VER "0.1.0")
@@ -80,7 +65,5 @@ idf_build_set_property(MYBOT_BOARD "${MYBOT_BOARD}")
 project(mybot_esp32s31)
 
 # Apply the shared USB configuration after every component target exists.
-if(MYBOT_BOARD STREQUAL "esp-mosaico-v1.2")
-    include("${CMAKE_CURRENT_LIST_DIR}/components/mybot_platform/src/drivers/usb/mosaico_usb.cmake")
-endif()
+include("${CMAKE_CURRENT_LIST_DIR}/components/mybot_platform/src/drivers/usb/mosaico_usb.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/scripts/build_source.cmake")

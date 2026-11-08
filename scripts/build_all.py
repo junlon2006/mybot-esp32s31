@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
-"""Build the registered ESP32-S31 firmware profiles for isolated automation.
+"""Build the ESP-Mosaico V1.2 firmware variants for isolated automation.
 
-Mosaico V1.2 is the default; Korvo remains available through --board. Both use
-60 ms audio without video. Each board/language has its own build and sdkconfig;
-merged images and verified delivery metadata are written to releases/ by default.
-Local development uses idf.py directly in build/korvo-s31.
+Both languages use 60 ms audio without video and have isolated build/sdkconfig
+directories. Verified images and metadata are written to releases/ by default.
+Local development uses idf.py directly in build/mosaico-v1.2.
 """
 
 from __future__ import annotations
@@ -13,7 +12,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import re
 import shlex
 import shutil
 import stat
@@ -24,11 +22,9 @@ from pathlib import Path
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-BOARDS_CMAKE = PROJECT_ROOT / "components/mybot_platform/boards/boards.cmake"
 RELEASES_DIR = PROJECT_ROOT / "releases"
 GENERATED_ROOT_MARKER = ".mybot-generated-root.json"
 DEFAULT_BOARD = "esp-mosaico-v1.2"
-S31_BOARDS = (DEFAULT_BOARD, "esp32-s31-korvo-1")
 
 
 def format_elapsed(seconds: float) -> str:
@@ -36,26 +32,6 @@ def format_elapsed(seconds: float) -> str:
     hours, remainder = divmod(total, 3600)
     minutes, seconds = divmod(remainder, 60)
     return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
-
-
-def supported_boards() -> list[str]:
-    text = re.sub(r"#[^\n]*", "", BOARDS_CMAKE.read_text(encoding="utf-8"))
-    declaration = re.search(r"\bset\s*\(\s*MYBOT_SUPPORTED_BOARDS\b([^)]*)\)", text, re.DOTALL)
-    body = declaration.group(1) if declaration else ""
-    names = re.findall(r'"([^"\n]+)"', body)
-    if not names or len(names) != len(set(names)):
-        raise RuntimeError(f"missing or duplicate registered S31 boards in {BOARDS_CMAKE}")
-    for name in names:
-        if name not in S31_BOARDS:
-            raise RuntimeError(f"unsupported registered S31 board: {name}")
-        profile_path = PROJECT_ROOT / "components/mybot_platform/boards" / name / "board.cmake"
-        if not profile_path.is_file():
-            raise RuntimeError(f"board profile is missing: {profile_path}")
-        profile = re.sub(r"#[^\n]*", "", profile_path.read_text(encoding="utf-8"))
-        targets = re.findall(r'\bset\s*\(\s*MYBOT_BOARD_TARGET\s+"?([^"\s)]+)"?\s*\)', profile)
-        if targets != ["esp32s31"]:
-            raise RuntimeError(f"board profile must declare the esp32s31 target: {profile_path}")
-    return names
 
 
 def idf_command() -> str:
@@ -225,14 +201,13 @@ def prepare_generated_root(path: Path, label: str, dry_run: bool, *, clean: bool
 
 def build_variant(
     idf: str,
-    board: str,
     language: str,
     build_root: Path,
     output_root: Path,
     dry_run: bool,
 ) -> Path:
     started_at = time.perf_counter()
-    name = f"{board}-{language}"
+    name = f"{DEFAULT_BOARD}-{language}"
     build_dir = build_root / f"build-{name}"
     sdkconfig = build_dir / "sdkconfig"
     output_path = output_root / f"{name}.bin"
@@ -244,7 +219,6 @@ def build_variant(
     base_args = [
         "-B",
         str(build_dir),
-        f"-DMYBOT_BOARD={board}",
         f"-DSDKCONFIG={sdkconfig}",
         f"-DSDKCONFIG_DEFAULTS={defaults_value}",
     ]
@@ -274,11 +248,6 @@ def build_variant(
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--board",
-        action="append",
-        help=f"registered S31 board; repeat for multiple boards (default: {DEFAULT_BOARD})",
-    )
-    parser.add_argument(
         "--language",
         choices=("zh-CN", "en-US", "both"),
         default="both",
@@ -307,11 +276,6 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    registered = supported_boards()
-    selected = args.board or [DEFAULT_BOARD]
-    unknown = sorted(set(selected) - set(registered))
-    if unknown:
-        raise RuntimeError(f"unsupported board(s): {', '.join(unknown)}")
     languages = ("zh-CN", "en-US") if args.language == "both" else (args.language,)
 
     build_root, output_root = validate_output_roots(args.build_root, args.output_root)
@@ -322,11 +286,8 @@ def main() -> int:
     outputs: list[Path] = []
     batch_started_at = time.perf_counter()
     try:
-        for board in selected:
-            for language in languages:
-                outputs.append(
-                    build_variant(idf, board, language, build_root, output_root, args.dry_run)
-                )
+        for language in languages:
+            outputs.append(build_variant(idf, language, build_root, output_root, args.dry_run))
     finally:
         print(f"\nTotal elapsed: {format_elapsed(time.perf_counter() - batch_started_at)}")
 

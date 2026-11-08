@@ -14,12 +14,6 @@ set(mybot_main_sources "app_main.c" "storage_init.c")
 if(CONFIG_MYBOT_DEBUG_RESOURCE_MONITOR)
     list(APPEND mybot_main_sources "resource_monitor.c")
 endif()
-if(CONFIG_MYBOT_USB_CDC_PROBE)
-    list(APPEND mybot_main_sources "usb_cdc_probe.c" "usb_cdc_probe_diag.c")
-endif()
-if(CONFIG_MYBOT_USB_HOST_PROBE)
-    list(APPEND mybot_main_sources "usb_host_probe.c")
-endif()
 
 idf_component_register(
     SRCS ${mybot_main_sources}
@@ -36,6 +30,4 @@ idf_component_register(
         esp_timer
         heap
         mbedtls
-    PRIV_REQUIRES
-        esp_hal_usb
 )

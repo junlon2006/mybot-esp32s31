@@ -3,7 +3,7 @@
 #include "display/mosaico_panel.h"
 #include "display/mosaico_touch.h"
 #include "display/lvgl_view.h"
-#include "input/mosaico_keys.h"
+#include "input/ui_input.h"
 
 #include <mybot/platform/mybot_lcd.h>
 
@@ -129,7 +129,7 @@ void read_touch(lv_indev_t *input, lv_indev_data_t *data) {
     data->state = LV_INDEV_STATE_RELEASED;
     bool valid = !__atomic_load_n(&context.failed, __ATOMIC_ACQUIRE) &&
                  mybot_mosaico_touch_read(&context.touch, &x, &y, &pressed) == 0;
-    mybot_mosaico_keys_touch_sample(valid, pressed);
+    mybot_ui_input_touch_sample(valid, pressed);
     if (!valid) {
         context.touch_released = false;
         lv_indev_reset(input, nullptr);
@@ -179,7 +179,7 @@ int release_display() {
             context.apply_timer = nullptr;
         }
         if (context.input) {
-            mybot_mosaico_keys_touch_sample(false, false);
+            mybot_ui_input_touch_sample(false, false);
             lv_indev_delete(context.input);
             context.input = nullptr;
         }

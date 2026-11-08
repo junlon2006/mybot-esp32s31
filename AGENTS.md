@@ -1,8 +1,7 @@
 # mybot-esp32s31 agent guide
 
-The default and future design target is ESP-Mosaico CoreBoard V1.2 on ESP-IDF v6.1,
-selected by `MYBOT_BOARD=esp-mosaico-v1.2`. The earlier `esp32-s31-korvo-1` profile
-is retained for existing devices. Use `idf.py --preview`.
+The only supported hardware target is ESP-Mosaico CoreBoard V1.2 on ESP-IDF v6.1.
+The former multi-board selector has been removed. Use `idf.py --preview`.
 User instructions take precedence. Preserve unrelated changes; do not commit or push unless asked.
 
 The MyBot SDK under `components/mybot_stack/mybot_sdk/mybot/` is a project-maintained
@@ -13,17 +12,9 @@ USB capture feeds LISTEN with zero AEC reference; physical MIC feeds SPEAK with 
 physical speaker reference. LISTEN plays on the codec; SPEAK returns through USB IN. There is no
 assistant compatibility runtime. Keep the supplied RTSA library unchanged.
 
-An optional `MYBOT_USB_CDC_PROBE` diagnostic uses native USB Device CDC and leaves
-UART0 as the console/flash path. It is off by default; this Korvo probe does not
-provide USB audio or meeting routing. CDC diagnostic boots skip NVS, network, display, audio and
-translation startup. J2's host VBUS is hardwired on: firmware does not control or
-validate its power connection. See `docs/USB_CDC_PROBE.zh-CN.md` for its scope.
-The mutually exclusive `MYBOT_USB_HOST_PROBE` runs a diagnostic-only boot with a
-direct USB peripheral on J2. It prints descriptors without accessing files; no
-network, display, audio or translation starts. See `docs/USB_HOST_PROBE.zh-CN.md`.
 The separate CMake option `MYBOT_MOSAICO_UAC_TEST` builds only the V1.2 diagnostic
-under `diagnostics/mosaico_uac`, still in `build/korvo-s31`. It is not a Korvo image
-or the Mosaico translation image. Its passed UAC firmware is a separate hardware
+under `diagnostics/mosaico_uac`, in `build/mosaico-uac`. It is not the Mosaico
+translation image. Its passed UAC firmware is a separate hardware
 baseline; the production Mosaico profile runs media/face-to-face and bidirectional meeting translation
 with a 480x480 LVGL UI and one composite UAC2/CDC USB device. Meeting converts USB OUT
 48 kHz stereo to SDK 16 kHz mono and interpolates SPEAK PCM back to USB IN. USB IN
@@ -34,7 +25,6 @@ Keep these other source inputs immutable:
 - `components/mybot_stack/aosl/` except the component wrapper `CMakeLists.txt` and the
   project-maintained `s31_port/` adapter
 - `components/esp_codec_dev/` (official 1.5.9 snapshot)
-- the official ADC reference source under the S31 board's `reference/`
 - supplied RTSA header/library and external reference repositories
 
 Adapt SDK CMake wrappers, `components/mybot_platform`, board metadata, main, CI,
@@ -48,9 +38,9 @@ without an explicit new request. Display boards use the shared LVGL view automat
 Shared I2C0 belongs to the board; codec/touch adapters must not delete it.
 
 Mosaico uses ES8311, 16 kHz standard Philips I2S, two 16-bit slots and MCLK256.
-Its MCU TX52/RX40 must not be reversed based on codec DOUT/DIN net names. Korvo
-retains ES8389 TDM4, 64 BCLK/frame and no MCLK output. Both share audio lifecycle
-and bounded playback logic while keeping board-specific bus/codec setup. The public SDK
+Its MCU TX52/RX40 must not be reversed based on codec DOUT/DIN net names.
+Audio lifecycle and bounded playback logic remain separate from the board bus
+and codec setup. The public SDK
 contract remains 16 kHz mono signed 16-bit PCM and frame counts. Do not invent
 register values or claim physical slot/quality validation from host tests.
 Capture/playback must remain independent, with shared codec references and bounded
@@ -74,19 +64,18 @@ Original SDK archives, firmware and generated outputs are ignored and must not b
 
 Before handing off changes, run relevant host lifecycle/fault-injection tests,
 clang-format/SPDX and git diff --check; build Chinese firmware with direct idf.py during development.
-All local firmware builds use `build/korvo-s31` and `build/korvo-s31/sdkconfig`;
+All local firmware builds use `build/mosaico-v1.2` and `build/mosaico-v1.2/sdkconfig`;
 do not create or switch to another local build directory. CI jobs retain isolated
 build/sdkconfig directories. The builder supports dry-run; its safe cleanup
 requires Python 3.11+, while direct IDF builds support the installed IDF
 Python environment. Record binary/config/map checks separately from real hardware
 results. Update board docs, validation, source provenance and license notices when
-inputs or hardware facts change. The Korvo media/face-to-face baseline and Mosaico diagnostic USB microphone/speaker
+inputs or hardware facts change. The Mosaico diagnostic USB microphone/speaker
 have user-reported confirmation. The user also confirmed normal Mosaico 480x480
 caption display after changing partial buffers to 40 rows; keep that display baseline. The user
 confirmed PC-audio meeting listening plays translated Chinese on the device and reported
 bidirectional meeting tests passing after the PSRAM task-stack revision (e279926).
-Mosaico media/face-to-face support is implemented; the earlier scene acceptance is Korvo's.
-Later review fixes
+Mosaico media/face-to-face support is implemented. Later review fixes
 have host/build results only until another hardware result is recorded.
 Translation quality, AEC, reconnect/endurance, USB current and VCC ramp behavior require their own results.
 Translation route subscription, language controls, cloud AEC and recovery require
