@@ -74,6 +74,7 @@ idf_component_register(
         "src/services/network/http_time_sync.c"
         "src/services/network/conversation_http_trace.c"
         "src/services/storage/kv_store.c"
+        "src/services/storage/factory_reset.c"
         "src/services/network/wifi.cpp"
         "src/services/announcement/embedded_pcm_assets.c"
         "src/services/audio/pcm_playback_buffer.c"
@@ -88,6 +89,7 @@ idf_component_register(
         aosl
         esp-wifi-connect
         esp_netif
+        esp_system
         esp-tls
         esp_hw_support
         mbedtls

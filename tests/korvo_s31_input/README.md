@@ -8,9 +8,10 @@ Touch samples alone never start or stop translation. A valid LVGL button click
 posts its semantic event through a bounded mailbox. Tests cover language/volume
 buttons, active-session language locking, cancel while connecting, cleanup retry,
 unknown-outcome start suppression, stale SDK epochs, read-error cancellation,
-held touches, burst coalescing and callback ordering. Physical PLAY uses the same
-translation start/stop eligibility. SDK work runs on the key worker, outside the
-LVGL lock.
+held touches, burst coalescing and callback ordering. Physical PLAY on Korvo uses
+the same translation start/stop eligibility. Mosaico's AI key has no short-press
+action: three seconds requests provisioning and ten seconds requests factory reset.
+SDK work runs on the key worker, outside the LVGL lock.
 
 Parameterized language/volume/pause commands use a separate copied single-slot
 mailbox with the same gesture/epoch validation. Tests verify copying, saturation,

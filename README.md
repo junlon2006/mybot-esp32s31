@@ -35,8 +35,8 @@ and current limitations.
 - A shared bounded PCM playback buffer with independent capture/playback and reference-counted codec ownership.
 - ES8311 standard I2S stereo with MCLK256; the Mosaico adapter converts to/from SDK mono PCM.
 - A native 480×480 LVGL layout for Mosaico CO5300 QSPI / CST9220 touch; the earlier Korvo keeps its 800×480 layout.
-- Native media and face-to-face controls for languages, start/stop, local pause and actual volume;
-  The AI key also starts/stops translation. Face-to-face shares one parent session, two RTC connections
+- Native media and face-to-face controls for languages, start/stop, local pause and actual volume.
+  Mosaico touch is its only translation start/stop input; Korvo retains PLAY. Face-to-face shares one parent session, two RTC connections
   and one RTM channel subscription. Mosaico meetings translate PC English to the device speaker in Chinese while translating the device microphone to English on the PC USB input.
 - Localized pairing and Wi-Fi provisioning prompts, with the actual hotspot name shown during
   provisioning.
@@ -93,10 +93,11 @@ station has a usable IP address. A provisioning request stops MyBot first and re
 reconnection.
 
 Open Media translation, select input/output languages and use its start/stop controls. Pause
-retains the cloud session; empty screen taps have no action. A short Mosaico AI-key press starts/stops
-translation, cancels a pending start or retries cleanup. Hold AI for 3 seconds to provision Wi-Fi.
-On-screen volume is saved in NVS. Live captions, scrollable full text and session history share RTM text.
-See the [translation UI](docs/PLATFORM_UI.md).
+retains the cloud session; empty screen taps have no action. The Mosaico AI key is a maintenance
+control: a press shorter than 3 seconds has no action, holding for 3 seconds stops MyBot and enters
+Wi-Fi provisioning, and continuing to hold for 10 seconds erases local NVS and restarts into
+provisioning. On-screen volume is saved in NVS. Live captions, scrollable full text and session
+history share RTM text. See the [translation UI](docs/PLATFORM_UI.md).
 
 Mosaico translation firmware exposes one native Type-C UAC2/CDC composite device. Meetings
 send PC playback to the LISTEN Agent and the physical microphone to the SPEAK Agent concurrently.

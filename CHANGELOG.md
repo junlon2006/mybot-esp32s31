@@ -2,6 +2,8 @@
 
 ## Unreleased — standalone S31 translation
 
+- Make the Mosaico AI key maintenance-only: short presses do nothing, three seconds enters Wi-Fi provisioning, and ten seconds erases local NVS on the following boot and restarts into provisioning.
+
 - Keep UAC clock/volume/mute state locally and use the pinned UAC package only for descriptors/configuration, removing its unused audio tasks and buffers.
 
 - Simplify the automation builder to registered S31 profiles, default to Mosaico, and remove unused video/S3 fallbacks.

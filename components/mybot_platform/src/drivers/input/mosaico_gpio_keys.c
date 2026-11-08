@@ -2,6 +2,7 @@
 #include <mybot/mybot.h>
 #include <mybot/platform/mybot_key.h>
 #include "mybot_platform/board.h"
+#include "mybot_platform/factory_reset.h"
 #include "input/mosaico_keys.h"
 #include "board_config.h"
 #include "driver/gpio.h"
@@ -64,22 +65,6 @@ static bool event_matches_gesture(mybot_key_event_t event, uint32_t gesture, myb
     return event_allowed(event, state) &&
            (pressed_state == state ||
             (event == MYBOT_KEY_EVENT_CONVERSATION_STOP && start_completed(pressed_state, state)));
-}
-
-static uint32_t conversation_press(void) {
-    uint32_t epoch = __atomic_load_n(&s_epoch, __ATOMIC_ACQUIRE);
-    mybot_state_t state = mybot_get_state();
-    mybot_key_event_t event = event_allowed(MYBOT_KEY_EVENT_CONVERSATION_START, state)
-                                  ? MYBOT_KEY_EVENT_CONVERSATION_START
-                                  : MYBOT_KEY_EVENT_CONVERSATION_STOP;
-    return (epoch & 1U) && event_allowed(event, state)
-               ? (epoch << 9) | ((uint32_t)state << 4) | ((unsigned)event + 1U)
-               : 0;
-}
-
-static bool conversation_press_valid(uint32_t press) {
-    return press && (press >> 9) == __atomic_load_n(&s_epoch, __ATOMIC_ACQUIRE) &&
-           event_matches_gesture((mybot_key_event_t)((press & 15U) - 1U), press, mybot_get_state());
 }
 
 void mybot_mosaico_keys_touch_sample(bool valid, bool pressed) {
@@ -184,26 +169,17 @@ static void dispatch_touch(void) {
     xSemaphoreGive(s_callback_lock);
 }
 
-static void short_press(uint32_t press) {
-    xSemaphoreTake(s_callback_lock, portMAX_DELAY);
-    if (s_emit && conversation_press_valid(press))
-        s_emit((mybot_key_event_t)((press & 15U) - 1U), s_user);
-    xSemaphoreGive(s_callback_lock);
-}
-
 static void key_task(void *arg) {
     (void)arg;
     bool candidate = false, stable = false, released = false;
     unsigned samples = 0;
     int64_t pressed_at = 0;
-    bool long_sent = false;
-    uint32_t press = 0;
+    bool provisioning_sent = false;
+    bool factory_reset_sent = false;
     for (;;) {
         bool pressed = gpio_get_level(MYBOT_AI_BUTTON_GPIO) == 0;
         dispatch_touch();
         dispatch_ui_command();
-        if (press && !conversation_press_valid(press))
-            press = 0; /* A stale gesture cannot revive if the state later returns. */
         int64_t now = esp_timer_get_time() / 1000;
         if (pressed != candidate) {
             candidate = pressed;
@@ -215,18 +191,20 @@ static void key_task(void *arg) {
             if (!candidate)
                 released = true;
             if (stable != candidate) {
-                if (stable && !candidate && !long_sent && now - pressed_at >= 60)
-                    short_press(press);
                 /* A button held across boot must first be released. */
                 stable = candidate && released;
-                press = stable ? conversation_press() : 0;
                 pressed_at = now;
-                long_sent = false;
+                provisioning_sent = false;
+                factory_reset_sent = false;
             }
         }
-        if (stable && !long_sent && now - pressed_at >= 3000) {
-            long_sent = true;
+        if (stable && !provisioning_sent && now - pressed_at >= 3000) {
+            provisioning_sent = true;
             mybot_board_request_wifi_provisioning();
+        }
+        if (stable && provisioning_sent && !factory_reset_sent && now - pressed_at >= 10000) {
+            factory_reset_sent = true;
+            mybot_factory_reset_request();
         }
         vTaskDelay(pdMS_TO_TICKS(20));
     }

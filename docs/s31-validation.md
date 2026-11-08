@@ -4,6 +4,13 @@ The current development target is ESP-Mosaico CoreBoard V1.2, with Korvo retaine
 
 This records local build/host validation and separately attributed hardware feedback. The user confirmed the Korvo audio/display baseline, Mosaico diagnostic USB microphone/speaker audio, normal 40-row caption display and basic bidirectional meeting translation after the PSRAM-stack revision. Mosaico touch navigation and start operation also have device-log evidence. These reports precede this review-fix series and do not validate its new recovery, key, USB identity or power changes. Quantitative audio quality, AEC, enumeration/reconnect stability, power/current measurements and endurance still require separate hardware results.
 
+## 2026-11-08 Mosaico maintenance key and factory reset — host only
+
+- The Mosaico AI key no longer starts or stops translation. Touch remains the only translation entry. A press shorter than three seconds has no action, three seconds requests Wi-Fi provisioning, and ten seconds records a factory-reset marker and restarts.
+- The factory-reset marker is RTC-retained and consumed before NVS initialization on the next boot. That boot erases only the default NVS partition, clears the marker and restarts again so the normal boot enters Wi-Fi provisioning without local credentials.
+- RTC marker validation, erase retry and restart sequencing pass the new factory-reset host test. Input fault tests cover short-press no-op, boot-held rejection, three-second provisioning, ten-second one-shot reset, detached provisioning and unchanged touch start/stop.
+- No device was flashed. Physical timing tolerance, NVS contents after reset, service-side binding behavior, OTA preservation and power-loss during the two-boot sequence still require hardware acceptance.
+
 ## User-reported hardware audio test — 2026-10-30
 
 The user reports that ESP32-S31 audio interoperability is working normally on the physical board. This is user-performed hardware validation, not a host-test inference.

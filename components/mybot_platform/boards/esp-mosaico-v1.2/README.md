@@ -18,7 +18,8 @@ quality, cloud AEC, reconnect/endurance, current and VCC ramp timing still need 
 - I2C0: SDA 56, SCL 3; owned by the board and shared by ES8311 and touch.
 - I2S0: MCU TX 52, RX 40, BCLK 37, WS 49, MCLK 54. PA 45 is active high.
 - Power: VCC enable 60 is active low; shutdown 57 is released open-drain high.
-- AI key: GPIO 7 active low; click starts/stops, hold three seconds provisions Wi-Fi.
+- AI key: GPIO 7 active low; presses shorter than three seconds do nothing, three seconds enters
+  Wi-Fi provisioning, and ten seconds erases local NVS and restarts into provisioning.
 - Display: 480 × 480 CO5300 QSPI; CST9220 touch.
 
 `src/drivers/audio/codec_audio.c` contains the pre-existing MIT-licensed Korvo
@@ -31,4 +32,5 @@ including its Apache-2.0 ES8311 driver, is unchanged.
 
 Host validation covers both audio backends using `tests/korvo_s31_audio/run.sh`.
 The shared input suite also checks the Mosaico key's debounce, boot-held rejection,
-long-press provisioning, detached callback handling and UI command validity.
+short-press no-op, three-second provisioning, ten-second factory reset, detached callback
+handling and UI command validity.
