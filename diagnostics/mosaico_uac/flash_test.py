@@ -18,10 +18,10 @@ def main():
     parser.add_argument("--check-only", action="store_true", help="check images without opening USB")
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[2]
-    build = root / "build/korvo-s31"
+    build = root / "build/mosaico-uac"
     description = json.loads((build / "project_description.json").read_text())
     if description.get("project_name") != "mosaico_uac_test":
-        raise RuntimeError("build/korvo-s31 is not the Mosaico UAC test build")
+        raise RuntimeError("build/mosaico-uac is not the Mosaico UAC test build")
     flash = json.loads((build / "flasher_args.json").read_text())
     if flash.get("extra_esptool_args", {}).get("chip") != "esp32s31":
         raise RuntimeError("unexpected flash target")

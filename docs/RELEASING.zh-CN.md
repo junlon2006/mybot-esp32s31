@@ -2,32 +2,31 @@
 
 [English](RELEASING.md) · [简体中文](RELEASING.zh-CN.md)
 
-默认交付板为 `esp-mosaico-v1.2`，旧 `esp32-s31-korvo-1` profile 保留。RTSA v1.10.1 build 1366494 的固定头文件/库随工程提供，位于 `components/mybot_stack/agora_rtc`；编译只需 ESP-IDF v6.1 和 ffmpeg，无需下载或导入。输入检查验证固定 payload hash。音频固定 60 ms，视频关闭。
+唯一交付板为 `esp-mosaico-v1.2`。RTSA v1.10.1 build 1366494 的固定头文件/库随工程提供，位于 `components/mybot_stack/agora_rtc`；编译只需 ESP-IDF v6.1 和 ffmpeg，无需下载或导入。输入检查验证固定 payload hash。音频固定 60 ms，视频关闭。
 
 ## 本地构建
 
 ```sh
 . /path/to/esp-idf/export.sh
 test "$(idf.py --preview --version)" = "ESP-IDF v6.1"
-idf.py --preview -B build/korvo-s31 \
-  -DMYBOT_BOARD=esp-mosaico-v1.2 \
+idf.py --preview -B build/mosaico-v1.2 \
   -DMYBOT_MOSAICO_UAC_TEST=OFF \
-  -DSDKCONFIG=build/korvo-s31/sdkconfig \
+  -DSDKCONFIG=build/mosaico-v1.2/sdkconfig \
   -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;ci/ptime60.defaults" build size
-python3 scripts/check_s31_build.py --build-dir build/korvo-s31 --language zh-CN
+python3 scripts/check_s31_build.py --build-dir build/mosaico-v1.2 --language zh-CN
 ```
 
-所有本地编译，包括增量构建，都使用 `build/korvo-s31` 及其中的 `sdkconfig`。
-切换板型或退出独立诊断时，先保存需要的固件，再按[板卡说明](esp-mosaico-v1.2.zh-CN.md)
-清理并重新生成配置。CI 的每个板型／语言 job 保留独立目录。
+所有本地编译，包括增量构建，都使用 `build/mosaico-v1.2` 及其中的 `sdkconfig`。
+退出独立诊断时，先保存需要的固件，再按[板卡说明](esp-mosaico-v1.2.zh-CN.md)
+清理并重新生成配置。CI 的每个语言 job 保留独立目录。
 
 合并该构建并生成交付信息：
 
 ```sh
 mkdir -p releases
-idf.py --preview -B build/korvo-s31 merge-bin \
+idf.py --preview -B build/mosaico-v1.2 merge-bin \
   -o "$PWD/releases/esp-mosaico-v1.2-zh-CN.bin"
-python3 scripts/check_s31_build.py --build-dir build/korvo-s31 --language zh-CN \
+python3 scripts/check_s31_build.py --build-dir build/mosaico-v1.2 --language zh-CN \
   --merged releases/esp-mosaico-v1.2-zh-CN.bin
 ```
 
@@ -50,11 +49,11 @@ esp-mosaico-v1.2-zh-CN.flash.txt
 
 manifest 记录项目／IDF 版本、绑定构建的源码版本及 dirty 状态、语言、板型／target、RTSA 包／hash、构建与合并镜像 hash、段偏移和 OTA 余量。它表示构建来源，不代表真机验收。交付时保留四个文件。
 
-合并镜像烧录地址为 **0x0**，padding 覆盖 NVS／OTA 状态，需要重新配网。日常用 `idf.py --preview -B build/korvo-s31 -p PORT flash` 保留 NVS。Mosaico 的运行时 CDC 与 ROM 下载端口不同；随后选择当前端口执行 `idf.py --preview -B build/korvo-s31 -p RUNTIME_PORT monitor`。
+合并镜像烧录地址为 **0x0**，padding 覆盖 NVS／OTA 状态，需要重新配网。日常用 `idf.py --preview -B build/mosaico-v1.2 -p PORT flash` 保留 NVS。运行时 CDC 与 ROM 下载端口不同；随后选择当前端口执行 `idf.py --preview -B build/mosaico-v1.2 -p RUNTIME_PORT monitor`。
 
 ## CI
 
-push/PR 执行源码检查、host 测试和 Mosaico／Korvo × 中英文固件矩阵，直接使用随工程的固定 RTSA。各 job 独立保存构建／配置并上传上述四项 artifact；不上传原 tgz、sdkconfig、link map 或 NVS，不自动创建 GitHub Release。
+push/PR 执行源码检查、host 测试和中英文固件矩阵，直接使用随工程的固定 RTSA。各 job 独立保存构建／配置并上传上述四项 artifact；不上传原 tgz、sdkconfig、link map 或 NVS，不自动创建 GitHub Release。
 
 本地验证与远端执行分开记录。远端 CI 需实际运行后才可标为通过，当前状态见[验证记录](s31-validation.md)。
 

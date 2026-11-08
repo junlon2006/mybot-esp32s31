@@ -2,6 +2,10 @@
 
 ## Unreleased — standalone S31 translation
 
+- Remove the former second S31 board, its drivers/tests/probes and the multi-board selector. ESP-Mosaico CoreBoard V1.2 is now the only supported target, with one 480×480 UI and a two-language CI matrix.
+
+- Move touch gesture validation, UI command mailboxes, physical-key debounce and maintenance holds into one shared input router, and route LVGL network, caption and command access through a narrow UI port.
+
 - Add an explicit back-to-home action on the completed translation page.
 
 - Make the Mosaico AI key maintenance-only: short presses do nothing, three seconds enters Wi-Fi provisioning, and ten seconds erases local NVS on the following boot and restarts into provisioning.
@@ -60,11 +64,9 @@
 
 - Respect Mosaico rounded screen corners and read CST9220 reports only when ready, preventing repeated ACK reads from cancelling touches.
 
-- Make ESP-Mosaico CoreBoard V1.2 the default and future design target, retaining the Korvo profile.
+- Make ESP-Mosaico CoreBoard V1.2 the only supported target.
 - Port media and face-to-face translation to ES8311 stereo I2S, AI-key controls and a native 480×480 CO5300/CST9220 LVGL layout; expose a Type-C CDC log console.
-- Share the existing bounded audio lifecycle across board-specific codec backends, and validate both PCM mappings and square-screen controls in host tests. Mosaico translation hardware acceptance remains pending.
-- Add an opt-in S31 native USB CDC echo diagnostic, pinned TinyUSB dependencies and a bounded macOS binary-integrity checker; USB audio remains pending.
-- Add a separate USB Host descriptor probe for direct Android-phone/peripheral enumeration, without starting translation or accessing files.
+- Use the bounded ES8311 audio lifecycle and validate PCM conversion plus square-screen controls in host tests. Mosaico translation hardware acceptance remains pending.
 - Disable AI QoS by default in firmware and the SDK fallback; retain explicit opt-in support.
 - Add face-to-face translation with two RTC routes, one shared RTM subscription, explicit microphone direction selection and direction-aware captions/history.
 - Receive trusted RTM original/translated captions, merge streaming revisions and share a bounded session history across the live/full-text/history pages.
@@ -83,8 +85,8 @@
 - Finalize RTC after each translation session so another Bot project's App ID can be used; block cloud starts when local RTC cleanup is incomplete.
 - Keep language selection locked until its submitted pair is read back, and correct volume-persistence failure log arguments.
 
-- Retain physical PLAY/SET/VOL controls alongside the native translation UI.
-- Limit the project to the active ESP32-S31 no-video integration; remove unused S3 profiles, drivers, dependencies and tests while preserving pinned third-party inputs.
+- Use touch for translation controls and reserve the physical AI key for three-second provisioning and ten-second factory reset.
+- Limit the project to the active ESP32-S31 no-video integration; remove unused multi-board, S3 profile, driver, dependency and test paths while preserving pinned third-party snapshots.
 - Add checked S31 delivery metadata and language-specific artifacts, with push/PR firmware CI using the bundled pinned RTSA dependency.
 - Align the runtime layout with the ESP32 project by placing `mybot_sdk`, `aosl` and `agora_rtc` directly under `components/mybot_stack`, removing the platform-local ports directory.
 - Update Chinese/English build, board, contribution, support, architecture and delivery documentation.

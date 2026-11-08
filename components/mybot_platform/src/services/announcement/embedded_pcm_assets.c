@@ -88,7 +88,7 @@ static const mybot_announce_ops_t s_announce = {
     .close = announce_close,
     .destroy = announce_destroy,
 };
-const mybot_announce_ops_t *mybot_korvo_s31_announce_ops(void) {
+const mybot_announce_ops_t *mybot_embedded_pcm_announce_ops(void) {
     return &s_announce;
 }
 

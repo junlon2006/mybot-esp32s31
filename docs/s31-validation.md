@@ -1,14 +1,45 @@
 # S31 validation record
 
-The current development target is ESP-Mosaico CoreBoard V1.2, with Korvo retained as an existing-device profile. Current review corrections are recorded in the [numbered review-fix sections](#review-fix-01-isolate-mosaico-uac-from-korvo). Earlier sections describe the revision tested at that time. Use the build-bound manifests and checksums beside delivered images for their binary identity.
+The only supported target is ESP-Mosaico CoreBoard V1.2. Earlier entries describe
+the revision tested at that time; entries for removed profiles are retained only as
+historical validation evidence and do not describe supported hardware. Use the
+build-bound manifests and checksums beside delivered images for their binary identity.
 
-This records local build/host validation and separately attributed hardware feedback. The user confirmed the Korvo audio/display baseline, Mosaico diagnostic USB microphone/speaker audio, normal 40-row caption display and basic bidirectional meeting translation after the PSRAM-stack revision. Mosaico touch navigation and start operation also have device-log evidence. These reports precede this review-fix series and do not validate its new recovery, key, USB identity or power changes. Quantitative audio quality, AEC, enumeration/reconnect stability, power/current measurements and endurance still require separate hardware results.
+This records local build/host validation and separately attributed hardware feedback.
+The user confirmed diagnostic USB microphone/speaker audio, normal 40-row caption
+display and basic bidirectional meeting translation after the PSRAM-stack revision.
+Touch navigation and start operation also have device-log evidence. These reports
+precede this review-fix series and do not validate its recovery, key, USB identity or
+power changes. Quantitative audio quality, AEC, enumeration/reconnect stability,
+power/current measurements and endurance still require separate hardware results.
+
+## 2026-11-08 single-board convergence — host only
+
+- The build now fixes ESP-Mosaico CoreBoard V1.2. The board registry, `MYBOT_BOARD`
+  selection, Korvo drivers/tests/probes, 800x480 UI branches and dual-board CI matrix
+  have been removed.
+- Local builds use `build/mosaico-v1.2`; the standalone USB diagnostic uses
+  `build/mosaico-uac`. Delivery variants remain `esp-mosaico-v1.2-{zh-CN,en-US}`.
+- The ES8311 codec, 480x480 CO5300/CST9220 UI, 60 ms audio, PSRAM policy and USB
+  meeting routing are unchanged. ES8389 is rejected by both CMake and delivery checks.
+- Local CI-equivalent quality and host-test stages pass: formatting with clang-format
+  18.1.8, SPDX, whitespace, display/input/UI, AOSL tasks, hardware, codec audio,
+  translation protocol/lifecycle/RTC, HTTPS/time, storage/factory reset, composite
+  USB, PCM/media pause and build/delivery regressions.
+- Chinese and English ESP-IDF v6.1 preview builds pass in isolated CI directories.
+  Chinese application: 3,666,624 bytes, minimum OTA free 462,144 bytes. English
+  application: 3,747,552 bytes, minimum OTA free 381,216 bytes. Both RISC-V images
+  pass local-AOSL, pinned-RTSA, no-video, flash-segment and merged-image checks.
+- Delivery files are written under `releases/esp-mosaico-v1.2-{zh-CN,en-US}.*`.
+  No device was flashed; physical key timing, factory-reset persistence, USB power
+  and acoustic behavior remain hardware checks.
 
 ## 2026-11-08 Mosaico maintenance key and factory reset — host only
 
 - The Mosaico AI key no longer starts or stops translation. Touch remains the only translation entry. A press shorter than three seconds has no action, three seconds requests Wi-Fi provisioning, and ten seconds records a factory-reset marker and restarts.
 - The factory-reset marker is RTC-retained and consumed before NVS initialization on the next boot. That boot erases only the default NVS partition, clears the marker and restarts again so the normal boot enters Wi-Fi provisioning without local credentials.
 - RTC marker validation, erase retry and restart sequencing pass the new factory-reset host test. Input fault tests cover short-press no-op, boot-held rejection, three-second provisioning, ten-second one-shot reset, detached provisioning and unchanged touch start/stop.
+- Touch epochs, UI mailboxes, physical-key debounce and maintenance holds now share one input router; board files only sample GPIO/ADC and prepare hardware. The LVGL view accesses Wi-Fi, captions and admitted actions only through a narrow UI port. Input, display, UI, storage, factory-reset, control and build/delivery host suites pass after the refactor.
 - No device was flashed. Physical timing tolerance, NVS contents after reset, service-side binding behavior, OTA preservation and power-loss during the two-boot sequence still require hardware acceptance.
 
 ## User-reported hardware audio test — 2026-10-30
@@ -275,7 +306,7 @@ Merged image: `esp32-s31-listen-zh-CN.bin`, 2572064 bytes, SHA-256 `8c287ca15037
 - Both diagnostic-on and production-off Chinese configurations built successfully with direct ESP-IDF v6.1 preview in `build/korvo-s31`. The official `kconfserver` temporarily disabled the diagnostic and all USB classes, then restored the saved diagnostic configuration; unrelated settings were preserved. Production-off application size remains 3,533,008 bytes. The final directory is diagnostic-on: 3,566,896 application bytes, with 14% partition headroom reported by IDF. Chinese UI, cloud AEC, disabled AI QoS and 60 ms audio remain configured.
 - The final merge/delivery checker verified RISC-V ELF, local AOSL ownership, unchanged RTSA fingerprints, video off and four flash segments. Image: `build/korvo-s31/mybot_esp32s31-merged.bin`, 3,697,968 bytes, SHA-256 `189d1dd32276b562b7362580de18646297e9597cddbf1e01110d7e2ab241a5ea`. Eleven pre-probe configuration/firmware files remain in `build/korvo-s31/before-usb-probe`; their backup hashes were verified for rollback.
 - Before flashing this diagnostic, read-only macOS inspection found the existing CP2102N bridge and `/dev/cu.usbserial-14410`, with no matching native probe or S31 audio device. The checker `--list` also found no matching probe. No physical port was opened by the checker, no board was flashed and no remote CI was run in this update.
-- The user confirms an unmodified factory board. Its J2 host VBUS is hardwired on; this firmware has neither board power control nor host VBUS monitoring. An apparently uneventful direct cable connection or a future CDC pass does not establish electrical safety, reliable physical-detach detection, UAC isochronous audio or meeting translation. See [probe operation and rollback](USB_CDC_PROBE.zh-CN.md).
+- The user confirms an unmodified factory board. Its J2 host VBUS is hardwired on; that historical firmware had neither board power control nor host VBUS monitoring. An apparently uneventful direct cable connection or a future CDC pass does not establish electrical safety, reliable physical-detach detection, UAC isochronous audio or meeting translation. The probe and its instructions have since been removed.
 - The user subsequently flashed the diagnostic through the CP2102N bridge; the supplied log reports verified application data, TinyUSB installed on port 0, and normal display/network/audio startup. For roughly 70 seconds it reports `mounted=0`, no mount events and zero application RX/TX bytes. The user confirms a normal A-to-C cable directly from board J2 to a Mac USB-C port. Read-only Mac inspection and the checker also find no Probe device. Enumeration and CDC transfer have therefore not passed; the log does not identify whether any USB reset/control requests occurred. The cable's initial Type-C role assignment and the board's host VBUS wiring need to be resolved before treating this topology as a valid device test connection. No raw device identity, network identifiers or credentials from the log are retained here.
 
 ## 2026-11-04 USB enumeration diagnostics
@@ -295,7 +326,7 @@ Merged image: `esp32-s31-listen-zh-CN.bin`, 2572064 bytes, SHA-256 `8c287ca15037
 - This diagnostic boot returns before NVS, Wi-Fi, display, audio and translation startup. Startup acceptance and actual USB readiness have distinct logs. Hotplug errors do not abort; close/initialization cleanup retries are bounded, and failed teardown retains resources until reboot. Managed and pinned vendor inputs remain unmodified.
 - Focused tests passed 19 scenarios/1,135 checks on Clang and GCC13 UBSan; inherited CDC tests passed 23 scenarios/1,578 checks. The source format/SPDX workflow and shell syntax checks completed successfully. These are software checks, not phone or board acceptance.
 - The initial Chinese diagnostic build and size check passed using ESP-IDF v6.1 preview in `build/korvo-s31` and its sdkconfig. Application: 239,328 bytes, SHA-256 `189f31a22484b08cda40ea2e6988c93314ba49605da757c28f8f7799390662b9`. RISC-V, local AOSL, pinned RTSA, video-off and four flash segments were checked. USB control transfer size is 1,024 bytes; existing Chinese, AEC, disabled AI QoS and 60 ms settings are preserved although business startup is skipped.
-- The user then requested rapid diagnostic iterations without broad validation. Additional English/repeated-Chinese builds were interrupted; they are not claimed as passing. The earlier successful Chinese application and its ELF remain the test artifacts, and the saved configuration is restored to Chinese Host mode. The merged image and adjacent metadata were regenerated from the existing flash segments without compiling again. Direct esptool flashing in [the test instructions](USB_HOST_PROBE.zh-CN.md) avoids a rebuild and preserves NVS.
+- The user then requested rapid diagnostic iterations without broad validation. Additional English/repeated-Chinese builds were interrupted; they are not claimed as passing. The earlier successful Chinese application and its ELF remain the test artifacts, and the saved configuration is restored to Chinese Host mode. The merged image and adjacent metadata were regenerated from the existing flash segments without compiling again. Direct esptool flashing avoided a rebuild and preserved NVS. The Host probe and its instructions have since been removed.
 - Fourteen CDC diag=2 firmware/configuration files were backed up under `build/korvo-s31/before-usb-host-probe/` with recorded hashes; the original tested translation backup remains under `before-usb-probe/`. No device was flashed and no phone enumeration result is available yet. This Host comparison cannot establish Mac-to-S31 Device or USB audio operation.
 - The user subsequently flashed the simple Host probe and supplied a successful Android-phone trace matching ELF hash prefix `0c5426da9`. The Host became ready at 872 ms, opened address 1 at 6,662 ms, reported a valid VID/PID and `speed=high`, and completed device/configuration descriptor reporting at 6,749 ms without a reported error. The configuration exposes one `ff/42/01` interface with 512-byte Bulk IN/OUT endpoints. This confirms real High-Speed Host enumeration/control traffic through J2 and the tested connection; it does not measure Bulk throughput, sustained power margin, Device mode or USB audio. The descriptor's 500 mA value is declared power demand, not a current measurement. No additional firmware build or broad test run was performed for this log assessment.
 
@@ -1022,7 +1053,7 @@ Current guides consistently use Mosaico V1.2, the fixed local build/sdkconfig pa
 direct IDF/merge commands, isolated CI variants, frozen source records and the OTA
 margin policy. SDK/board/PSRAM documentation describes meeting routing, dynamic USB
 capability and the static internal reaper. Hardware acceptance is scoped to the
-reported Korvo baseline and Mosaico USB/display/basic meeting evidence; later fixes
+reported USB/display/basic meeting evidence; later fixes
 remain host/build results. Historical sections retain their original scope. Local
 file links in all 27 changed Markdown documents and whitespace checks pass. This
 documentation-only correction required no firmware build or device flash.

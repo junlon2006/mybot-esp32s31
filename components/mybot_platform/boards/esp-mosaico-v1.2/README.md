@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 # ESP-Mosaico CoreBoard V1.2
 
-The production board selector is `MYBOT_BOARD=esp-mosaico-v1.2`. This board uses
+This is the only supported board. It uses
 standard Philips I2S with two 16-bit slots and MCLK at 256 × 16 kHz. The SDK still
 reads and writes 16 kHz mono signed 16-bit PCM; the adapter takes RX slot zero and
 copies output PCM into both TX slots. Cloud AEC uses the SDK's playback reference.
@@ -22,15 +22,14 @@ quality, cloud AEC, reconnect/endurance, current and VCC ramp timing still need 
   Wi-Fi provisioning, and ten seconds erases local NVS and restarts into provisioning.
 - Display: 480 × 480 CO5300 QSPI; CST9220 touch.
 
-`src/drivers/audio/codec_audio.c` contains the pre-existing MIT-licensed Korvo
-stream lifecycle, bounded I/O, deferred destruction and volume persistence code.
-Its board-specific I2S/codec setup is supplied by `mosaico_codec_audio.c` or
-`korvo_s31_codec_audio.c`; the shared lifetime code is not duplicated.
+`src/drivers/audio/codec_audio.c` contains the shared stream lifecycle, bounded
+I/O, deferred destruction and volume persistence code. Board-specific I2S/codec
+setup is supplied by `mosaico_codec_audio.c`.
 `mosaico_codec_audio.c` and the power pin setup use Apache-2.0-licensed Espressif
 configuration patterns. The existing official `esp_codec_dev` 1.5.9 snapshot,
 including its Apache-2.0 ES8311 driver, is unchanged.
 
-Host validation covers both audio backends using `tests/korvo_s31_audio/run.sh`.
-The shared input suite also checks the Mosaico key's debounce, boot-held rejection,
+Host validation covers the Mosaico audio backend using `tests/codec_audio/run.sh`.
+The input suite also checks the Mosaico key's debounce, boot-held rejection,
 short-press no-op, three-second provisioning, ten-second factory reset, detached callback
 handling and UI command validity.

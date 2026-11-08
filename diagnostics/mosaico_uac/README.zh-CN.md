@@ -1,6 +1,6 @@
 # Mosaico V1.2 双向 USB 音频最小测试
 
-仅适用于用户确认的 **ESP-Mosaico CoreBoard V1.2**。此测试镜像不能烧录到 Korvo。
+仅适用于用户确认的 **ESP-Mosaico CoreBoard V1.2**。
 USB 产品名为 **Mosaico UAC Test**；macOS 声音列表使用音频接口名 **usb uac**，
 提供 48 kHz / 16-bit / 双声道输入和输出。
 物理麦克风为单声道，复制到两个 USB 输入声道；USB 左右声道混音后送板载单扬声器。
@@ -9,7 +9,7 @@ USB 产品名为 **Mosaico UAC Test**；macOS 声音列表使用音频接口名 
 
 2026-11-05：用户已确认设备播放有声，状态显示双向 USB 音频持续传输，播放/采集 I/O
 错误及播放队列丢块为零，观察期间反馈与麦克风 USB 错误计数不再增加。通过版本的镜像、
-分段参数、配置和校验值保存在 `build/korvo-s31/mosaico-uac-passed/`。
+分段参数、配置和校验值保存在历史私有构建目录。
 这是短时间录放验证，尚未验证长期时钟漂移、AEC 或会议翻译。
 
 本程序只启动电源、ES8311/I2S 和 UAC，不启动屏幕、Wi-Fi、翻译、存储或文件系统。
@@ -30,18 +30,18 @@ USB 只提供音频接口，没有 CDC 串口；日志仍走 UART0（需要另�
 3. 在仓库根目录、已激活 IDF 环境中直接烧录（替换实际端口）：
 
    ```sh
-   idf.py --preview -B build/korvo-s31 -p /dev/cu.usbmodem实际编号 flash
+   idf.py --preview -B build/mosaico-uac -p /dev/cu.usbmodem实际编号 flash
    ```
 
 这会写入测试用 bootloader、分区表和应用。若需烧录前自动备份，可改用
 `python diagnostics/mosaico_uac/flash_test.py --port /dev/cu.usbmodem实际编号`。
 该可选脚本先验证当前构建属于本测试，再备份 NOR flash 前 1 MiB，备份成功后才写入三个测试段。
 这个窗口覆盖本测试 bootloader、分区表和整个应用分区；测试应用不写窗口之外的数据。
-备份保存在 `build/korvo-s31/mosaico-original-*/`，附 SHA-256 和 `restore.txt` 恢复命令。
+备份保存在 `build/mosaico-uac/mosaico-original-*/`，附 SHA-256 和 `restore.txt` 恢复命令。
 它不是整片 16 MiB NOR 或独立 128 MiB NAND 的备份。请保留该目录，避免运行 `fullclean`。
 回退时再次进入 ROM 模式，执行对应 `restore.txt` 中的命令；端口可能需要更新。
 
-脚本直接烧录现有镜像，不触发编译。不要使用旧 Korvo 的烧录参数或合并镜像。
+脚本直接烧录现有镜像，不触发编译。
 
 ## 验证
 
@@ -86,14 +86,14 @@ python3 diagnostics/mosaico_uac/read_status.py
 
 ## 构建与来源
 
-仍使用现有 IDF v6.1 和唯一的本地构建目录 `build/korvo-s31`。
+仍使用现有 IDF v6.1，诊断构建目录为 `build/mosaico-uac`。
 根 CMake 的 `MYBOT_MOSAICO_UAC_TEST=ON` 只选取本诊断及必要依赖，不加入 MyBot、RTSA、
 显示、摄像头等业务组件。`sdkconfig.defaults` 必须通过 menuconfig/kconfserver 生成配置；
 已有显式 sdkconfig 值不会被默认值覆盖。
 
 ```sh
-idf.py --preview -B build/korvo-s31 -DMYBOT_MOSAICO_UAC_TEST=ON \
-  -DSDKCONFIG=build/korvo-s31/sdkconfig build
+idf.py --preview -B build/mosaico-uac -DMYBOT_MOSAICO_UAC_TEST=ON \
+  -DSDKCONFIG=build/mosaico-uac/sdkconfig build
 ```
 
 依赖固定为 TinyUSB `0.19.0~3`、`usb_device_uac 1.3.1`，锁文件为本目录的
@@ -125,7 +125,3 @@ TX52/RX40、MCLK54/BCLK37/WS49；PA45 高有效。原理图的 `I2S_DOUT` 指 Co
 HUSB320 以硬件 DRP 管理 CC/VBUS；USB 使用 UTMI port0。这些配置与
 [官方 V1.2 原理图](https://dl.espressif.com/AE/Mosaico/SCH_SCH_ESP-Mosaico_CoreBoard_V1_2_1_2026-09-24.pdf)
 第 4、5 页及官方 BSP 一致。
-
-切换前的 Korvo CDC 固件和配置保存在 `build/korvo-s31/before-mosaico-uac/`。
-恢复 Korvo 开发时关闭 `MYBOT_MOSAICO_UAC_TEST`，通过官方配置工具恢复该 sdkconfig，
-并在同一构建目录重新配置和构建；不会自动把 Korvo 注册为 Mosaico。

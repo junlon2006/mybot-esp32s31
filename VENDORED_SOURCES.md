@@ -1,6 +1,6 @@
 # Vendored dependency baselines
 
-This ESP32-S31 project derives from MyBot ESP32-S3 source commit `2782cc88f52c8a46419654b72a918a8273cc23bf`. The default board is `esp-mosaico-v1.2`, with the earlier `esp32-s31-korvo-1` profile retained; legacy S3 profiles, platform drivers, display components and camera/software-JPEG dependencies have been removed. Complete retained snapshots are intentionally broader than the active firmware source set.
+This ESP32-S31 project derives from MyBot ESP32-S3 source commit `2782cc88f52c8a46419654b72a918a8273cc23bf`. The only supported board is `esp-mosaico-v1.2`; legacy multi-board, S3, platform display and camera/software-JPEG paths have been removed. Complete retained third-party snapshots are intentionally broader than the active firmware source set.
 
 License terms are recorded in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Builds require ESP-IDF **v6.1**, the `esp32s31` preview target and ffmpeg. Initial toolchain: GCC 15.2.0 / `esp-15.2.0_20251204`, Newlib.
 
@@ -14,7 +14,6 @@ License terms are recorded in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). 
 | `components/esp_codec_dev` | ESP Component Registry / [espressif/esp-adf](https://github.com/espressif/esp-adf) | complete 1.5.9 source release, `df1182ab7ee63eb4e43304b526b59ed2d49b89f3`; registry file checksums verified |
 | `components/lvgl` | [lvgl/lvgl](https://github.com/lvgl/lvgl) | 9.5.0, `85aa60d18b3d5e5588d7b247abf90198f07c8a63` |
 | `components/esp_lvgl_port` | [espressif/esp-bsp](https://github.com/espressif/esp-bsp), `components/esp_lvgl_port` | 2.8.0~1 runtime/display subset, `d14ff131266bf1392efff88db72cb4638897507c`; inherited integration corrections in `PATCHES.md`, local CMake source selection |
-| `components/mybot_platform/boards/esp32-s31-korvo-1/reference/esp32_s31_adc_calibration.c` | [official S31 BSP](https://github.com/espressif/esp-dev-kits/tree/bd4d4ac18657e73583af3d7c0b0a23c3cddf3735/examples/esp32-s31-korvo/examples/common_components/esp32_s31_korvo) | `bd4d4ac18657e73583af3d7c0b0a23c3cddf3735`; unchanged source, integration header maintained locally |
 
 MyBot maintains V2VT media, face-to-face and bidirectional USB meeting translation: device-selected languages, validated per-direction routes, publisher-only subscription, durable session cleanup and a dedicated UI contract. Its cloud-AEC MIC/reference packing, G.722 and 60 ms cadence are retained. See `components/mybot_stack/mybot_sdk/TRANSLATION.md`. Original AOSL, codec and LVGL source snapshots remain unchanged. The inherited LVGL-port runtime/display subset and its existing lifecycle corrections are retained from the imported baseline; its `PATCHES.md` records those corrections. `components/mybot_stack/aosl` builds the portable ESP-IDF HAL from its retained `esp32-s3` source directory; the project wrapper and `s31_port/` supply S31 configuration, OS naming, audited PSRAM stacks and static task reclamation.
 
@@ -39,19 +38,14 @@ The archive contains 126 RISC-V ELF32 objects and 49 x86-64 AOSL/HAL objects. Th
 
 | Component | Version | Purpose |
 | --- | --- | --- |
-| `espressif/esp_lcd_touch_gt1151` | 1.1.1 | GT1151 touch driver |
 | `espressif/esp_lcd_touch` | 1.2.1 | base touch interface |
 | `espressif/cjson` | 1.7.19~2 | JSON used by Wi-Fi provisioning |
-| `espressif/esp_tinyusb` | 2.4.0 | Espressif driver/PHY/descriptors for Mosaico UAC/CDC and the optional Korvo CDC probe |
+| `espressif/esp_tinyusb` | 2.4.0 | Espressif driver/PHY/descriptors for Mosaico UAC/CDC |
 | `espressif/tinyusb` | 0.19.0~3 | S31 USB Device stack, CDC and Mosaico UAC2 classes |
-| `espressif/usb` | 1.6.0 | S31 USB Host stack for the optional descriptor-only probe |
 
-GT1151/base touch, esp_tinyusb and the USB Host library retain Espressif Apache-2.0 licenses and package file notices; cJSON and TinyUSB retain MIT with their file notices. The USB versions are pinned in the application manifest; generated packages remain unmodified. Native ES8389 support comes from the official codec snapshot, not a substitute codec.
-
-The Host probe uses public USB Host APIs described by ESP-IDF v6.1's
-`examples/peripherals/usb/host/usb_host_lib`. The factory HID Host code at esp-dev-kits
-`5c06bf1835329d6525f316475f7218aab6acfe79` was read as a board-initialization reference;
-its application, camera and HID driver were not imported.
+Base touch and esp_tinyusb retain Espressif Apache-2.0 licenses and package file
+notices; cJSON and TinyUSB retain MIT with their file notices. The USB versions are
+pinned in the application manifest; generated packages remain unmodified.
 
 The separate `diagnostics/mosaico_uac` test has its own generated dependency lock:
 TinyUSB 0.19.0~3, USB Device UAC 1.3.1 and CMake Utilities 1.3.0. UAC is from
@@ -80,11 +74,14 @@ the original file and its MIT notice remain intact, including in the generated c
 
 The Noto Sans SC input is a user-supplied local font; only the generated subset is retained. Its embedded name-table records identify Noto Sans SC Regular, Adobe copyright, the SIL OFL 1.1 grant and `http://www.google.com/get/noto/`. Reproduction requires the exact input hash above; no unrelated application code or assets are imported.
 
-The native scene layout follows the user-supplied `device-translation-flow.zh-CN.html` simulator and adapts its 320×240 composition to native Mosaico 480×480 and Korvo 800×480 layouts. Local LVGL objects implement its shapes and controls; no HTML container scripts, online icon/font packages or external runtime assets are imported.
+The native scene layout follows the user-supplied `device-translation-flow.zh-CN.html` simulator and adapts its 320×240 composition to the native 480×480 layout. Local LVGL objects implement its shapes and controls; no HTML container scripts, online icon/font packages or external runtime assets are imported.
 
 Asset paths in the table are relative to `components/mybot_platform/`. ffmpeg converts existing Ogg inputs to S16LE inside `build/`; no S3 audio decoder is linked. Original attribution applies to the derived PCM.
 
-Hardware facts come from the [official ESP32-S31-Korvo-1 guide](https://docs.espressif.com/projects/esp-dev-kits/zh_CN/latest/esp32s31/esp32-s31-korvo-1/user_guide.html) and the fixed BSP above. The project follows the guide's ES8389 TDM requirement rather than the factory demo's standard-I2S bus configuration. RGB and GT1151 adapters are project-maintained. Factory coffee UI/assets, camera, SD and USB application paths were not imported. No external reference repository was modified.
+Hardware facts come from the official ESP-Mosaico CoreBoard V1.2 schematic and the
+pinned Mosaico BSP below. Display and input adapters are project-maintained. Factory
+bootloader artwork, camera, NAND and sample application paths were not imported.
+No external reference repository was modified.
 
 The official codec source files retain their original bytes and line endings. The optional Xtensa-only `device/zl38063/firmware/libfirmware.a` is not versioned or used by S31; the board rejects `CONFIG_CODEC_ZL38063_SUPPORT`. This optional binary is unrelated to the approved S31 RTSA input.
 
@@ -114,8 +111,8 @@ unknown eFuse data. This policy does not establish electrical compatibility.
 Managed display inputs are `espressif/esp_lcd_co5300` **2.2.0** and
 `espressif/esp_lcd_touch_cst9220` **0.1.0**, with exact content hashes in `dependencies.lock`.
 They use the existing LCD touch base and shared board-owned I2C0. The production board retains
-IDF 6.1, LVGL 9.5.0 and codec 1.5.9. The shared audio lifecycle was extracted from the project
-Korvo adapter with its original MIT header; board-specific configuration remains separate.
+IDF 6.1, LVGL 9.5.0 and codec 1.5.9. The shared audio lifecycle carries its original
+MIT header; board-specific configuration remains separate.
 
 Mosaico touch orientation is overridden in the project adapter with `mirror_y=true`, based
 on recorded physical Home/volume taps on the user's V1.2 assembly. The common touch getter
@@ -129,7 +126,7 @@ with the pinned `usb_device_uac` 1.3.1 descriptors and Kconfig in AS_PART mode. 
 The wrapper's project include redirects only the downloaded package's component registration
 to a project-owned header-only CMake file, exposing the original header directory and Kconfig.
 This explicit boundary is needed because IDF 6.1 adds downloaded components to the build even
-when their manifest has `require: no`. Korvo does not discover or compile UAC.
+when their manifest has `require: no`.
 Project-owned descriptors/configuration combine one duplex UAC2 function and one CDC function.
 The project adapter implements fixed 48 kHz clock and speaker feature-unit controls following
 the pinned package's protocol; Espressif attribution remains in that file. Its static state

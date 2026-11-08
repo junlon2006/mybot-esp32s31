@@ -1,11 +1,5 @@
-idf_build_get_property(_mybot_selected_board MYBOT_BOARD)
-if(NOT _mybot_selected_board)
-    message(FATAL_ERROR "MYBOT_BOARD build property was not exported by the project")
-endif()
-set(MYBOT_BOARD "${_mybot_selected_board}")
-include("${CMAKE_CURRENT_LIST_DIR}/boards/boards.cmake")
-mybot_resolve_board("${MYBOT_BOARD}")
-include("${MYBOT_BOARD_PROFILE}")
+set(MYBOT_BOARD "esp-mosaico-v1.2")
+include("${CMAKE_CURRENT_LIST_DIR}/boards/esp-mosaico-v1.2/board.cmake")
 
 # Pass a fixed Kconfig file to IDF so menuconfig/confserver use the same board
 # capability even when invoked separately from the CMake configure process.
@@ -37,9 +31,6 @@ if(NOT CMAKE_BUILD_EARLY_EXPANSION)
     if(NOT CONFIG_MYBOT_PSRAM_ALLOCATIONS OR NOT CONFIG_FREERTOS_TASK_CREATE_ALLOW_EXT_MEM)
         message(FATAL_ERROR "mybot requires PSRAM allocations and external task stack support")
     endif()
-    if(CONFIG_MYBOT_ENABLE_VIDEO)
-        message(FATAL_ERROR "Video is not implemented in the ESP32-S31 first release")
-    endif()
     foreach(required_config IN LISTS MYBOT_BOARD_REQUIRED_CONFIGS)
         if(NOT ${required_config})
             message(FATAL_ERROR
@@ -48,7 +39,7 @@ if(NOT CMAKE_BUILD_EARLY_EXPANSION)
         endif()
     endforeach()
     foreach(forbidden_config IN LISTS MYBOT_BOARD_FORBIDDEN_CONFIGS)
-        if(${forbidden_config})
+        if(DEFINED ${forbidden_config} AND ${forbidden_config})
             message(FATAL_ERROR
                 "MYBOT_BOARD=${MYBOT_BOARD} requires ${forbidden_config}=n; "
                 "use a clean board-specific sdkconfig")
@@ -75,6 +66,8 @@ idf_component_register(
         "src/services/network/conversation_http_trace.c"
         "src/services/storage/kv_store.c"
         "src/services/storage/factory_reset.c"
+        "src/services/input/ui_input_router.c"
+        "src/services/ui/ui_port.c"
         "src/services/network/wifi.cpp"
         "src/services/announcement/embedded_pcm_assets.c"
         "src/services/audio/pcm_playback_buffer.c"

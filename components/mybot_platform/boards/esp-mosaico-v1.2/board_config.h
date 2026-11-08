@@ -3,9 +3,6 @@
 #include "driver/gpio.h"
 #include "driver/spi_master.h"
 #define MYBOT_BOARD_NAME "esp-mosaico-v1.2"
-#define MYBOT_BOARD_IS_MOSAICO 1
-#define MYBOT_BOARD_HAS_DISPLAY 1
-#define MYBOT_BOARD_HAS_TOUCH 1
 #define MYBOT_AUDIO_SAMPLE_RATE 16000
 #define MYBOT_AUDIO_DEFAULT_VOLUME 100
 #define MYBOT_AUDIO_I2S_MCLK GPIO_NUM_54

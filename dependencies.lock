@@ -61,20 +61,6 @@ dependencies:
       registry_url: https://components.espressif.com/
       type: service
     version: 0.1.0
-  espressif/esp_lcd_touch_gt1151:
-    component_hash: b00201a367fd60092db414efd2f477b36cb58d3bd66cef631165d628a7fe982c
-    dependencies:
-    - name: espressif/esp_lcd_touch
-      registry_url: https://components.espressif.com
-      require: public
-      version: ^1.2.0
-    - name: idf
-      require: private
-      version: '>=5.2'
-    source:
-      registry_url: https://components.espressif.com/
-      type: service
-    version: 1.1.1
   espressif/esp_tinyusb:
     component_hash: cfb066b239957ebfba5f7a7764e534b3000d3b400fd42d11bedb6ee5e6eaf3c9
     dependencies:
@@ -111,23 +97,6 @@ dependencies:
     - esp32h4
     - esp32s31
     version: 0.19.0~3
-  espressif/usb:
-    component_hash: 99eee72ea224d9117d4c342442717a1f20bf8112e2ab5d7d7038b827874f4c92
-    dependencies:
-    - name: idf
-      require: private
-      version: '>=5.5.3'
-    source:
-      registry_url: https://components.espressif.com/
-      type: service
-    targets:
-    - esp32s2
-    - esp32s3
-    - esp32s31
-    - esp32p4
-    - esp32h4
-    - linux
-    version: 1.6.0
   espressif/usb_device_uac:
     component_hash: e4665bee61baaee5e06acae662438ffd5ad794ce6d44b10c30173e9940b80896
     dependencies:
@@ -160,12 +129,10 @@ direct_dependencies:
 - espressif/cjson
 - espressif/esp_lcd_co5300
 - espressif/esp_lcd_touch_cst9220
-- espressif/esp_lcd_touch_gt1151
 - espressif/esp_tinyusb
 - espressif/tinyusb
-- espressif/usb
 - espressif/usb_device_uac
 - idf
-manifest_hash: 3db6c7d0ad03640deb23654dc4ba2c748f944417a5d70098a7b314fb2fc63e5a
+manifest_hash: 6df40f6503f07580b7787f9eacdbdf05a29c62cb3c99ba27fcc655fb2d60a983
 target: esp32s31
 version: 3.0.0

@@ -18,7 +18,7 @@
 | 操作键 | AI GPIO7 低有效；BOOT 保留给 ROM 下载模式 |
 
 原理图的 `I2S_DOUT` / `I2S_DIN` 来自 codec 视角，不能据此交换 MCU 的 TX/RX。
-Mosaico 不使用 Korvo 的 ES8389、TDM4、无 MCLK 配置。
+不使用 ES8389、TDM4 或无 MCLK 配置。
 
 启动先读取 eFuse `USER_DATA` 的前 16 位，再操作任何供电、功放或 I2C 引脚。
 `0x0100`（V1.0）使用不同引脚映射，固件拒绝启动；`0x0101`（V1.1）与 `0x0102`
@@ -46,16 +46,15 @@ Cloud AEC 继续使用 SDK 的麦克风/播放参考 PCM 契约；此处不启�
 
 ## 构建与烧录
 
-开发只构建中文版本，目录固定为 `build/korvo-s31`。目录名称沿用旧工程，但本次生成的是
+开发只构建中文版本，目录固定为 `build/mosaico-v1.2`。本次生成的是
 Mosaico 固件。从其他板型或独立诊断切换时，先备份需要保留的生成固件，再通过 IDF
 `fullclean` 清理旧构建；不要混用旧 `sdkconfig`，不要手改生成配置。
 
 ```sh
 . /path/to/esp-idf/export.sh
-idf.py --preview -B build/korvo-s31 \
-  -DMYBOT_BOARD=esp-mosaico-v1.2 \
+idf.py --preview -B build/mosaico-v1.2 \
   -DMYBOT_MOSAICO_UAC_TEST=OFF \
-  -DSDKCONFIG=build/korvo-s31/sdkconfig \
+  -DSDKCONFIG=build/mosaico-v1.2/sdkconfig \
   -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;ci/ptime60.defaults" build
 ```
 
@@ -64,13 +63,13 @@ idf.py --preview -B build/korvo-s31 \
 
 ```sh
 ls /dev/cu.usbmodem*
-idf.py --preview -B build/korvo-s31 -p /dev/cu.usbmodem144101 flash
+idf.py --preview -B build/mosaico-v1.2 -p /dev/cu.usbmodem144101 flash
 ```
 
 启动后 Type-C 会重新枚举为 `MyBot Mosaico` 复合设备，包含 UAC2 音频和 CDC 日志；端口号可能变化。监视应用日志：
 
 ```sh
-idf.py --preview -B build/korvo-s31 -p RUNTIME_PORT monitor
+idf.py --preview -B build/mosaico-v1.2 -p RUNTIME_PORT monitor
 ```
 
 应用 CDC 在板级准备时启动，无法提供此前的 ROM / bootloader 日志。CDC 不实现自动进入
@@ -87,7 +86,7 @@ SPEAK Agent，其译音通过 USB 麦克风回传电脑。媒体与面对面继�
 
 1. 没有 Wi-Fi 凭据时，在屏幕提示的 `mybot-xxxx` 热点配网，浏览器打开 `http://192.168.4.1`。
 2. 联网后按屏幕提示在 MyBot 网页绑定这台新设备。Mosaico 的设备身份来自自己的 MAC，
-   不继承 Korvo 的绑定。
+   不继承旧固件的绑定。
 3. 媒体翻译默认中文译英文；选择源语/目标语，点击开始，核对字幕与喇叭译音。
 4. 面对面模式使用两路 RTC 和一个 RTM，连接后点击“我说中文”或“对方说英语”选择当前
    麦克风方向，再分别测试两种语言。默认连接后不发送麦克风原声，等待选择方向。
@@ -106,7 +105,7 @@ SPEAK Agent，其译音通过 USB 麦克风回传电脑。媒体与面对面继�
 用户已确认独立 48 kHz UAC 诊断的麦克风和喇叭正常。翻译固件已确认的 Mosaico 功能为
 PSRAM 栈修正版（`e279926`）的基础双向会议：电脑听译到喇叭、麦克风译音回传电脑；
 40 行刷新缓冲的字幕显示也已确认正常。触摸导航和启动操作另有实机日志。
-媒体／面对面已实现于本板，较早的独立实机通过记录来自 Korvo。
+媒体／面对面已实现于本板。
 后续 review 修复目前只有 host 测试和中文构建结果，尚未重新真机验收。
 音质、Cloud AEC、重连／长稳、USB 电流及修订后的 VCC 软启动仍需单独测量或验证。
 SPI 刷新发生超时后会停止继续提交，保留尚未完成的 DMA 缓冲；本版显示故障需要重启恢复。

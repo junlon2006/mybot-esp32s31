@@ -78,7 +78,7 @@ static void callback() {
 }
 
 extern "C" {
-void mybot_mosaico_keys_touch_sample(bool valid, bool pressed) {
+void mybot_ui_input_touch_sample(bool valid, bool pressed) {
     CHECK(port_locked); // forwarding is non-blocking while the LVGL lock is owned
     touch_samples.emplace_back(valid, pressed);
 }

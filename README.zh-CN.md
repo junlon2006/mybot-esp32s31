@@ -12,8 +12,8 @@ Mosaico 会议互译将电脑原声的译音送往设备喇叭，并通过 USB �
 工程维护 MyBot 翻译 SDK 分支及板级、网络、音频、显示和生命周期集成。
 开发 API 为 `https://mybot.sh3t.agoralab.co/api`。
 
-当前开发基线为 **ESP-IDF v6.1**。默认 Board profile 为 `esp-mosaico-v1.2`，旧 `esp32-s31-korvo-1` profile 保留，通过
-`MYBOT_BOARD` 选择 Flash、Octal PSRAM、分区表和硬件驱动。具体硬件配置、输入操作、构建
+当前开发基线为 **ESP-IDF v6.1**。仅支持 `esp-mosaico-v1.2`，Flash、Octal PSRAM、分区表和硬件驱动
+由工程固定。具体硬件配置、输入操作、构建
 命令和限制见[板卡说明](docs/esp-mosaico-v1.2.zh-CN.md)。
 
 > 除非文件另有声明，本工程自维护代码使用 Apache-2.0。仓库内依赖和媒体资源有各自的
@@ -29,18 +29,18 @@ Mosaico 会议互译将电脑原声的译音送往设备喇叭，并通过 USB �
 - Agora RTSA 麦克风/参考音频上行、Cloud AEC、可选 AI QoS（默认关闭）、RTM 频道订阅，并订阅响应指定的译音发布者。
 - 共享有界 PCM 播放缓冲；采集/播放独立挂载，共享引用计数的 codec/I2S 资源。
 - Mosaico 使用 ES8311 标准 I2S stereo 和 MCLK256；板级完成 SDK mono PCM 转换。
-- Mosaico 480×480 CO5300 QSPI 屏和 CST9220 触摸使用方屏 LVGL 布局；旧 Korvo 保留 800×480 布局。
-- 原生媒体与面对面界面支持语言选择、启停、本地暂停和实际音量；Mosaico 翻译启停只使用触摸屏，Korvo 保留 PLAY。
+- 480×480 CO5300 QSPI 屏和 CST9220 触摸使用方屏 LVGL 布局。
+- 原生媒体与面对面界面支持语言选择、启停、本地暂停和实际音量；翻译启停只使用触摸屏。
   面对面共用一个父会话、两个 RTC 连接和一个 RTM 频道订阅；Mosaico 会议场景支持电脑英语译中文到设备喇叭，同时将设备麦克风中文译英文回传电脑。
 - 提供中英文配对码与 Wi-Fi 配网提示，并在配网页面显示实际热点名称。
 
-## 支持的板卡
+## 硬件
 
-默认目标为 `esp-mosaico-v1.2`：16 MB NOR Flash、16 MB Octal PSRAM、ES8311、
+固定目标为 `esp-mosaico-v1.2`：16 MB NOR Flash、16 MB Octal PSRAM、ES8311、
 480×480 CO5300 屏和 CST9220 触摸。沿用 `partitions/v2/16m.csv`；128 MB NAND 暂不使用。
-旧 `esp32-s31-korvo-1` profile 保留。两者都不启用视频。
+视频不启用。
 
-旧 Korvo 媒体／面对面已有用户确认基线。Mosaico 用户确认了 PSRAM 栈修正版（`e279926`）的
+用户确认了 PSRAM 栈修正版（`e279926`）的
 基础 USB 双向会议互译，以及 40 行刷新缓冲的正常字幕显示；触摸导航及启动请求有实机日志。
 独立 UAC 麦克风／喇叭测试另有通过记录。
 此后的 review 修复已有 host 测试和中文构建结果，尚未重新进行真机验收。
@@ -57,17 +57,16 @@ Mosaico 会议互译将电脑原声的译音送往设备喇叭，并通过 USB �
 test "$(idf.py --preview --version)" = "ESP-IDF v6.1"
 ```
 
-所有本地编译固定使用 `build/korvo-s31`，生成配置固定为 `build/korvo-s31/sdkconfig`：
+所有本地编译固定使用 `build/mosaico-v1.2`，生成配置固定为 `build/mosaico-v1.2/sdkconfig`：
 
 ```sh
-idf.py --preview -B build/korvo-s31 \
-  -DMYBOT_BOARD=esp-mosaico-v1.2 \
+idf.py --preview -B build/mosaico-v1.2 \
   -DMYBOT_MOSAICO_UAC_TEST=OFF \
-  -DSDKCONFIG=build/korvo-s31/sdkconfig \
+  -DSDKCONFIG=build/mosaico-v1.2/sdkconfig \
   -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;ci/ptime60.defaults" build
 ```
 
-CI 在独立 job 中构建 Mosaico／Korvo 的中英文变体。[交付文档](docs/RELEASING.zh-CN.md)说明在同一本地构建目录中
+CI 在独立 job 中构建中英文变体。[交付文档](docs/RELEASING.zh-CN.md)说明在同一本地构建目录中
 合并镜像、保留构建来源并执行交付校验。直接烧录命令和板级硬件信息见
 [板卡说明](docs/esp-mosaico-v1.2.zh-CN.md)。
 
@@ -90,9 +89,8 @@ Mosaico 翻译固件通过 Type-C 提供 UAC2 声卡与 CDC 日志串口。会�
 音频与板载麦克风，两路译音分别去设备喇叭和电脑 USB 麦克风；USB 与 SDK 边界完成
 48 kHz / 16 kHz 转换。操作见 [USB 接入说明](docs/MOSAICO_USB_AUDIO.zh-CN.md)。
 已通过的 [UAC 最小测试](diagnostics/mosaico_uac/README.zh-CN.md)作为独立 USB 音频参考保留。
-Korvo 专用 [CDC](docs/USB_CDC_PROBE.zh-CN.md) / [Host](docs/USB_HOST_PROBE.zh-CN.md) 探针默认关闭。
 
-使用 `idf.py --preview -B build/korvo-s31 menuconfig` 的 `mybot` 菜单选择产品语言、
+使用 `idf.py --preview -B build/mosaico-v1.2 menuconfig` 的 `mybot` 菜单选择产品语言、
 初始翻译语言、Cloud AEC 和 AI QoS。产品语言决定界面文字和提示音；两个构建均使用
 `https://mybot.sh3t.agoralab.co/api`。运行时保存的语言选择优先于初始翻译语言。
 

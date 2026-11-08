@@ -14,7 +14,7 @@ const mybot_audio_playback_ops_t *mybot_mosaico_audio_playback_ops(void);
 const mybot_audio_volume_ops_t *mybot_mosaico_audio_volume_ops(void);
 const mybot_key_ops_t *mybot_mosaico_key_ops(void);
 const mybot_lcd_ops_t *mybot_mosaico_lcd_ops(void);
-const mybot_announce_ops_t *mybot_korvo_s31_announce_ops(void);
+const mybot_announce_ops_t *mybot_embedded_pcm_announce_ops(void);
 const mybot_https_ops_t *mybot_esp_idf_https_ops(void);
 const mybot_kv_store_ops_t *mybot_esp_idf_kv_store_ops(void);
 const mybot_wifi_ops_t *mybot_esp_idf_wifi_ops(void);
@@ -67,7 +67,7 @@ static int register_platform(void) {
         .audio_usb_playback = usb_audio ? mosaico_usb_audio_playback_ops() : NULL,
         .audio_playback = mybot_mosaico_audio_playback_ops(),
         .audio_volume = mybot_mosaico_audio_volume_ops(),
-        .announce = mybot_korvo_s31_announce_ops(),
+        .announce = mybot_embedded_pcm_announce_ops(),
         .https = mybot_esp_idf_https_ops(),
         .lcd = mybot_mosaico_lcd_ops(),
     };
