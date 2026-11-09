@@ -16,12 +16,17 @@ static queued_callback_t queue[64];
 static unsigned queued, allocations, audio_callbacks, errors, unmute_calls, leave_calls;
 static unsigned init_calls, fini_calls, destroy_calls, queue_creates, queue_destroys;
 static unsigned tests;
+static int allocation_fail_after = -1;
+static bool reject_next_queue;
 static int init_result;
 static unsigned create_calls, join_calls, rtm_login_calls, rtm_logout_calls;
 static unsigned subscribe_calls, unsubscribe_calls, send_calls;
 static unsigned fail_create_call, fail_join_call;
 static bool defer_join, timer_failure;
 static int login_failure, subscription_failure;
+enum { ACK_FAILURE_NONE, ACK_FAILURE_LOGIN, ACK_FAILURE_SUBSCRIPTION };
+static unsigned ack_failure_stage;
+static bool ack_allocation_failure;
 static aosl_timer_t live_timer = AOSL_MPQ_TIMER_INVALID;
 static connection_id_t sent_connection, last_unmuted_connection;
 static mybot_translation_direction_t last_audio_direction;
@@ -79,6 +84,10 @@ int aosl_set_log_level(int level) {
     return 0;
 }
 void *aosl_hal_malloc(size_t size) {
+    if (allocation_fail_after >= 0 && allocation_fail_after-- == 0) {
+        allocation_fail_after = -1;
+        return NULL;
+    }
     void *memory = malloc(size);
     if (memory)
         allocations++;
@@ -99,6 +108,10 @@ void aosl_msleep(unsigned milliseconds) {
 int aosl_mpq_queue(aosl_mpq_t target, aosl_mpq_t source, aosl_ref_t ref, const char *name,
                    aosl_mpq_func_t callback, uintptr_t argc, ...) {
     assert(target == live_queue);
+    if (reject_next_queue) {
+        reject_next_queue = false;
+        return -1;
+    }
     (void)source;
     (void)ref;
     (void)name;
@@ -251,6 +264,10 @@ int agora_rtm_login(const char *uid, const char *token, const agora_rtm_handler_
     assert(strcmp(uid, "device-input") == 0 && strcmp(token, "route-token") == 0);
     if (login_failure == 1)
         return -1;
+    if (ack_failure_stage == ACK_FAILURE_LOGIN) {
+        allocation_fail_after = ack_allocation_failure ? 0 : -1;
+        reject_next_queue = !ack_allocation_failure;
+    }
     if (login_failure != 2)
         handler->on_rtm_event(uid, RTM_EVENT_TYPE_LOGIN,
                               login_failure == 3 ? (rtm_err_code_e)1000 : ERR_RTM_OK);
@@ -264,6 +281,10 @@ int agora_rtm_subscribe(const char *channel) {
     subscribe_calls++;
     if (subscription_failure == 1)
         return -1;
+    if (ack_failure_stage == ACK_FAILURE_SUBSCRIPTION) {
+        allocation_fail_after = ack_allocation_failure ? 0 : -1;
+        reject_next_queue = !ack_allocation_failure;
+    }
     if (subscription_failure != 2)
         on_rtm_subscribe_result(channel,
                                 subscription_failure == 3 ? (rtm_err_code_e)1000 : ERR_RTM_OK);
@@ -323,6 +344,8 @@ static user_info_t user(uint32_t uid, const char *account) {
     return result;
 }
 static void reset(void) {
+    allocation_fail_after = -1;
+    reject_next_queue = false;
     drain();
     memset(&s_rtc, 0, sizeof(s_rtc));
     s_rtc.state = MYBOT_RTC_STATE_INITIALIZED;
@@ -351,6 +374,8 @@ static void reset(void) {
     fail_create_call = fail_join_call = 0;
     defer_join = timer_failure = false;
     login_failure = subscription_failure = 0;
+    ack_failure_stage = ACK_FAILURE_NONE;
+    ack_allocation_failure = false;
     tick = 0;
 }
 static void reset_public(void) {
@@ -1082,7 +1107,247 @@ static void test_route_contract_validation(void) {
     tests++;
 }
 
+static void inject_callback_failure(bool allocation_failure) {
+    allocation_fail_after = allocation_failure ? 0 : -1;
+    reject_next_queue = !allocation_failure;
+}
+
+static void stop_callback_failure_injection(void) {
+    allocation_fail_after = -1;
+    reject_next_queue = false;
+}
+
+static void join_for_callback_failure(unsigned routes, mybot_rtc_state_t state) {
+    reset_public();
+    init_public("callback-failure-project");
+    defer_join = state == MYBOT_RTC_STATE_CONNECTING;
+    assert(mybot_agora_rtc_join(input_routes(), routes) == 0);
+    drain();
+    if (state == MYBOT_RTC_STATE_RECONNECTING) {
+        on_reconnecting(s_rtc.routes[routes - 1].conn_id);
+        drain();
+    }
+    assert(s_rtc.state == state && !errors);
+}
+
+static void assert_callback_failure_ends_session(connection_id_t connection) {
+    stop_callback_failure_injection();
+    drain();
+    tick += 1000;
+    ready_timeout(live_timer, NULL, 0, NULL);
+    assert(s_rtc.state == MYBOT_RTC_STATE_ERROR && errors == 1);
+    int16_t samples[MYBOT_RTC_PCM_FRAME_BYTES / sizeof(int16_t)] = {0};
+    assert(mybot_agora_rtc_send_audio(MYBOT_TRANSLATION_DIRECTION_LISTEN, samples,
+                                      sizeof(samples)) < 0);
+    on_join_channel_success(connection, 123, 1);
+    on_rejoin_channel_success(connection, 123, 1);
+    on_reconnecting(connection);
+    drain();
+    assert(s_rtc.state == MYBOT_RTC_STATE_ERROR && errors == 1);
+    assert(!allocations && mybot_agora_rtc_fini() == 0);
+}
+
+static void test_callback_admission_failure(void) {
+    const mybot_rtc_state_t states[] = {MYBOT_RTC_STATE_CONNECTED, MYBOT_RTC_STATE_CONNECTING,
+                                        MYBOT_RTC_STATE_RECONNECTING};
+    for (unsigned state = 0; state < 3; ++state) {
+        for (unsigned routes = 1; routes <= 2; ++routes) {
+            for (unsigned allocation_failure = 0; allocation_failure < 2; ++allocation_failure) {
+                join_for_callback_failure(routes, states[state]);
+                connection_id_t connection = s_rtc.routes[routes - 1].conn_id;
+                inject_callback_failure(allocation_failure != 0);
+                on_connection_lost(connection);
+                assert_callback_failure_ends_session(connection);
+                tests++;
+            }
+        }
+    }
+}
+
+static void test_required_callback_kinds(void) {
+    for (unsigned kind = 0; kind < 10; ++kind) {
+        for (unsigned allocation_failure = 0; allocation_failure < 2; ++allocation_failure) {
+            join_for_callback_failure(2, MYBOT_RTC_STATE_CONNECTED);
+            connection_id_t connection = s_rtc.routes[1].conn_id;
+            user_info_t required = user(901, speak_publisher);
+            inject_callback_failure(allocation_failure != 0);
+            switch (kind) {
+            case 0:
+                on_reconnecting(connection);
+                break;
+            case 1:
+                on_join_channel_success(connection, 123, 1);
+                break;
+            case 2:
+                on_rejoin_channel_success(connection, 123, 1);
+                break;
+            case 3:
+                on_user_offline(connection, &required, 1);
+                break;
+            case 4:
+                on_user_info_updated(connection, &required);
+                break;
+            case 5:
+                on_license_failed(connection, 1);
+                break;
+            case 6:
+                on_token_will_expire(connection, "token");
+                break;
+            case 7:
+                on_error(connection, 1, "required error");
+                break;
+            case 8:
+                on_rtm_event("device-input", RTM_EVENT_TYPE_EXIT, ERR_RTM_OK);
+                break;
+            default:
+                on_rtm_subscribe_result("translation-channel", ERR_RTM_OK);
+                break;
+            }
+            assert_callback_failure_ends_session(connection);
+            tests++;
+        }
+    }
+}
+
+static void test_error_message_copy_failure_keeps_error(void) {
+    join_for_callback_failure(1, MYBOT_RTC_STATE_CONNECTED);
+    allocation_fail_after = 1; /* Event succeeds; its optional text allocation fails. */
+    on_error(s_rtc.routes[0].conn_id, 1, "diagnostic message");
+    assert(queued == 1);
+    drain();
+    assert(s_rtc.state == MYBOT_RTC_STATE_ERROR && errors == 1);
+    assert(!allocations && mybot_agora_rtc_fini() == 0);
+    tests++;
+}
+
+static void test_raw_rtm_ack_does_not_hide_delivery_failure(void) {
+    for (unsigned stage = ACK_FAILURE_LOGIN; stage <= ACK_FAILURE_SUBSCRIPTION; ++stage) {
+        for (unsigned allocation_failure = 0; allocation_failure < 2; ++allocation_failure) {
+            reset_public();
+            init_public("rtm-ack-failure-project");
+            ack_failure_stage = stage;
+            ack_allocation_failure = allocation_failure != 0;
+            assert(mybot_agora_rtc_join(input_routes(), 2) < 0);
+            stop_callback_failure_injection();
+            drain();
+            assert(s_rtc.state == MYBOT_RTC_STATE_ERROR && errors == 1);
+            assert(create_calls == 0 && join_calls == 0);
+            assert(!allocations && mybot_agora_rtc_fini() == 0);
+            tests++;
+        }
+    }
+}
+
+static void test_ignored_callback_failures_are_not_fatal(void) {
+    for (unsigned kind = 0; kind < 9; ++kind) {
+        for (unsigned allocation_failure = 0; allocation_failure < 2; ++allocation_failure) {
+            join_for_callback_failure(2, MYBOT_RTC_STATE_CONNECTED);
+            connection_id_t connection = s_rtc.routes[1].conn_id;
+            user_info_t unrelated = user(700, "unrelated-account");
+            inject_callback_failure(allocation_failure != 0);
+            switch (kind) {
+            case 0:
+                on_connection_lost(connection + 1000);
+                break;
+            case 1:
+                on_error(connection + 1000, 1, "stale connection");
+                break;
+            case 2:
+                on_error(CONNECTION_ID_ALL, 1, "global error without ownership");
+                break;
+            case 3:
+                on_license_failed(CONNECTION_ID_INVALID, 1);
+                break;
+            case 4:
+                on_user_offline(connection, &unrelated, 1);
+                break;
+            case 5:
+                on_user_info_updated(connection, &unrelated);
+                break;
+            case 6:
+                on_rtm_event("unrelated-account", RTM_EVENT_TYPE_LOGIN, ERR_RTM_OK);
+                break;
+            case 7:
+                on_rtm_event("unrelated-account", RTM_EVENT_TYPE_EXIT, ERR_RTM_OK);
+                break;
+            default:
+                on_rtm_subscribe_result("unrelated-channel", ERR_RTM_OK);
+                break;
+            }
+            stop_callback_failure_injection();
+            drain();
+            tick += 1000;
+            ready_timeout(live_timer, NULL, 0, NULL);
+            assert(s_rtc.state == MYBOT_RTC_STATE_CONNECTED && !errors && !allocations);
+            assert(mybot_agora_rtc_fini() == 0);
+            tests++;
+        }
+    }
+}
+
+static void test_data_delivery_failures_are_not_fatal(void) {
+    for (unsigned kind = 0; kind < 3; ++kind) {
+        for (unsigned failure = 0; failure < 3; ++failure) {
+            join_for_callback_failure(1, MYBOT_RTC_STATE_CONNECTED);
+            allocation_fail_after = failure < 2 ? (int)failure : -1;
+            reject_next_queue = failure == 2;
+            const char payload[] = "caption payload";
+            if (kind == 0)
+                send_audio(s_rtc.routes[0].conn_id, 900);
+            else if (kind == 1)
+                on_rtm_data(agent, payload, sizeof(payload) - 1, RTM_MESSAGE_TYPE_STRING, NULL);
+            else
+                on_rtm_subscribe_data("translation-channel", agent, payload, sizeof(payload) - 1,
+                                      RTM_MESSAGE_TYPE_STRING, NULL);
+            stop_callback_failure_injection();
+            drain();
+            tick += 1000;
+            ready_timeout(live_timer, NULL, 0, NULL);
+            assert(s_rtc.state == MYBOT_RTC_STATE_CONNECTED && !errors && !allocations);
+            assert(!audio_callbacks && !direct_messages && !channel_messages);
+            assert(mybot_agora_rtc_fini() == 0);
+            tests++;
+        }
+    }
+}
+
+static void test_teardown_failures_do_not_poison_next_session(void) {
+    for (unsigned prior_failure = 0; prior_failure < 2; ++prior_failure) {
+        for (unsigned allocation_failure = 0; allocation_failure < 2; ++allocation_failure) {
+            join_for_callback_failure(1, MYBOT_RTC_STATE_CONNECTED);
+            if (prior_failure) {
+                reject_next_queue = true;
+                on_connection_lost(s_rtc.routes[0].conn_id);
+                tick += 1000;
+                ready_timeout(live_timer, NULL, 0, NULL);
+                assert(s_rtc.state == MYBOT_RTC_STATE_ERROR && errors == 1);
+            }
+            callbacks_during_fini = true;
+            fini_connection = s_rtc.routes[0].conn_id;
+            inject_callback_failure(allocation_failure != 0);
+            assert(mybot_agora_rtc_fini() == 0);
+            stop_callback_failure_injection();
+            callbacks_during_fini = false;
+            unsigned previous_errors = errors;
+            init_public("fresh-project");
+            join_public();
+            tick += 1000;
+            ready_timeout(live_timer, NULL, 0, NULL);
+            assert(s_rtc.state == MYBOT_RTC_STATE_CONNECTED && errors == previous_errors);
+            assert(mybot_agora_rtc_fini() == 0 && !allocations);
+            tests++;
+        }
+    }
+}
+
 int main(void) {
+    test_callback_admission_failure();
+    test_required_callback_kinds();
+    test_error_message_copy_failure_keeps_error();
+    test_raw_rtm_ack_does_not_hide_delivery_failure();
+    test_ignored_callback_failures_are_not_fatal();
+    test_data_delivery_failures_are_not_fatal();
+    test_teardown_failures_do_not_poison_next_session();
     test_shared_rtm_failure();
     test_two_routes_one_rtm();
     test_two_route_readiness();

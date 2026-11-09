@@ -15,6 +15,8 @@ LV_FONT_DECLARE(mybot_caption_font_20);
 LV_FONT_DECLARE(mybot_caption_font_28);
 
 namespace {
+constexpr int kDisplayWidth = 480;
+constexpr int kDisplayHeight = 480;
 constexpr uint32_t kBackground = 0xb9d3ff;
 constexpr uint32_t kInk = 0x20334a;
 constexpr uint32_t kMuted = 0x52647a;
@@ -84,8 +86,6 @@ enum Action : uintptr_t {
     HistoryNext,
     LanguagePrevious,
     LanguageNext,
-    Volume,
-    Brightness,
     LanguageBase = 100,
     CaptionBase = 200
 };
@@ -139,7 +139,6 @@ struct View {
     unsigned language_page = 0;
     char pending_source[33]{};
     char pending_target[33]{};
-    int width = 480;
 };
 View s_view;
 
@@ -147,7 +146,7 @@ int margin() {
     return 32;
 }
 int content_width() {
-    return s_view.width - 2 * margin();
+    return kDisplayWidth - 2 * margin();
 }
 
 bool idle() {
@@ -279,9 +278,9 @@ void heading(const char *title, Action back = NoAction, const char *right = null
         button(inset, 10, side, 44, tr("< 返回", "< Back"), back, kSoft);
     const int left = back != NoAction ? inset + side + 8 : inset;
     const int edge = right ? inset + side + 8 : inset;
-    label(s_view.body, left, 17, s_view.width - left - edge, 48, title, &mybot_lvgl_font_20);
+    label(s_view.body, left, 17, kDisplayWidth - left - edge, 48, title, &mybot_lvgl_font_20);
     if (right)
-        button(s_view.width - inset - side, 10, side, 44, right, right_action, kSoft);
+        button(kDisplayWidth - inset - side, 10, side, 44, right, right_action, kSoft);
 }
 const char *language_name(const char *code) {
     size_t count = 0;
@@ -452,7 +451,7 @@ void setup() {
     heading(scene_name(), Entry);
     const int column = 184;
     const int left = margin();
-    const int right = s_view.width - left - column;
+    const int right = kDisplayWidth - left - column;
     label(s_view.body, left, 78, column, 30,
           s_view.scene == Scene::Media ? tr("输入语言", "Input language")
                                        : tr("我的语言", "My language"));
@@ -478,8 +477,8 @@ void setup() {
               : tr("电脑选择设备输入与输出，双方可同时发言",
                    "Select this device for computer input and output. Both sides can speak."),
           &mybot_lvgl_font_20, LV_TEXT_ALIGN_CENTER, kMuted);
-    button((s_view.width - 364) / 2, 328, 364, 64, tr("开始翻译  >", "Start translation  >"), Start,
-           kTeal, mode_ready() && idle() && !s_view.command_pending && !languages_pending());
+    button((kDisplayWidth - 364) / 2, 328, 364, 64, tr("开始翻译  >", "Start translation  >"),
+           Start, kTeal, mode_ready() && idle() && !s_view.command_pending && !languages_pending());
 }
 void languages() {
     heading(s_view.scene == Scene::Media ? (s_view.pick_target ? tr("翻译为", "Translate to")
@@ -508,8 +507,8 @@ void languages() {
     char text[32];
     std::snprintf(text, sizeof(text), "%u / %u", s_view.language_page + 1,
                   static_cast<unsigned>((count + kLanguagesPerPage - 1) / kLanguagesPerPage));
-    label(s_view.body, (s_view.width - 120) / 2, 366, 120, 32, text);
-    button(s_view.width - margin() - 142, 358, 142, 48, tr("下一页 >", "Next >"), LanguageNext,
+    label(s_view.body, (kDisplayWidth - 120) / 2, 366, 120, 32, text);
+    button(kDisplayWidth - margin() - 142, 358, 142, 48, tr("下一页 >", "Next >"), LanguageNext,
            kSoft, begin + kLanguagesPerPage < count);
 }
 void format_route(char *text, size_t capacity, mybot_translation_direction_t direction) {
@@ -563,7 +562,7 @@ void live() {
     if (s_view.caption_source)
         lv_label_set_long_mode(s_view.caption_source, LV_LABEL_LONG_DOT);
     route_label(282);
-    button(s_view.width - margin() - 108, 284, 108, 44,
+    button(kDisplayWidth - margin() - 108, 284, 108, 44,
            s_view.content.paused ? tr("继续", "Resume") : tr("暂停", "Pause"), Pause, kPurple,
            !s_view.command_pending && s_view.pending_direction < 0 &&
                (!face || s_view.content.input_direction != MYBOT_TRANSLATION_DIRECTION_NONE));
@@ -619,7 +618,7 @@ void captions(bool history) {
         button(164, 354, 152, 64,
                active() ? tr("返回实时翻译", "Back to live") : tr("返回结束页", "Back to summary"),
                CaptionExit, kTeal);
-        s_view.history_next = button(s_view.width - margin() - 120, 354, 120, 64,
+        s_view.history_next = button(kDisplayWidth - margin() - 120, 354, 120, 64,
                                      tr("下一页 >", "Next >"), HistoryNext, kSoft, false);
     } else {
         s_view.caption_route = label(s_view.body, margin() + 8, 64, content_width() - 16, 32, "",
@@ -641,7 +640,7 @@ void captions(bool history) {
                                       &mybot_caption_font_20, LV_TEXT_ALIGN_LEFT);
         s_view.caption_notice = label(card, 0, 0, content_width() - 48, LV_SIZE_CONTENT, "",
                                       &mybot_lvgl_font_20, LV_TEXT_ALIGN_LEFT, kMuted);
-        button((s_view.width - 260) / 2, 362, 260, 48,
+        button((kDisplayWidth - 260) / 2, 362, 260, 48,
                active() ? tr("返回实时翻译", "Back to live") : tr("返回结束页", "Back to summary"),
                CaptionExit, kTeal);
     }
@@ -779,7 +778,7 @@ void confirmation(bool change) {
           &mybot_lvgl_font_28);
     button(margin(), 316, (content_width() - 24) / 2, 68, tr("继续翻译", "Keep translating"), Live,
            kWhite);
-    button((s_view.width + 24) / 2, 316, (content_width() - 24) / 2, 68,
+    button((kDisplayWidth + 24) / 2, 316, (content_width() - 24) / 2, 68,
            change ? tr("结束并更换", "End and change") : tr("结束翻译", "End translation"),
            change ? ConfirmChange : ConfirmEnd, kPink);
 }
@@ -871,20 +870,20 @@ void service() {
                                                               : &mybot_lvgl_font_20,
           LV_TEXT_ALIGN_CENTER, kWarning);
     if (s_view.content.screen == MYBOT_LCD_SCREEN_TRANSLATION_STARTING)
-        button((s_view.width - 344) / 2, 330, 344, 62,
+        button((kDisplayWidth - 344) / 2, 330, 344, 62,
                s_view.cancel_requested ? tr("正在取消...", "Cancelling...")
                                        : tr("取消连接", "Cancel connection"),
                CancelStart, kWhite, !s_view.cancel_requested);
     else if (s_view.content.screen == MYBOT_LCD_SCREEN_CLEANUP_PENDING ||
              (active() && s_view.stop_requested))
-        button((s_view.width - 344) / 2, 330, 344, 62, tr("重试结束", "Retry stop"), RetryStop,
+        button((kDisplayWidth - 344) / 2, 330, 344, 62, tr("重试结束", "Retry stop"), RetryStop,
                kPink, !s_view.command_pending);
     else if (idle_error())
-        button((s_view.width - 344) / 2, 330, 344, 62, tr("返回设置", "Back to settings"), Setup,
+        button((kDisplayWidth - 344) / 2, 330, 344, 62, tr("返回设置", "Back to settings"), Setup,
                kTeal);
     else
-        button((s_view.width - 344) / 2, 330, 344, 62, tr("请稍候", "Please wait"), NoAction, kSoft,
-               false);
+        button((kDisplayWidth - 344) / 2, 330, 344, 62, tr("请稍候", "Please wait"), NoAction,
+               kSoft, false);
 }
 void redraw() {
     if (!s_view.body)
@@ -941,11 +940,11 @@ void redraw() {
         label(s_view.body, margin(), 112, content_width(), 100,
               tr("服务端已确认结束", "The service has confirmed the session ended"),
               &mybot_lvgl_font_28);
-        button((s_view.width - 320) / 2, 232, 320, 52, tr("查看本次字幕", "View captions"), History,
-               kSoft, s_view.content.caption_count != 0);
+        button((kDisplayWidth - 320) / 2, 232, 320, 52, tr("查看本次字幕", "View captions"),
+               History, kSoft, s_view.content.caption_count != 0);
         button(margin(), 312, (content_width() - 24) / 2, 68, tr("更换使用方式", "Change scene"),
                Entry, kWhite);
-        button((s_view.width + 24) / 2, 312, (content_width() - 24) / 2, 68,
+        button((kDisplayWidth + 24) / 2, 312, (content_width() - 24) / 2, 68,
                tr("再来一次", "Translate again"), Setup, kTeal);
         break;
     case Page::Service:
@@ -1186,24 +1185,23 @@ void clicked(lv_event_t *event) {
 }
 } // namespace
 
-int mybot_lvgl_view_create_sized(lv_display_t *display, int width, int height) {
-    if (!display || s_view.root || width != 480 || height != 480 ||
-        lv_display_get_horizontal_resolution(display) != width ||
-        lv_display_get_vertical_resolution(display) != height)
+int mybot_lvgl_view_create(lv_display_t *display) {
+    if (!display || s_view.root || lv_display_get_horizontal_resolution(display) != kDisplayWidth ||
+        lv_display_get_vertical_resolution(display) != kDisplayHeight)
         return -1;
-    s_view.width = width;
     s_view.content.screen = MYBOT_LCD_SCREEN_STARTING;
     s_view.content.volume = -1;
-    s_view.root = panel(lv_display_get_screen_active(display), 0, 0, width, height, kBackground, 0);
+    s_view.root = panel(lv_display_get_screen_active(display), 0, 0, kDisplayWidth, kDisplayHeight,
+                        kBackground, 0);
     /* The Mosaico cover glass masks the panel corners. Keep the status strip
      * inside the straight top edge; body controls also leave a wider margin. */
     const int status_inset = 60;
     s_view.network =
         label(s_view.root, status_inset, 16, 240, 30, "", &mybot_lvgl_font_20, LV_TEXT_ALIGN_LEFT);
     const int clock_width = 100;
-    s_view.clock = label(s_view.root, width - status_inset - clock_width, 16, clock_width, 30,
-                         "--:--", &mybot_lvgl_font_20, LV_TEXT_ALIGN_RIGHT);
-    s_view.body = panel(s_view.root, 0, 52, width, height - 52, kBackground, 0);
+    s_view.clock = label(s_view.root, kDisplayWidth - status_inset - clock_width, 16, clock_width,
+                         30, "--:--", &mybot_lvgl_font_20, LV_TEXT_ALIGN_RIGHT);
+    s_view.body = panel(s_view.root, 0, 52, kDisplayWidth, kDisplayHeight - 52, kBackground, 0);
     if (!s_view.root || !s_view.network || !s_view.clock || !s_view.body || s_view.failed) {
         mybot_lvgl_view_destroy();
         return -1;
@@ -1220,12 +1218,6 @@ int mybot_lvgl_view_create_sized(lv_display_t *display, int width, int height) {
         return -1;
     }
     return 0;
-}
-int mybot_lvgl_view_create(lv_display_t *display) {
-    return display ? mybot_lvgl_view_create_sized(display,
-                                                  lv_display_get_horizontal_resolution(display),
-                                                  lv_display_get_vertical_resolution(display))
-                   : -1;
 }
 void mybot_lvgl_view_update(const mybot_lcd_content_t *content) {
     if (!s_view.root || !content || content->screen < MYBOT_LCD_SCREEN_STARTING ||

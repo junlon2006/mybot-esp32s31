@@ -1287,3 +1287,53 @@ and whitespace checks pass. These are host results; no device was flashed.
 
 Chinese build and source/link/OTA checks pass in build/mosaico-v1.2, with 462,000
 free bytes per OTA slot.
+
+## Review follow-up: fail closed on lost RTC control callbacks (2026-11-09)
+
+Allocation or queue admission failures for current RTC/RTM control notifications
+now latch a fault under the callback gate. The existing RTC owner observes it
+before callback dispatch, audio sends, readiness timer processing and completion
+of RTM admission, then publishes ERROR to trigger parent-session cleanup. The
+latch survives late success events until safe session reset. Connection identity
+publication and retirement share the gate; unrelated/stale notifications and
+callbacks rejected during shutdown do not fault a replacement session. Audio and
+caption payloads remain droppable. Failure to copy optional error text preserves
+the error notification itself. No new task or queue is introduced.
+
+The old code fails the new allocation/queue-rejection assertions while all 118
+wrapper cases pass under UBSan. New cases cover both routes in connecting,
+connected and reconnecting states, lost RTM acknowledgements, optional error-text
+allocation failure, ignored identities, droppable data and shutdown/restart.
+Application control tests pass 16 shutdown, 27 UI and
+nine caption cases, plus 46 face/meeting cases for each AEC setting. Lifecycle tests
+pass all 36 cases. Formatting/SPDX and whitespace checks pass. These host fault
+injections do not establish physical reconnect timing; no device was flashed.
+
+Chinese build and source/link/OTA checks pass in build/mosaico-v1.2, with 461,232
+free bytes per OTA slot.
+
+## Review follow-up: align UI command documentation (2026-11-09)
+
+The bilingual UI guide now describes all five parameter command types passing
+gesture validation and submitting directly to the SDK's nonblocking mailbox.
+Touch start/stop events still travel through the input worker, while the physical
+AI key handles provisioning and factory reset only. The obsolete physical-volume
+key claim and deleted GUI command-slot comment are removed. Source cross-checks,
+formatting/SPDX and whitespace checks pass; runtime behavior is unchanged.
+
+## Review follow-up: remove obsolete UI generalization and CDC probe (2026-11-09)
+
+The fixed 480x480 view now has one create(display) entry and constant geometry,
+without a mutable width, the sized wrapper or unused Volume/Brightness actions.
+The adapter and display mock use the same entry. Null displays, other resolutions
+and duplicate creation remain rejected without replacing the live view. The
+unused host CDC probe tool for the removed S31 USB Probe firmware is deleted;
+the separate Mosaico UAC diagnostic remains available.
+
+Both UI languages, rounded-corner layout, all static/caption fonts, input routing
+and display/touch lifecycle suites pass under fail-fast UBSan. Formatting/SPDX,
+remaining-reference and whitespace checks pass. The 40-row display buffers are
+unchanged. These are host results; no device was flashed.
+
+Chinese build and source/link/OTA checks pass in build/mosaico-v1.2, with 461,568
+free bytes per OTA slot.

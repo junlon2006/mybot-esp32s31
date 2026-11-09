@@ -41,4 +41,12 @@ Agent/session authorization policy belong to the application tests; the wrapper 
 bytes. Work accepted before the forwarding worker's finalization barrier may finish before
 that barrier; newly arriving callbacks are rejected once callback admission closes.
 
+Allocation and nonblocking queue failures are injected at the production callback entry
+points. Losing a required current-connection or RTM control notification ends the session
+on the RTC owner, including while already connected; late successful callbacks cannot
+restore readiness. Tests cover both routes, connecting/reconnecting states, raw RTM
+acknowledgements whose queued notification is lost, and an error whose optional message
+copy fails. Unrelated identities and callbacks rejected during teardown do not poison a
+later session. Audio and caption data may still be dropped without a fatal error.
+
 This validates wrapper behavior, not the vendor binary or physical audio.

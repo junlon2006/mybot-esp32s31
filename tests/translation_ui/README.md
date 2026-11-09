@@ -5,6 +5,8 @@ Run `sh tests/translation_ui/run.sh`. Both display languages compile the real LV
 view and SDK language list against an object/event model. Tests cover the native
 480×480 bounds, initial allocation failures, repeated teardown, media translation,
 face-to-face turn selection, simultaneous USB meeting translation, and USB capability failures.
+The single `mybot_lvgl_view_create(display)` entry rejects null displays,
+resolutions other than 480×480, and duplicate creation without replacing the live view.
 
 Media and face-to-face share one stored language pair. The face-to-face UI labels
 that pair as my/other language, starts with microphone direction NONE, and exposes
