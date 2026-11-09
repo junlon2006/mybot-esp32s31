@@ -1287,3 +1287,27 @@ and whitespace checks pass. These are host results; no device was flashed.
 
 Chinese build and source/link/OTA checks pass in build/mosaico-v1.2, with 462,000
 free bytes per OTA slot.
+
+## Review follow-up: fail closed on lost RTC control callbacks (2026-11-09)
+
+Allocation or queue admission failures for current RTC/RTM control notifications
+now latch a fault under the callback gate. The existing RTC owner observes it
+before callback dispatch, audio sends, readiness timer processing and completion
+of RTM admission, then publishes ERROR to trigger parent-session cleanup. The
+latch survives late success events until safe session reset. Connection identity
+publication and retirement share the gate; unrelated/stale notifications and
+callbacks rejected during shutdown do not fault a replacement session. Audio and
+caption payloads remain droppable. Failure to copy optional error text preserves
+the error notification itself. No new task or queue is introduced.
+
+The old code fails the new allocation/queue-rejection assertions while all 118
+wrapper cases pass under UBSan. New cases cover both routes in connecting,
+connected and reconnecting states, lost RTM acknowledgements, optional error-text
+allocation failure, ignored identities, droppable data and shutdown/restart.
+Application control tests pass 16 shutdown, 27 UI and
+nine caption cases, plus 46 face/meeting cases for each AEC setting. Lifecycle tests
+pass all 36 cases. Formatting/SPDX and whitespace checks pass. These host fault
+injections do not establish physical reconnect timing; no device was flashed.
+
+Chinese build and source/link/OTA checks pass in build/mosaico-v1.2, with 461,232
+free bytes per OTA slot.

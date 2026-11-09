@@ -77,6 +77,7 @@ static aosl_atomic_t s_rtm_sub_ok;
 static aosl_atomic_t s_rtm_sub_generation;
 static aosl_atomic_t s_rtc_callbacks_enabled;
 static aosl_atomic_t s_rtc_callback_gate;
+static aosl_atomic_t s_rtc_control_delivery_failed;
 
 static void callback_gate_lock(void) {
     while (aosl_atomic_cmpxchg(&s_rtc_callback_gate, 0, 1) != 0) {
@@ -209,6 +210,62 @@ typedef struct {
     } payload;
 } rtc_event_t;
 
+static bool callback_delivery_failed(void);
+
+/* Called under callback_gate. The owner publishes connection identity and its
+ * fixed peer metadata before vendor join, and retires it before vendor leave. */
+static void record_control_failure_locked(rtc_event_type_t type, connection_id_t conn_id,
+                                          const char *identity, uint32_t generation) {
+    if (!aosl_atomic_read(&s_rtc_callbacks_enabled) ||
+        aosl_atomic_read(&s_rtc_mpq_id) == AOSL_MPQ_INVALID)
+        return;
+    switch (type) {
+    case RTC_EVENT_AUDIO:
+    case RTC_EVENT_RTM_DATA:
+    case RTC_EVENT_RTM_SUB_DATA:
+#if MYBOT_ENABLE_VIDEO
+    case RTC_EVENT_VIDEO_KEY_FRAME_REQUEST:
+    case RTC_EVENT_VIDEO_TARGET_BITRATE:
+#endif
+        return;
+    case RTC_EVENT_RTM_EVENT:
+        if (s_rtc.rtm_login_requested && identity && strcmp(identity, s_rtc.rtm_uid) == 0 &&
+            generation == s_rtc.rtm_login_generation)
+            aosl_atomic_set(&s_rtc_control_delivery_failed, true);
+        return;
+    case RTC_EVENT_RTM_SUB_RESULT:
+        if (s_rtc.rtm_subscribe_requested && identity && strcmp(identity, s_rtc.rtm_channel) == 0 &&
+            generation == s_rtc.rtm_subscribe_generation)
+            aosl_atomic_set(&s_rtc_control_delivery_failed, true);
+        return;
+    default:
+        break;
+    }
+    if (conn_id == CONNECTION_ID_INVALID || conn_id == CONNECTION_ID_ALL)
+        return;
+    for (size_t i = 0; i < 2; ++i) {
+        const mybot_rtc_route_t *route = &s_rtc.routes[i];
+        if (route->conn_id != conn_id)
+            continue;
+        if (type == RTC_EVENT_USER_JOINED &&
+            (!identity || !route->tts_enabled || strcmp(identity, route->publisher_account)))
+            return;
+        if (type == RTC_EVENT_USER_OFFLINE &&
+            (!identity || (strcmp(identity, route->agent_uid) &&
+                           (!route->tts_enabled || strcmp(identity, route->publisher_account)))))
+            return;
+        aosl_atomic_set(&s_rtc_control_delivery_failed, true);
+        return;
+    }
+}
+
+static void record_control_failure(rtc_event_type_t type, connection_id_t conn_id,
+                                   const char *identity, uint32_t generation) {
+    callback_gate_lock();
+    record_control_failure_locked(type, conn_id, identity, generation);
+    callback_gate_unlock();
+}
+
 static void rtc_event_free(rtc_event_t *event) {
     if (event) {
         aosl_hal_free(event->data);
@@ -236,6 +293,10 @@ static void rtc_event_process(const aosl_ts_t *ts, aosl_refobj_t ref, uintptr_t 
         return;
     }
     rtc_event_t *e = (rtc_event_t *)argv[0];
+    if (callback_delivery_failed()) {
+        rtc_event_free(e);
+        return;
+    }
     switch (e->type) {
     case RTC_EVENT_RTM_EVENT:
         process_rtm_event(e->payload.rtm_event.uid_text, e->payload.rtm_event.event,
@@ -314,11 +375,20 @@ static bool rtc_event_queue(rtc_event_t *event) {
         rtc_event_free(event);
         return false;
     }
-    /* The queue is NONBLOCK so RTSA teardown can drain its callback worker
-     * without waiting for this worker. Audio and stale notifications may be
-     * dropped when the bounded queue is full. */
+    /* Never block RTSA teardown on queue space. Data may be dropped; losing a
+     * current control event must close the session on the RTC owner. */
     int ret = aosl_mpq_queue(q, AOSL_MPQ_INVALID, AOSL_REF_INVALID, "rtc_callback",
                              rtc_event_process, 1, (uintptr_t)event);
+    if (ret < 0) {
+        const char *identity = NULL;
+        if (event->type == RTC_EVENT_RTM_EVENT)
+            identity = event->payload.rtm_event.uid_text;
+        else if (event->type == RTC_EVENT_RTM_SUB_RESULT)
+            identity = event->payload.rtm_sub_result.channel;
+        else if (event->type == RTC_EVENT_USER_JOINED || event->type == RTC_EVENT_USER_OFFLINE)
+            identity = event->payload.user.user.user_account;
+        record_control_failure_locked(event->type, event->conn_id, identity, event->generation);
+    }
     callback_gate_unlock();
     if (ret < 0) {
         rtc_event_free(event);
@@ -340,6 +410,7 @@ static void queue_rtc_notification(rtc_event_type_t type, connection_id_t conn_i
                                    int value) {
     rtc_event_t *event = rtc_event_new(type);
     if (!event) {
+        record_control_failure(type, conn_id, NULL, 0);
         return;
     }
     event->conn_id = conn_id;
@@ -377,6 +448,17 @@ static void set_state(mybot_rtc_state_t state) {
     if (s_rtc.callbacks.on_state_changed) {
         s_rtc.callbacks.on_state_changed(state, s_rtc.callbacks.user_data);
     }
+}
+
+/* RTC owner only. Keep the latch until finalization so late success events
+ * cannot reopen a session whose control history is incomplete. */
+static bool callback_delivery_failed(void) {
+    if (!aosl_atomic_read(&s_rtc_control_delivery_failed))
+        return false;
+    if (s_rtc.state != MYBOT_RTC_STATE_ERROR)
+        AOSL_LOG_ERR("[RTC] required callback delivery failed; ending translation");
+    set_state(MYBOT_RTC_STATE_ERROR);
+    return true;
 }
 
 static mybot_rtc_route_t *route_for_connection(connection_id_t conn_id) {
@@ -419,8 +501,9 @@ static void ready_timeout(aosl_timer_t id, const aosl_ts_t *now, uintptr_t argc,
     (void)now;
     (void)argc;
     (void)argv;
-    if (id == s_rtc.ready_timer &&
-        (s_rtc.state == MYBOT_RTC_STATE_CONNECTING ||
+    if (id != s_rtc.ready_timer || callback_delivery_failed())
+        return;
+    if ((s_rtc.state == MYBOT_RTC_STATE_CONNECTING ||
          s_rtc.state == MYBOT_RTC_STATE_RECONNECTING) &&
         aosl_tick_ms() - s_rtc.ready_started >= MYBOT_RTC_READY_TIMEOUT_MS) {
         AOSL_LOG_ERR("[RTC] translation routes did not become ready within %u ms",
@@ -1078,30 +1161,34 @@ static void process_token_will_expire(connection_id_t conn_id, const char *token
 static void on_rtm_event(const char *uid, rtm_event_type_e type, rtm_err_code_e error) {
     bool enabled;
     bool login_requested;
+    uint32_t generation;
     char expected_uid[MYBOT_RTM_UID_MAX_LEN];
     callback_gate_lock();
     enabled = aosl_atomic_read(&s_rtc_callbacks_enabled) != 0;
     login_requested = s_rtc.rtm_login_requested;
+    generation = s_rtc.rtm_login_generation;
     memcpy(expected_uid, s_rtc.rtm_uid, sizeof(expected_uid));
     callback_gate_unlock();
     if (!enabled)
         return;
-    if (type == RTM_EVENT_TYPE_LOGIN &&
-        (!uid || !login_requested || strcmp(uid, expected_uid) != 0)) {
-        AOSL_LOG_WRN("[RTM] stale login callback ignored (uid=%s)", uid ? uid : "(null)");
+    if (!uid || !login_requested || strcmp(uid, expected_uid) != 0) {
+        AOSL_LOG_WRN("[RTM] stale account callback ignored (uid=%s)", uid ? uid : "(null)");
         return;
     }
+    mybot_rtm_event_type_t mapped;
+    if (!map_rtm_event(type, &mapped))
+        return;
     if (type == RTM_EVENT_TYPE_LOGIN) {
         aosl_atomic_set(&s_rtm_login_ok, error == ERR_RTM_OK);
         aosl_atomic_set(&s_rtm_login_done, true);
     }
     rtc_event_t *e = rtc_event_new(RTC_EVENT_RTM_EVENT);
-    if (!e || !uid || strlen(uid) >= sizeof(e->payload.rtm_event.uid_text)) {
-        rtc_event_free(e);
+    if (!e) {
+        record_control_failure(RTC_EVENT_RTM_EVENT, CONNECTION_ID_INVALID, uid, generation);
         return;
     }
     memcpy(e->payload.rtm_event.uid_text, uid, strlen(uid) + 1U);
-    e->generation = (uint32_t)aosl_atomic_read(&s_rtm_login_generation);
+    e->generation = generation;
     e->payload.rtm_event.event = type;
     e->payload.rtm_event.error = error;
     (void)rtc_event_queue(e);
@@ -1141,10 +1228,12 @@ static void on_rtm_data(const char *uid, const void *data, size_t len, rtm_messa
 static void on_rtm_subscribe_result(const char *channel, rtm_err_code_e error) {
     bool enabled;
     bool requested;
+    uint32_t generation;
     char expected_channel[AGORA_RTC_CHANNEL_NAME_MAX_LEN + 1];
     callback_gate_lock();
     enabled = aosl_atomic_read(&s_rtc_callbacks_enabled) != 0;
     requested = s_rtc.rtm_subscribe_requested;
+    generation = s_rtc.rtm_subscribe_generation;
     memcpy(expected_channel, s_rtc.rtm_channel, sizeof(expected_channel));
     callback_gate_unlock();
     if (!enabled)
@@ -1160,10 +1249,12 @@ static void on_rtm_subscribe_result(const char *channel, rtm_err_code_e error) {
         return;
     rtc_event_t *e = rtc_event_new(RTC_EVENT_RTM_SUB_RESULT);
     if (!e) {
+        record_control_failure(RTC_EVENT_RTM_SUB_RESULT, CONNECTION_ID_INVALID, channel,
+                               generation);
         return;
     }
     memcpy(e->payload.rtm_sub_result.channel, channel, strlen(channel) + 1U);
-    e->generation = (uint32_t)aosl_atomic_read(&s_rtm_sub_generation);
+    e->generation = generation;
     e->payload.rtm_sub_result.error = error;
     (void)rtc_event_queue(e);
 }
@@ -1219,12 +1310,14 @@ static void on_user_joined(connection_id_t c, const user_info_t *u, int elapsed)
     if (!u)
         return;
     rtc_event_t *e = rtc_event_new(RTC_EVENT_USER_JOINED);
-    if (e) {
-        e->conn_id = c;
-        e->payload.user.user = *u;
-        e->value = elapsed;
-        (void)rtc_event_queue(e);
+    if (!e) {
+        record_control_failure(RTC_EVENT_USER_JOINED, c, u->user_account, 0);
+        return;
     }
+    e->conn_id = c;
+    e->payload.user.user = *u;
+    e->value = elapsed;
+    (void)rtc_event_queue(e);
 }
 static void on_user_info_updated(connection_id_t c, const user_info_t *u) {
     on_user_joined(c, u, 0);
@@ -1233,12 +1326,14 @@ static void on_user_offline(connection_id_t c, const user_info_t *u, int reason)
     if (!u)
         return;
     rtc_event_t *e = rtc_event_new(RTC_EVENT_USER_OFFLINE);
-    if (e) {
-        e->conn_id = c;
-        e->payload.user.user = *u;
-        e->value = reason;
-        (void)rtc_event_queue(e);
+    if (!e) {
+        record_control_failure(RTC_EVENT_USER_OFFLINE, c, u->user_account, 0);
+        return;
     }
+    e->conn_id = c;
+    e->payload.user.user = *u;
+    e->value = reason;
+    (void)rtc_event_queue(e);
 }
 static void on_audio_data(connection_id_t c, uint32_t uid, uint16_t ts, const void *d, size_t len,
                           const audio_frame_info_t *i) {
@@ -1297,15 +1392,16 @@ static void on_key_frame_gen_req(connection_id_t c, uint32_t uid, video_stream_t
 #endif
 static void on_error(connection_id_t c, int code, const char *m) {
     rtc_event_t *e = rtc_event_new(RTC_EVENT_ERROR);
-    if (e) {
-        e->conn_id = c;
-        e->value = code;
-        if (m && !rtc_event_copy_data(e, m, strlen(m) + 1U)) {
-            rtc_event_free(e);
-            return;
-        }
-        (void)rtc_event_queue(e);
+    if (!e) {
+        record_control_failure(RTC_EVENT_ERROR, c, NULL, 0);
+        return;
     }
+    e->conn_id = c;
+    e->value = code;
+    /* Preserve the error even if its optional diagnostic text cannot be copied. */
+    if (m)
+        (void)rtc_event_copy_data(e, m, strlen(m) + 1U);
+    (void)rtc_event_queue(e);
 }
 static void on_license_failed(connection_id_t c, int reason) {
     queue_rtc_notification(RTC_EVENT_LICENSE, c, 0, reason);
@@ -1316,10 +1412,13 @@ static void on_token_will_expire(connection_id_t c, const char *t) {
 }
 
 static void clear_runtime_state(void) {
+    callback_gate_lock();
     memset(s_rtc.routes, 0, sizeof(s_rtc.routes));
     for (size_t i = 0; i < 2; ++i)
         s_rtc.routes[i].conn_id = CONNECTION_ID_INVALID;
     s_rtc.route_count = 0;
+    aosl_atomic_set(&s_rtc_control_delivery_failed, false);
+    callback_gate_unlock();
     s_rtc.app_id[0] = '\0';
     s_rtc.ready_timer = AOSL_MPQ_TIMER_INVALID;
     memset(&s_rtc.callbacks, 0, sizeof(s_rtc.callbacks));
@@ -1418,8 +1517,10 @@ static int rtc_leave_impl(void) {
     }
     for (size_t i = 0; i < s_rtc.route_count; ++i) {
         mybot_rtc_route_t *route = &s_rtc.routes[i];
+        callback_gate_lock();
         connection_id_t conn_id = route->conn_id;
         route->conn_id = CONNECTION_ID_INVALID;
+        callback_gate_unlock();
         route->publisher_subscribed = route->joined = false;
         route->publisher_uid = 0;
         if (conn_id == CONNECTION_ID_INVALID)
@@ -1472,7 +1573,7 @@ static int rtc_join_impl(const mybot_device_translation_route_t *routes, size_t 
     const mybot_device_translation_route_t *listen = &routes[0];
     if (login_rtm(listen->rtc_uid, listen->rtc_token) < 0 ||
         wait_for_rtm_login(listen->rtc_uid) < 0 || subscribe_rtm(listen->rtc_channel) < 0 ||
-        wait_for_rtm_subscription(listen->rtc_channel) < 0) {
+        wait_for_rtm_subscription(listen->rtc_channel) < 0 || callback_delivery_failed()) {
         (void)rtc_logout_rtm_impl();
         set_state(MYBOT_RTC_STATE_ERROR);
         return -1;
@@ -1507,8 +1608,13 @@ static int rtc_join_impl(const mybot_device_translation_route_t *routes, size_t 
         snprintf(route->agent_uid, sizeof(route->agent_uid), "%s", routes[i].rtc_agent_uid);
         snprintf(route->publisher_account, sizeof(route->publisher_account), "%s",
                  routes[i].audio_publisher_uid);
-        if (agora_rtc_create_connection(&route->conn_id) < 0 ||
-            agora_rtc_join_channel_with_user_account(route->conn_id, routes[i].rtc_channel,
+        connection_id_t created = CONNECTION_ID_INVALID;
+        if (agora_rtc_create_connection(&created) < 0)
+            goto failed;
+        callback_gate_lock();
+        route->conn_id = created;
+        callback_gate_unlock();
+        if (agora_rtc_join_channel_with_user_account(route->conn_id, routes[i].rtc_channel,
                                                      routes[i].rtc_uid, routes[i].rtc_token,
                                                      &options) < 0)
             goto failed;
@@ -1605,6 +1711,8 @@ static int rtc_send_video_impl(const mybot_video_frame_t *frame) {
 
 static int rtc_send_audio_impl(mybot_translation_direction_t direction, const void *data,
                                size_t len) {
+    if (callback_delivery_failed())
+        return -1;
     mybot_rtc_route_t *route = route_for_direction(direction);
     if (!data || len == 0 || !route || s_rtc.state != MYBOT_RTC_STATE_CONNECTED ||
         route->conn_id == CONNECTION_ID_INVALID)
