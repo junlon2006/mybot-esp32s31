@@ -21,9 +21,8 @@ int mybot_ui_port_copy_caption(uint32_t generation, uint32_t sequence, mybot_cap
 bool mybot_ui_port_wifi_connected(void);
 int mybot_ui_port_provisioning_ssid(char *ssid, size_t capacity);
 
-/* Direct commands submit immediately; gesture commands retain touch validation. */
-int mybot_ui_port_submit(const mybot_ui_command_t *command);
-void mybot_ui_port_gesture_command(const mybot_ui_command_t *command);
+/* All touch-originated UI commands share one gesture validation and submit path. */
+int mybot_ui_port_command(const mybot_ui_command_t *command);
 void mybot_ui_port_event(mybot_key_event_t event);
 
 #ifdef __cplusplus

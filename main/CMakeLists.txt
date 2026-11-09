@@ -25,8 +25,6 @@ idf_component_register(
         nvs_flash
         esp_psram
         esp_app_format
-        esp_netif
-        esp_event
         esp_timer
         heap
         mbedtls

@@ -25,17 +25,18 @@
 
 ## 构建和烧录
 
-开发只构建中文，所有本地编译固定使用 `build/mosaico-v1.2`，生成配置固定为 `build/mosaico-v1.2/sdkconfig`：
+开发只构建中文，所有本地增量编译固定使用 `build/korvo-s31`，生成配置固定为
+`build/korvo-s31/sdkconfig`：
 
 ```sh
 . /path/to/esp-idf/export.sh
-idf.py --preview -B build/mosaico-v1.2 \
+idf.py --preview -B build/korvo-s31 \
   -DMYBOT_MOSAICO_UAC_TEST=OFF \
-  -DSDKCONFIG=build/mosaico-v1.2/sdkconfig \
+  -DSDKCONFIG=build/korvo-s31/sdkconfig \
   -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;ci/ptime60.defaults" build
-idf.py --preview -B build/mosaico-v1.2 -p DOWNLOAD_PORT flash
+idf.py --preview -B build/korvo-s31 -p DOWNLOAD_PORT flash
 # 启动后使用运行时 CDC 端口查看日志
-idf.py --preview -B build/mosaico-v1.2 -p RUNTIME_PORT monitor
+idf.py --preview -B build/korvo-s31 -p RUNTIME_PORT monitor
 ```
 
 保留现有 G.722、16 kHz mono S16、60 ms RTSA 配置和 cloud AEC。AI QoS 默认关闭（`CONFIG_MYBOT_AI_QOS=n`），可在 menuconfig 中显式开启；关闭时启动请求发送 `ai_qos=false` 且不附带快发倍率。已有 sdkconfig 中的显式配置优先于默认值。云 AEC 上行是 MIC/播放参考交错，RTSA 的 PCM channel 数仍为 1，不能改成普通立体声。先检查最终 sdkconfig 的服务器、语种和 AI QoS 设置，再烧录。
@@ -52,4 +53,7 @@ idf.py --preview -B build/mosaico-v1.2 -p RUNTIME_PORT monitor
 - 翻译启动使用连接、发送和接收共享的 30 秒总预算，其余请求保持 5 秒。总预算不随分片进展重置，也不自动重发启动。日志 `event=translation action=start phase=result` 会输出服务结果、错误码、父 ID 是否已知及清理标记，便于区分云端启动成功后本地拒绝和 HTTP 没有返回。
 - `STORAGE_ERROR`：会话恢复记录无法保存，设备会停止本地启动并清理已知云会话。查看 `mybot_kv` 的具体 NVS 错误和可用条目；`translation_storage` 区分分配失败和写入失败。会话记录按实际字符串长度保存，避免固定字段填充占满 NVS；仍兼容读取旧格式，更新时保留 NVS 原子覆写与失败保护。
 - `START_RESULT_UNKNOWN` / “启动结果未知”：请求可能已发送，但没有拿到父会话 ID。此状态写入 NVS，普通 `idf.py ... flash` 和重启都会保留，不能直接重复创建会话。
-- 仅在控制台已确认该设备全部会话结束后，可从 `0x0` 烧录本次合并镜像 `build/mosaico-v1.2/mybot_esp32s31-merged.bin` 恢复。该镜像的 `0x9000..0xcfff` 为擦除值，会清除 NVS 中的未知会话记录、Wi-Fi、绑定、语言和音量设置，需要重新配网、配对。烧录前请核对该镜像及相邻 `.sha256` / `.flash.txt`；正常升级继续使用上面的分段 `idf.py flash`。
+- 仅在控制台已确认该设备全部会话结束后，可从 `0x0` 烧录 `scripts/build_all.py`
+  生成的合并镜像恢复。该镜像的 `0x9000..0xcfff` 为擦除值，会清除 NVS 中的未知会话记录、
+  Wi-Fi、绑定、语言和音量设置，需要重新配网、配对。烧录前请核对该镜像及相邻
+  `.sha256` / `.flash.txt`；正常升级继续使用上面的分段 `idf.py flash`。

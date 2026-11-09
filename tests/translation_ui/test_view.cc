@@ -231,14 +231,14 @@ bool mybot_wifi_is_connected(void) {
 void mybot_ui_input_event(mybot_key_event_t event) {
     events.push_back(event);
 }
-void mybot_ui_input_command(const mybot_ui_command_t *command) {
-    commands.push_back(*command);
-}
 int mybot_ui_submit(const mybot_ui_command_t *command) {
     if (!accept_ui_commands)
         return -1;
     commands.push_back(*command);
     return 0;
+}
+int mybot_ui_input_command(const mybot_ui_command_t *command) {
+    return mybot_ui_submit(command);
 }
 int mybot_wifi_get_provisioning_ssid(char *out, size_t capacity) {
     std::snprintf(out, capacity, "Translation-WiFi");

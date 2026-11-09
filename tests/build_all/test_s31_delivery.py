@@ -149,6 +149,14 @@ class S31DeliveryTests(unittest.TestCase):
         self.assertEqual(metadata["board"], "esp-mosaico-v1.2")
         self.assertIn("Board: esp-mosaico-v1.2", self.merged.with_suffix(".flash.txt").read_text())
 
+    def test_mosaico_rejects_each_other_codec_driver(self) -> None:
+        for symbol in checker.FORBIDDEN_CODEC_CONFIGS:
+            with self.subTest(symbol=symbol):
+                (self.build / "sdkconfig").write_text(self.config + f"{symbol}=y\n")
+                self.refresh_provenance()
+                with self.assertRaisesRegex(RuntimeError, f"must not enable {symbol}"):
+                    checker.verify_build(self.build, "zh-CN")
+
     def enable_mosaico_uac(self) -> None:
         (self.build / "sdkconfig").write_text(
             self.config + "CONFIG_USB_DEVICE_UAC_AS_PART=y\n"
@@ -601,7 +609,7 @@ class WorkflowDeliveryTests(unittest.TestCase):
         trusted = build_job.index("      - name: Allow Git access to checked-out workspace\n")
         self.assertLess(build_job.index("      - uses: actions/checkout@v4\n"), trusted)
         self.assertLess(trusted, build_job.index("      - name: Verify toolchain\n"))
-        self.assertLess(trusted, build_job.index("      - name: Build translation firmware without video\n"))
+        self.assertLess(trusted, build_job.index("      - name: Build and package translation firmware\n"))
         body = build_job[trusted:].split("        run: |\n", 1)[1].split("      - ", 1)[0]
         self.assertIn('git config --global --add safe.directory "$GITHUB_WORKSPACE"', body)
         self.assertIn('git -C "$GITHUB_WORKSPACE" rev-parse --verify HEAD', body)
@@ -611,22 +619,14 @@ class WorkflowDeliveryTests(unittest.TestCase):
         workflow = (ROOT / ".github/workflows/ci.yml").read_text()
         build_job = workflow.split("  idf-build:", 1)[1]
         matrix = build_job.split("      matrix:\n", 1)[1].split("    steps:\n", 1)[0]
-        entries = re.findall(
-            r"- language: (\S+)\n\s+defaults: ([^\n]+)", matrix
-        )
-        expected = {
-            (language, "ci/ptime60.defaults" +
-             (";ci/en-us.defaults" if language == "en-US" else ""))
-            for language in ("zh-CN", "en-US")
-        }
-        self.assertEqual(set(entries), expected)
-        self.assertEqual(len(entries), len(expected))
+        self.assertIn("language: [zh-CN, en-US]", matrix)
+        self.assertNotIn("-DMYBOT_BOARD", build_job)
         self.assertIn(
-            'BUILD_DIR: build/ci-esp-mosaico-v1.2-${{ matrix.language }}',
+            'python3 scripts/build_all.py --language "${{ matrix.language }}"',
             build_job,
         )
-        self.assertNotIn("-DMYBOT_BOARD", build_job)
-        self.assertIn('-DSDKCONFIG="$BUILD_DIR/sdkconfig"', build_job)
+        self.assertIn('--build-root "$RUNNER_TEMP/mybot-build"', build_job)
+        self.assertIn('--output-root "$GITHUB_WORKSPACE/releases"', build_job)
         self.assertIn(
             'mybot-esp-mosaico-v1.2-${{ matrix.language }}-ptime60-no-video-',
             build_job,
@@ -634,15 +634,20 @@ class WorkflowDeliveryTests(unittest.TestCase):
         descriptor_step = build_job.split(
             "      - name: Verify composite descriptors against pinned USB headers\n", 1
         )[1].split("      - name:", 1)[0]
+        self.assertLess(
+            build_job.index("      - name: Build and package translation firmware\n"),
+            build_job.index("      - name: Verify composite descriptors against pinned USB headers\n"),
+        )
         self.assertNotIn("matrix.board", descriptor_step)
         self.assertIn("run: sh tests/mosaico_usb/run_descriptors.sh", descriptor_step)
 
     def test_ci_merge_output_is_absolute_and_uploads_only_delivery_files(self) -> None:
         workflow = (ROOT / ".github/workflows/ci.yml").read_text()
-        self.assertIn('merged="$GITHUB_WORKSPACE/releases/', workflow)
-        self.assertIn('merge-bin -o "$merged"', workflow)
-        self.assertNotIn('merge-bin -o "$BUILD_DIR/', workflow)
-        self.assertIn('scripts/check_s31_build.py --build-dir "$BUILD_DIR"', workflow)
+        build_job = workflow.split("  idf-build:", 1)[1]
+        self.assertNotIn("idf.py --preview -B", build_job)
+        self.assertNotIn("merge-bin", build_job)
+        self.assertNotIn("scripts/check_s31_build.py --build-dir", build_job)
+        self.assertIn("python3 scripts/build_all.py", build_job)
         upload = workflow.split("      - name: Upload firmware", 1)[1]
         for suffix in (".bin", ".manifest.json", ".sha256", ".flash.txt"):
             self.assertIn(

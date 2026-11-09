@@ -24,8 +24,8 @@ jobs:
           clang-format --version
       - name: Format check
         run: |
-          find main diagnostics/mosaico_uac components/mybot_platform components/mybot_stack/aosl/s31_port tests/aosl_s31_tasks tests/mosaico_display tests/mosaico_hardware tests/mosaico_usb tests/mosaico_usb_audio \
-            tests/codec_audio tests/mosaico_input tests/pcm_playback_buffer tests/media_pause \
+          find main diagnostics/mosaico_uac components/mybot_platform components/mybot_stack/aosl/s31_port tests/aosl_s31_tasks tests/host_support tests/mosaico_display tests/mosaico_hardware tests/mosaico_usb tests/mosaico_usb_audio \
+            tests/codec_audio tests/mosaico_input tests/platform_network tests/pcm_playback_buffer tests/media_pause \
             tests/conversation_http_trace tests/http_time_sync tests/translation_http tests/translation_ui tests/translation_client \
             tests/translation_lifecycle tests/translation_rtc tests/translation_control tests/translation_state tests/translation_volume tests/translation_captions tests/kv_store tests/storage_init tests/factory_reset \
             -path '*/mybot_stack/agora_rtc' -prune -o \
@@ -65,8 +65,8 @@ jobs:
           fi
       - name: SPDX check
         run: |
-          find main diagnostics/mosaico_uac components/mybot_platform components/mybot_stack/aosl/s31_port tests/aosl_s31_tasks tests/mosaico_display tests/mosaico_hardware tests/mosaico_usb tests/mosaico_usb_audio \
-            tests/codec_audio tests/mosaico_input tests/pcm_playback_buffer tests/media_pause \
+          find main diagnostics/mosaico_uac components/mybot_platform components/mybot_stack/aosl/s31_port tests/aosl_s31_tasks tests/host_support tests/mosaico_display tests/mosaico_hardware tests/mosaico_usb tests/mosaico_usb_audio \
+            tests/codec_audio tests/mosaico_input tests/platform_network tests/pcm_playback_buffer tests/media_pause \
             tests/conversation_http_trace tests/http_time_sync tests/translation_http tests/translation_ui tests/translation_client \
             tests/translation_lifecycle tests/translation_rtc tests/translation_control tests/translation_state tests/translation_volume tests/translation_captions tests/kv_store tests/storage_init tests/factory_reset \
             -path '*/mybot_stack/agora_rtc' -prune -o -type f \
@@ -88,6 +88,8 @@ jobs:
         run: sh tests/mosaico_hardware/run.sh
       - name: Mosaico codec audio lifecycle tests
         run: sh tests/codec_audio/run.sh
+      - name: Platform network bootstrap and SNTP lifecycle tests
+        run: sh tests/platform_network/run.sh
       - name: Translation protocol, lifecycle and RTC ownership tests
         run: |
           sh tests/translation_http/run.sh
@@ -136,16 +138,10 @@ jobs:
     defaults:
       run:
         shell: bash
-    env:
-      BUILD_DIR: build/ci-esp-mosaico-v1.2-${{ matrix.language }}
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - language: zh-CN
-            defaults: ci/ptime60.defaults
-          - language: en-US
-            defaults: ci/ptime60.defaults;ci/en-us.defaults
+        language: [zh-CN, en-US]
     steps:
       - uses: actions/checkout@v4
       - name: Allow Git access to checked-out workspace
@@ -160,24 +156,14 @@ jobs:
         run: |
           source /opt/esp/idf/export.sh >/dev/null
           test "$(idf.py --preview --version)" = "ESP-IDF v6.1"
-      - name: Build translation firmware without video
+      - name: Build and package translation firmware
         run: |
           source /opt/esp/idf/export.sh >/dev/null
-          idf.py --preview -B "$BUILD_DIR" \
-            -DSDKCONFIG="$BUILD_DIR/sdkconfig" \
-            -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;${{ matrix.defaults }}" \
-            build
+          python3 scripts/build_all.py --language "${{ matrix.language }}" \
+            --build-root "$RUNNER_TEMP/mybot-build" \
+            --output-root "$GITHUB_WORKSPACE/releases"
       - name: Verify composite descriptors against pinned USB headers
         run: sh tests/mosaico_usb/run_descriptors.sh
-      - name: Report size, verify S31 link and package firmware
-        run: |
-          source /opt/esp/idf/export.sh >/dev/null
-          idf.py --preview -B "$BUILD_DIR" size
-          mkdir -p "$GITHUB_WORKSPACE/releases"
-          merged="$GITHUB_WORKSPACE/releases/esp-mosaico-v1.2-${{ matrix.language }}.bin"
-          idf.py --preview -B "$BUILD_DIR" merge-bin -o "$merged"
-          python3 scripts/check_s31_build.py --build-dir "$BUILD_DIR" \
-            --language "${{ matrix.language }}" --merged "$merged"
       - name: Upload firmware
         uses: actions/upload-artifact@v4
         with:

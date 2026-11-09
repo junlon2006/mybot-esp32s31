@@ -8,6 +8,7 @@ test_binary=$(mktemp "${TMPDIR:-/tmp}/mybot-translation-state.XXXXXX")
 trap 'rm -f "$test_binary"' EXIT HUP INT TERM
 "${CC:-cc}" -std=c99 -Wall -Wextra -Werror \
     -fsanitize="${SANITIZERS:-undefined}" -fno-omit-frame-pointer \
-    -I"$test_dir/mocks" -I"$sdk_dir/src/internal" -I"$sdk_dir/include" \
+    -I"$test_dir/mocks" -I"$repo_dir/tests/host_support/include" \
+    -I"$sdk_dir/src/internal" -I"$sdk_dir/include" \
     "$test_dir/test_state.c" "$sdk_dir/src/core/mybot_state_model.c" -o "$test_binary"
 "$test_binary"

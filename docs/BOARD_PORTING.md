@@ -6,7 +6,7 @@ The only supported hardware is ESP-Mosaico CoreBoard V1.2. This dedicated ESP32-
 project has no runtime board selector; earlier ESP32-S3 and multi-board profiles are not maintained.
 
 ```text
-main/                              startup, device identity, MyBot/network lifecycle
+main/                              configuration assembly and MyBot lifecycle
 components/mybot_stack/
   mybot_sdk/                       component wrapper + maintained V2VT translation SDK
   aosl/                            upstream sources + S31 component wrapper
@@ -14,7 +14,7 @@ components/mybot_stack/
 components/mybot_platform/
   boards/esp-mosaico-v1.2/          hardware, lifetime and defaults
   src/platform/                    platform registration
-  src/services/                    Wi-Fi, HTTPS, NVS, prompts, PCM FIFO, diagnostics
+  src/services/                    netif/SNTP, Wi-Fi, HTTPS, NVS, prompts, PCM FIFO, diagnostics
   src/drivers/                     ES8311, keys, touch, QSPI/LVGL
   src/internal/                    platform-private interfaces
 ```
@@ -32,8 +32,9 @@ The panel file owns controller/DMA buffers and uses QSPI partial transfers with
 separate draw/staging buffers. The LVGL adapter coordinates touch reads and shared
 view lifetime. The shared view uses `ui/ui_port.h` for Wi-Fi status, captions and
 admitted UI actions instead of calling network, SDK or board-key internals directly.
-A common `input/ui_input_router.c` owns gesture epochs, UI-command mailboxes and
-maintenance holds; the board supplies only button sampling and hardware preparation.
+A common `input/ui_input_router.c` owns touch contact state, gesture epochs, touch event handoff and
+maintenance holds; parameter commands validate the released touch and submit through
+the SDK's nonblocking command API. The board supplies only button sampling and hardware preparation.
 Display callbacks perform no network work. Detach prevents late callbacks. Scene
 behavior is described in [the UI guide](PLATFORM_UI.md).
 

@@ -14,12 +14,14 @@ esac
     -fsanitize="${SANITIZERS:-undefined}" -fno-omit-frame-pointer \
     -ffunction-sections -fdata-sections \
     -I"$repo_dir/tests/translation_control/mocks" \
+    -I"$repo_dir/tests/host_support/include" \
     -I"$sdk_dir/src/internal" -I"$sdk_dir/include" \
     -c "$sdk_dir/src/support/mybot_json.c" -o "$test_binary.json.o"
 "${CC:-cc}" -std=c99 -Wall -Wextra -Werror -Wno-unused-function \
     -fsanitize="${SANITIZERS:-undefined}" -fno-omit-frame-pointer \
     -ffunction-sections -fdata-sections "$strip_flag" \
     -I"$repo_dir/tests/translation_control/mocks" \
+    -I"$repo_dir/tests/host_support/include" \
     -I"$sdk_dir/src/internal" -I"$sdk_dir/include" \
     "$test_dir/test_volume.c" \
     "$sdk_dir/src/core/mybot_captions.c" "$test_binary.json.o" \

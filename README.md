@@ -65,17 +65,25 @@ install `ffmpeg`, then activate ESP-IDF in the current shell:
 test "$(idf.py --preview --version)" = "ESP-IDF v6.1"
 ```
 
-Use `build/mosaico-v1.2` and `build/mosaico-v1.2/sdkconfig` for all local firmware builds:
+Build both delivery variants with the same entrypoint used by CI:
 
 ```sh
-idf.py --preview -B build/mosaico-v1.2 \
+python3 scripts/build_all.py --build-root build/delivery --output-root releases/delivery
+```
+
+CI invokes the same script per language with isolated temporary build and release roots.
+The script performs reconfigure, build, size, merge, provenance and delivery checks.
+For iterative single-board development, keep using `build/korvo-s31`:
+
+```sh
+idf.py --preview -B build/korvo-s31 \
   -DMYBOT_MOSAICO_UAC_TEST=OFF \
-  -DSDKCONFIG=build/mosaico-v1.2/sdkconfig \
+  -DSDKCONFIG=build/korvo-s31/sdkconfig \
   -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;ci/ptime60.defaults" build
 ```
 
-CI builds both firmware languages in isolated jobs. The [release guide](docs/RELEASING.md) describes
-merging, build-bound source records and delivery checks using this same local build directory.
+The [release guide](docs/RELEASING.md) describes the script's isolated roots, build-bound source
+records and delivery files.
 The direct flash command and board-specific hardware details are in the
 [board guide](docs/esp-mosaico-v1.2.zh-CN.md).
 
@@ -104,7 +112,7 @@ Boundary filters convert between USB 48 kHz stereo and SDK 16 kHz mono.
 See the [USB integration guide](docs/MOSAICO_USB_AUDIO.zh-CN.md).
 The passed [standalone UAC diagnostic](diagnostics/mosaico_uac/README.zh-CN.md) remains a separate USB audio reference.
 
-Use `idf.py --preview -B build/mosaico-v1.2 menuconfig` under `mybot` to select the product language,
+Use `idf.py --preview -B build/korvo-s31 menuconfig` under `mybot` to select the product language,
 initial translation languages, Cloud AEC and AI QoS. The product language selects UI text and
 prompts; both builds use `https://mybot.sh3t.agoralab.co/api`. Runtime language selections take
 precedence over the initial translation languages.

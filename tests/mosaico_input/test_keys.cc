@@ -120,6 +120,8 @@ mybot_state_t mybot_get_state() {
 }
 int mybot_ui_submit(const mybot_ui_command_t *command) {
     CHECK(command);
+    if (fail("ui_command"))
+        return -1;
     commands.push_back(*command);
     return 0;
 }
@@ -159,8 +161,8 @@ static void press(int mv) {
     feed(2000, 4);
 }
 
-static void touch_sample(bool valid, bool pressed) {
-    mybot_ui_input_touch_sample(valid, pressed);
+static mybot_ui_touch_sample_t touch_sample(bool valid, bool pressed) {
+    return mybot_ui_input_touch_sample(valid, pressed);
 }
 
 static void tap() {
@@ -228,11 +230,12 @@ int main(int argc, char **argv) {
         CHECK(provisioning == 3 && factory_resets == 1 && events.empty());
         CHECK(ops->init(&ctx, emit, &events) == 0);
     } else if (scenario == "touch") {
-        tap();
-        feed(2000, 1);
-        CHECK(events.empty()); // screen started with a finger down: require a clean release
-        tap();
-        CHECK(events.empty()); // UI callback only posts; SDK work belongs to key worker
+        CHECK(touch_sample(true, true) == MYBOT_UI_TOUCH_NONE);
+        touch_sample(true, false);
+        CHECK(touch_sample(true, true) == MYBOT_UI_TOUCH_PRESS);
+        CHECK(touch_sample(true, true) == MYBOT_UI_TOUCH_PRESS);
+        touch_sample(true, false);
+        mybot_ui_input_event(MYBOT_KEY_EVENT_CONVERSATION_START);
         feed(2000, 1);
         CHECK(events.size() == 1 && events.back() == MYBOT_KEY_EVENT_CONVERSATION_START);
         state = MYBOT_STATE_IN_CONVERSATION;
@@ -342,63 +345,51 @@ int main(int argc, char **argv) {
         mybot_ui_command_t command{};
         command.type = MYBOT_UI_SET_VOLUME;
         command.value = 40;
-        auto submit = [&] {
+        auto submit = [&]() -> int {
             touch_sample(true, true);
             touch_sample(true, false);
-            mybot_ui_input_command(&command);
+            return mybot_ui_input_command(&command);
         };
-        submit();
-        CHECK(commands.empty()); // GUI copies only; the worker invokes the SDK.
+        CHECK(submit() == 0);
+        CHECK(commands.size() == 1);
         command.value = 99;
-        feed(2000, 1);
         CHECK(commands.size() == 1 && commands.back().value == 40);
-        command.value = 65;
-        for (unsigned i = 0; i < 20; ++i)
-            submit();
-        feed(2000, 1);
-        CHECK(commands.size() == 2 && commands.back().value == 65); // bounded mailbox
         command.type = MYBOT_UI_SET_LANGUAGES;
         std::snprintf(command.source_language, sizeof(command.source_language), "zh-CN");
         std::snprintf(command.target_language, sizeof(command.target_language), "en-US");
-        submit();
-        feed(2000, 1);
-        CHECK(commands.size() == 3 && !std::strcmp(commands.back().source_language, "zh-CN"));
+        CHECK(submit() == 0);
+        CHECK(commands.size() == 2 && !std::strcmp(commands.back().source_language, "zh-CN"));
         state = MYBOT_STATE_IN_CONVERSATION;
-        submit();
-        feed(2000, 1);
-        CHECK(commands.size() == 3); // language changes freeze during streaming
+        CHECK(submit() < 0);
+        CHECK(commands.size() == 2); // language changes freeze during streaming
         command.type = MYBOT_UI_SET_PAUSED;
         command.value = 1;
-        submit();
-        feed(2000, 1);
-        CHECK(commands.size() == 4 && commands.back().type == MYBOT_UI_SET_PAUSED);
-        submit();
+        CHECK(submit() == 0);
+        CHECK(commands.size() == 3 && commands.back().type == MYBOT_UI_SET_PAUSED);
         state = MYBOT_STATE_READY;
-        feed(2000, 1);
-        CHECK(commands.size() == 4); // state changed before worker delivery
-        submit();
-        feed(2000, 1);
-        CHECK(commands.size() == 4); // pause requires an active session
+        CHECK(submit() < 0);
+        CHECK(commands.size() == 3); // pause requires an active session
         command.type = MYBOT_UI_SET_VOLUME;
         command.value = 101;
-        submit();
-        feed(2000, 1);
-        CHECK(commands.size() == 4);
+        CHECK(submit() < 0);
+        CHECK(commands.size() == 3);
         command.value = 20;
-        submit();
+        touch_sample(true, true);
         ops->destroy(ctx);
         CHECK(ops->init(&ctx, emit, &events) == 0);
-        feed(2000, 1);
-        CHECK(commands.size() == 4); // old attachment generation cannot replay
+        touch_sample(true, false);
+        CHECK(mybot_ui_input_command(&command) < 0);
+        CHECK(commands.size() == 3); // attachment generation cannot replay
         touch_sample(true, true);
         touch_sample(false, false);
         touch_sample(true, false);
-        mybot_ui_input_command(&command);
-        feed(2000, 1);
-        CHECK(commands.size() == 4); // read error cancels the gesture
-        submit();
-        feed(2000, 1);
-        CHECK(commands.size() == 5 && commands.back().value == 20);
+        CHECK(mybot_ui_input_command(&command) < 0);
+        CHECK(commands.size() == 3); // read error cancels the gesture
+        failure = "ui_command";
+        CHECK(submit() < 0);
+        CHECK(commands.size() == 3);
+        CHECK(submit() == 0);
+        CHECK(commands.size() == 4 && commands.back().value == 20);
     } else if (scenario == "ui_controls") {
         touch_sample(true, false);
         touch_sample(true, true);

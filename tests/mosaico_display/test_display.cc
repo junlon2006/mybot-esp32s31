@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 #include "host_platform.h"
 #include "display/lvgl_view.h"
+#include "input/ui_input.h"
 #include "input/mosaico_keys.h"
 #include "display/mosaico_panel.h"
 #include "display/mosaico_touch.h"
@@ -51,6 +52,7 @@ struct host_input {
 
 static bool port_open, port_locked, view_open, complete_frame = true;
 static bool report_touch;
+static bool touch_armed;
 static unsigned ready_calls, frame_callbacks;
 static std::string failure, cleanup_failure;
 static std::set<void *> allocations;
@@ -78,9 +80,18 @@ static void callback() {
 }
 
 extern "C" {
-void mybot_ui_input_touch_sample(bool valid, bool pressed) {
+mybot_ui_touch_sample_t mybot_ui_input_touch_sample(bool valid, bool pressed) {
     CHECK(port_locked); // forwarding is non-blocking while the LVGL lock is owned
     touch_samples.emplace_back(valid, pressed);
+    if (!valid) {
+        touch_armed = false;
+        return MYBOT_UI_TOUCH_INVALID;
+    }
+    if (!pressed) {
+        touch_armed = true;
+        return MYBOT_UI_TOUCH_NONE;
+    }
+    return touch_armed ? MYBOT_UI_TOUCH_PRESS : MYBOT_UI_TOUCH_NONE;
 }
 const char *esp_err_to_name(esp_err_t result) {
     return result == ESP_OK ? "OK" : "FAIL";

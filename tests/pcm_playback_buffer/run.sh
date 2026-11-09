@@ -8,6 +8,7 @@ trap 'rm -r -- "$test_build_dir"' EXIT HUP INT TERM
 "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -pthread -fsanitize=undefined \
     -D_POSIX_C_SOURCE=200809L -DCONFIG_MYBOT_DEBUG_RESOURCE_MONITOR=0 \
     -I"$test_dir/mocks" -I"$test_dir" \
+    -I"$repo_root/tests/host_support/include" \
     -I"$repo_root/components/mybot_platform/src/internal" \
     "$test_dir/host_runtime.c" "$test_dir/test_pcm.c" -o "$test_build_dir/test_pcm"
 python3 -c 'import subprocess,sys; subprocess.run(sys.argv[1:], check=True, timeout=30)' "$test_build_dir/test_pcm"

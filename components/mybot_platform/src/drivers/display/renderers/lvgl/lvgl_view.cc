@@ -214,7 +214,7 @@ void redraw();
 void refresh_captions();
 void clicked(lv_event_t *event);
 void slider_event(lv_event_t *event);
-void command(mybot_ui_command_type_t type, int value);
+int command(mybot_ui_command_type_t type, int value);
 
 lv_obj_t *panel(lv_obj_t *parent, int x, int y, int width, int height, uint32_t color,
                 int radius = 20) {
@@ -964,11 +964,11 @@ void redraw() {
     }
     update_clock(nullptr);
 }
-void command(mybot_ui_command_type_t type, int value) {
+int command(mybot_ui_command_type_t type, int value) {
     mybot_ui_command_t request{};
     request.type = type;
     request.value = value;
-    mybot_ui_port_gesture_command(&request);
+    return mybot_ui_port_command(&request);
 }
 void stop(bool change) {
     if (!active())
@@ -1015,7 +1015,7 @@ void clicked(lv_event_t *event) {
                           destination);
             /* A language pair must be read back before another pair is built.
              * Submit directly so a rejected mailbox cannot leave a permanent guard. */
-            if (mybot_ui_port_submit(&request) == 0) {
+            if (mybot_ui_port_command(&request) == 0) {
                 std::memcpy(s_view.pending_source, request.source_language,
                             sizeof(s_view.pending_source));
                 std::memcpy(s_view.pending_target, request.target_language,
@@ -1060,7 +1060,7 @@ void clicked(lv_event_t *event) {
             request.type = MYBOT_UI_SET_MODE;
             request.value = mode;
             request.audio_source = audio_source;
-            if (mybot_ui_port_submit(&request) < 0)
+            if (mybot_ui_port_command(&request) < 0)
                 return;
             s_view.pending_mode = mode;
             s_view.pending_audio_source = audio_source;
@@ -1159,7 +1159,7 @@ void clicked(lv_event_t *event) {
         mybot_ui_command_t request{};
         request.type = MYBOT_UI_SET_DIRECTION;
         request.value = direction;
-        if (mybot_ui_port_submit(&request) < 0)
+        if (mybot_ui_port_command(&request) < 0)
             return;
         s_view.pending_direction = direction;
         s_view.pending_selection_revision = s_view.content.selection_revision;
@@ -1169,8 +1169,9 @@ void clicked(lv_event_t *event) {
         if (!active() || s_view.command_pending || s_view.pending_direction >= 0 ||
             (face_session() && s_view.content.input_direction == MYBOT_TRANSLATION_DIRECTION_NONE))
             return;
+        if (command(MYBOT_UI_SET_PAUSED, !s_view.content.paused) < 0)
+            return;
         mark_pending();
-        command(MYBOT_UI_SET_PAUSED, !s_view.content.paused);
         break;
     case End:
         if (active())

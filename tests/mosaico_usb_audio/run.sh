@@ -7,6 +7,7 @@ trap 'rm -r -- "$test_build_dir"' EXIT HUP INT TERM
 "${CC:-cc}" -std=c11 -pthread -Wall -Wextra -Werror \
     ${TEST_SANITIZE_FLAGS:--fsanitize=undefined -fno-sanitize-recover=all} \
     -I"$repo_root/tests/mosaico_usb_audio/mocks" \
+    -I"$repo_root/tests/host_support/include" \
     -I"$repo_root/components/mybot_platform/src/internal" \
     -I"$repo_root/components/mybot_stack/mybot_sdk/mybot/include" \
     "$repo_root/components/mybot_platform/src/drivers/usb/mosaico_usb_audio.c" \

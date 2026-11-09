@@ -23,13 +23,17 @@ if(MYBOT_MOSAICO_UAC_TEST)
 endif()
 
 set(MYBOT_BOARD "esp-mosaico-v1.2" CACHE INTERNAL "fixed mybot target board")
-include("${CMAKE_CURRENT_LIST_DIR}/components/mybot_platform/boards/esp-mosaico-v1.2/board.cmake")
+set(MYBOT_TARGET "esp32s31")
+set(MYBOT_PLATFORM_SDKCONFIG_DEFAULTS
+    "${CMAKE_CURRENT_LIST_DIR}/components/mybot_platform/boards/esp-mosaico-v1.2/sdkconfig.defaults")
+set(MYBOT_PLATFORM_EXTRA_COMPONENT_DIRS
+    "${CMAKE_CURRENT_LIST_DIR}/components/mybot_platform/boards/esp-mosaico-v1.2/mybot_mosaico_usb")
 
-if(DEFINED IDF_TARGET AND NOT IDF_TARGET STREQUAL MYBOT_BOARD_TARGET)
+if(DEFINED IDF_TARGET AND NOT IDF_TARGET STREQUAL MYBOT_TARGET)
     message(FATAL_ERROR
-        "MYBOT_BOARD=${MYBOT_BOARD} requires IDF_TARGET=${MYBOT_BOARD_TARGET}, got ${IDF_TARGET}")
+        "MYBOT_BOARD=${MYBOT_BOARD} requires IDF_TARGET=${MYBOT_TARGET}, got ${IDF_TARGET}")
 endif()
-set(IDF_TARGET "${MYBOT_BOARD_TARGET}" CACHE STRING "ESP-IDF target")
+set(IDF_TARGET "${MYBOT_TARGET}" CACHE STRING "ESP-IDF target")
 
 if(NOT SDKCONFIG_DEFAULTS)
     if(DEFINED ENV{SDKCONFIG_DEFAULTS} AND NOT "$ENV{SDKCONFIG_DEFAULTS}" STREQUAL "")
@@ -41,9 +45,9 @@ endif()
 set(_mybot_sdkconfig_defaults ${SDKCONFIG_DEFAULTS})
 set(_mybot_common_defaults "${CMAKE_CURRENT_LIST_DIR}/sdkconfig.defaults")
 list(REMOVE_ITEM _mybot_sdkconfig_defaults "sdkconfig.defaults" "${_mybot_common_defaults}"
-     "${MYBOT_BOARD_SDKCONFIG_DEFAULTS}")
+     "${MYBOT_PLATFORM_SDKCONFIG_DEFAULTS}")
 list(PREPEND _mybot_sdkconfig_defaults "${_mybot_common_defaults}"
-     "${MYBOT_BOARD_SDKCONFIG_DEFAULTS}")
+     "${MYBOT_PLATFORM_SDKCONFIG_DEFAULTS}")
 set(SDKCONFIG_DEFAULTS "${_mybot_sdkconfig_defaults}")
 
 set(PROJECT_VER "0.1.0")
@@ -55,7 +59,7 @@ list(APPEND EXTRA_COMPONENT_DIRS
     "${MYBOT_STACK_ROOT}/mybot_sdk"
     "${MYBOT_STACK_ROOT}/aosl"
     "${MYBOT_STACK_ROOT}/agora_rtc"
-    ${MYBOT_BOARD_EXTRA_COMPONENT_DIRS}
+    ${MYBOT_PLATFORM_EXTRA_COMPONENT_DIRS}
 )
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)

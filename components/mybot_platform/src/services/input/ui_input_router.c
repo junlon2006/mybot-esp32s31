@@ -30,11 +30,13 @@ static void *s_user;
 static uint32_t s_epoch;
 static uint32_t s_touch_pending;
 /* One copied GUI command: 0 empty, 1 producer, 2 ready, 3 consumer. */
-static uint32_t s_command_state;
-static uint32_t s_command_gesture;
-static mybot_ui_command_t s_command;
-/* These gesture fields belong exclusively to the LVGL owner. */
-static bool s_touch_released;
+/* These gesture fields and the contact state belong exclusively to the LVGL owner. */
+typedef enum {
+    TOUCH_UNARMED,
+    TOUCH_ARMED,
+    TOUCH_DOWN,
+} touch_contact_t;
+static touch_contact_t s_touch_contact;
 static uint32_t s_touch_gesture;
 static uint32_t s_touch_click;
 
@@ -69,23 +71,24 @@ static bool event_matches_gesture(mybot_key_event_t event, uint32_t gesture, myb
             (event == MYBOT_KEY_EVENT_CONVERSATION_STOP && start_completed(pressed_state, state)));
 }
 
-void mybot_ui_input_touch_sample(bool valid, bool pressed) {
+mybot_ui_touch_sample_t mybot_ui_input_touch_sample(bool valid, bool pressed) {
     s_touch_click = 0;
     if (!valid) {
-        s_touch_released = false;
+        s_touch_contact = TOUCH_UNARMED;
         s_touch_gesture = 0;
-        return;
+        return MYBOT_UI_TOUCH_INVALID;
     }
     uint32_t epoch = __atomic_load_n(&s_epoch, __ATOMIC_ACQUIRE);
     if (pressed) {
-        if (s_touch_released) {
-            s_touch_released = false;
-            mybot_state_t state = mybot_get_state();
-            s_touch_gesture = (epoch & 1U) ? (epoch << 9) | ((uint32_t)state << 4) : 0;
+        if (s_touch_contact != TOUCH_ARMED) {
+            return s_touch_contact == TOUCH_DOWN ? MYBOT_UI_TOUCH_PRESS : MYBOT_UI_TOUCH_NONE;
         }
-        return;
+        s_touch_contact = TOUCH_DOWN;
+        mybot_state_t state = mybot_get_state();
+        s_touch_gesture = (epoch & 1U) ? (epoch << 9) | ((uint32_t)state << 4) : 0;
+        return MYBOT_UI_TOUCH_PRESS;
     }
-    s_touch_released = true;
+    s_touch_contact = TOUCH_ARMED;
     uint32_t gesture = s_touch_gesture;
     s_touch_gesture = 0;
     mybot_state_t state = mybot_get_state();
@@ -93,6 +96,7 @@ void mybot_ui_input_touch_sample(bool valid, bool pressed) {
     if (gesture && (gesture >> 9) == epoch &&
         (pressed_state == state || start_completed(pressed_state, state)))
         s_touch_click = gesture;
+    return MYBOT_UI_TOUCH_NONE;
 }
 
 void mybot_ui_input_event(mybot_key_event_t event) {
@@ -125,37 +129,13 @@ static bool command_allowed(const mybot_ui_command_t *command, mybot_state_t sta
     }
 }
 
-void mybot_ui_input_command(const mybot_ui_command_t *command) {
+int mybot_ui_input_command(const mybot_ui_command_t *command) {
     uint32_t click = s_touch_click;
     s_touch_click = 0;
     if (!click || (click >> 9) != __atomic_load_n(&s_epoch, __ATOMIC_ACQUIRE) ||
         !command_allowed(command, mybot_get_state()))
-        return;
-    uint32_t empty = 0;
-    if (!__atomic_compare_exchange_n(&s_command_state, &empty, 1, false, __ATOMIC_ACQUIRE,
-                                     __ATOMIC_RELAXED))
-        return;
-    s_command = *command;
-    s_command_gesture = click;
-    __atomic_store_n(&s_command_state, 2, __ATOMIC_RELEASE);
-}
-
-static void dispatch_ui_command(void) {
-    if (__atomic_load_n(&s_command_state, __ATOMIC_ACQUIRE) != 2)
-        return;
-    xSemaphoreTake(s_callback_lock, portMAX_DELAY);
-    uint32_t ready = 2;
-    if (__atomic_compare_exchange_n(&s_command_state, &ready, 3, false, __ATOMIC_ACQUIRE,
-                                    __ATOMIC_RELAXED)) {
-        mybot_ui_command_t command = s_command;
-        uint32_t gesture = s_command_gesture;
-        __atomic_store_n(&s_command_state, 0, __ATOMIC_RELEASE);
-        mybot_state_t state = mybot_get_state();
-        if (s_emit && (gesture >> 9) == __atomic_load_n(&s_epoch, __ATOMIC_ACQUIRE) &&
-            ((gesture >> 4) & 31U) == (uint32_t)state && command_allowed(&command, state))
-            (void)mybot_ui_submit(&command);
-    }
-    xSemaphoreGive(s_callback_lock);
+        return -1;
+    return mybot_ui_submit(command);
 }
 
 static void dispatch_touch(void) {
@@ -181,7 +161,6 @@ static void key_task(void *arg) {
     for (;;) {
         bool current = s_pressed();
         dispatch_touch();
-        dispatch_ui_command();
         int64_t now = esp_timer_get_time() / 1000;
         if (current != candidate) {
             candidate = current;

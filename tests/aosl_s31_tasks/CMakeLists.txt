@@ -16,6 +16,7 @@ function(idf_component_register)
     endif()
     add_library(${COMPONENT_LIB} STATIC "${thread_source}" "${adapter_source}")
     target_include_directories(${COMPONENT_LIB} PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/mocks"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../host_support/include"
         "${COMPONENT_PATH}/platform/include" "${COMPONENT_PATH}/s31_port/config")
 endfunction()
 include("${COMPONENT_PATH}/CMakeLists.txt")
