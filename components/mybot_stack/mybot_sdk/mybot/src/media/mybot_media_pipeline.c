@@ -672,6 +672,9 @@ int mybot_media_pipeline_end_session(mybot_media_pipeline_t *pipeline) {
         pipeline->playback_suspended = false;
         aosl_atomic_set(&pipeline->playback_fault, false);
     }
+    if (pipeline->cap_ctx && pipeline->audio.capture_ops->reset &&
+        pipeline->audio.capture_ops->reset(pipeline->cap_ctx) < 0)
+        return -1;
     aosl_atomic_set(&pipeline->paused, false);
     return 0;
 }

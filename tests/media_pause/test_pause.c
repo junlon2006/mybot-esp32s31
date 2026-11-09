@@ -219,8 +219,8 @@ static void volume_destroy(void *context) {
     assert(context == &hardware_volume);
 }
 
-static const mybot_audio_capture_ops_t capture_ops = {capture_init, capture_start, capture_read,
-                                                      capture_stop, capture_destroy};
+static const mybot_audio_capture_ops_t capture_ops = {capture_init, capture_start,   capture_read,
+                                                      capture_stop, capture_destroy, NULL};
 static int usb_init(void **context, int rate, int channels, int bits) {
     assert(rate == 16000 && channels == 1 && bits == 16);
     *context = &usb_active;
@@ -251,8 +251,8 @@ static void usb_destroy(void *context) {
     assert(context == &usb_active && !usb_active);
     usb_destroyed++;
 }
-static const mybot_audio_capture_ops_t usb_ops = {usb_init, usb_start, usb_read, usb_stop,
-                                                  usb_destroy};
+static const mybot_audio_capture_ops_t usb_ops = {usb_init, usb_start,   usb_read,
+                                                  usb_stop, usb_destroy, NULL};
 static const mybot_audio_playback_ops_t playback_ops = {
     playback_init, playback_start, playback_write, playback_stop, playback_destroy};
 static int usb_playback_init(void **context, int rate, int channels, int bits) {

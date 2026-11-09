@@ -87,6 +87,20 @@ typedef struct {
      * @param ctx device context from init()
      */
     void (*destroy)(void *ctx);
+
+    /**
+     * Optional: discard capture DSP/filter history at a session boundary.
+     *
+     * The callback runs from the lifecycle control thread after capture
+     * workers have been fenced for the ended session. It must be non-blocking,
+     * retain all device ownership, and leave capture ready for the next call
+     * to start(). NULL when no reset is required.
+     *
+     * @param ctx device context from init()
+     * @return 0 on success, -1 when capture must be recovered before another
+     *         cloud session starts.
+     */
+    int (*reset)(void *ctx);
 } mybot_audio_capture_ops_t;
 
 /**

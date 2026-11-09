@@ -28,6 +28,7 @@ set(MYBOT_PLATFORM_SOURCES
     "${CMAKE_CURRENT_LIST_DIR}/src/drivers/usb/mosaico_usb_audio.c"
     "${CMAKE_CURRENT_LIST_DIR}/src/drivers/usb/mosaico_usb_resampler.c"
     "${CMAKE_CURRENT_LIST_DIR}/src/drivers/audio/codec_audio.c"
+    "${CMAKE_CURRENT_LIST_DIR}/src/drivers/audio/mosaico_local_aec.c"
     "${CMAKE_CURRENT_LIST_DIR}/src/drivers/audio/mosaico_codec_audio.c"
     "${CMAKE_CURRENT_LIST_DIR}/src/drivers/input/mosaico_gpio_keys.c"
     "${CMAKE_CURRENT_LIST_DIR}/src/drivers/input/mosaico_cst9220_touch.c")
@@ -36,7 +37,7 @@ mybot_display_add_lvgl_sources(MYBOT_PLATFORM_SOURCES "mosaico_lvgl_adapter.cc")
 set(MYBOT_PLATFORM_REQUIRES
     espressif__esp_tinyusb mybot_mosaico_usb esp_codec_dev esp_driver_spi esp_driver_gpio
     esp_driver_i2c esp_driver_i2s esp_driver_ledc efuse esp_lcd esp_mm
-    espressif__esp_lcd_co5300 espressif__esp_lcd_touch_cst9220 esp_timer nvs_flash)
+    espressif__esp_lcd_co5300 espressif__esp_lcd_touch_cst9220 espressif__esp-sr esp_timer nvs_flash)
 
 # Pass a fixed Kconfig file to IDF so menuconfig/confserver use the same board
 # capability even when invoked separately from the CMake configure process.
@@ -136,3 +137,5 @@ idf_component_register(
 )
 
 target_compile_features(${COMPONENT_LIB} PRIVATE c_std_99 cxx_std_17)
+target_compile_definitions(${COMPONENT_LIB}
+    PUBLIC MYBOT_LOCAL_AEC=$<BOOL:${CONFIG_MYBOT_LOCAL_AEC}>)

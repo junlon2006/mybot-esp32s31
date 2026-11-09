@@ -1371,3 +1371,24 @@ minimum OTA reserve stays enforced.
 The user's active English configuration is retained. Direct en-US build and
 source/link/partition checks pass in build/mosaico-v1.2: application 3,980,016 bytes,
 minimum OTA free space 673,040 bytes. No device was flashed.
+
+## Local AEC implementation (2026-11-09)
+
+Mosaico now enables `MYBOT_LOCAL_AEC` by default. ES8311 is configured with
+`no_dac_ref=false`; capture reads synchronized microphone/reference stereo and the
+platform audio adapter feeds ESP-SR 2.6.0 full-duplex AEC at 16 kHz. The cleaned
+mono output keeps the existing MyBot PCM contract and resets its filter/output queue
+at session boundaries. Local and Cloud AEC are mutually exclusive Kconfig choices;
+`ci/cloud-aec.defaults` retains the legacy paired MIC/reference build for comparison.
+
+Host codec tests pass with local AEC enabled and disabled, including the ES8311
+REG44 reference check, create/reset/recovery failures, 960-frame accumulation and
+PCM conversion. Media pause, translation control and route tests pass with Cloud AEC
+enabled and disabled. Targeted cppcheck, clang-format and whitespace checks pass.
+
+Fresh Chinese builds pass for both modes. Local AEC uses `MYBOT_LOCAL_AEC=1`,
+`MYBOT_CLOUD_AEC=0`, links `aec_create_from_config`/`aec_process`, and produces a
+`0x3c7260` application with `0xa8da0` bytes free. Cloud AEC uses the inverse macros,
+does not link the local AEC object, and produces a `0x3b7f00` application with
+`0xb8100` bytes free. No device was flashed; acoustic effectiveness, CPU headroom,
+double-talk quality and long-run stability still require hardware validation.

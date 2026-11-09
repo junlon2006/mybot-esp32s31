@@ -1,0 +1,3 @@
+# Alternative AEC mode: retain the legacy interleaved MIC/reference cloud path.
+# CONFIG_MYBOT_LOCAL_AEC is not set
+CONFIG_MYBOT_CLOUD_AEC=y

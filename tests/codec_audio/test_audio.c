@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 #include "host_runtime.h"
+#include "esp_aec.h"
 #include <assert.h>
 #include <pthread.h>
 #include <stdatomic.h>
@@ -17,6 +18,8 @@
 
 static int fail_at, steps, channels, controls, codecs, devices, buffers, pa, opens;
 static bool tx, rx, fail_stop, fail_close, fail_delete;
+static bool fail_aec_create;
+static int aecs, aec_calls, aec_creates, aec_destroys;
 static atomic_bool hold_read, read_entered;
 static const audio_codec_ctrl_if_t mock_control = {0};
 static const audio_codec_if_t mock_codec = {0};
@@ -83,7 +86,10 @@ esp_err_t i2s_del_channel(i2s_chan_handle_t channel) {
 }
 esp_err_t i2s_channel_read(i2s_chan_handle_t channel, void *destination, size_t size, size_t *bytes,
                            uint32_t timeout) {
-    assert(channel == (void *)2 && rx && tx && timeout == 50 && size % (TEST_BUS_SLOTS * 2) == 0);
+    uint32_t expected_timeout =
+        MYBOT_LOCAL_AEC ? 50 + (uint32_t)(size / (TEST_BUS_SLOTS * 2) * 1000 / 16000) : 50;
+    assert(channel == (void *)2 && rx && tx && timeout == expected_timeout &&
+           size % (TEST_BUS_SLOTS * 2) == 0);
     atomic_store(&read_entered, true);
     while (atomic_load(&hold_read))
         host_real_delay(1);
@@ -116,7 +122,8 @@ int audio_codec_delete_ctrl_if(const audio_codec_ctrl_if_t *iface) {
 }
 const audio_codec_if_t *es8311_codec_new(es8311_codec_cfg_t *config) {
     assert(config->codec_mode == ESP_CODEC_DEV_WORK_MODE_BOTH && config->use_mclk);
-    assert(config->pa_pin == GPIO_NUM_NC && config->no_dac_ref && config->mclk_div == 256);
+    assert(config->pa_pin == GPIO_NUM_NC && config->no_dac_ref == !MYBOT_LOCAL_AEC &&
+           config->mclk_div == 256);
     if (step())
         return NULL;
     ++codecs;
@@ -160,6 +167,51 @@ int esp_codec_dev_set_in_gain(esp_codec_dev_handle_t device, float gain) {
 int esp_codec_dev_set_out_vol(esp_codec_dev_handle_t device, int volume) {
     assert(device == &mock_device && volume >= 0 && volume <= 100);
     return step() ? ESP_FAIL : ESP_OK;
+}
+int esp_codec_dev_read_reg(esp_codec_dev_handle_t device, int reg, int *value) {
+    assert(device == &mock_device && reg == 0x44 && value && opens == 1);
+    *value = 0x58;
+    return step() ? ESP_CODEC_DEV_READ_FAIL : ESP_CODEC_DEV_OK;
+}
+static aec_handle_t mock_aec = {.frame_size = 64};
+aec_handle_t *aec_create_from_config(aec_config_t *config) {
+    assert(config && config->mic_num == 1 && config->ref_num == 1 && config->out_num == 1);
+    assert(config->sample_rate == 16000 && config->filter_length == 4);
+    assert(config->mode == AEC_MODE_FD_LOW_COST && config->nlp_level == AEC_NLP_LEVEL_AGGR);
+    assert(config->caps & MALLOC_CAP_SPIRAM);
+    if (fail_aec_create)
+        return NULL;
+    assert(aecs == 0);
+    ++aecs;
+    ++aec_creates;
+    return &mock_aec;
+}
+aec_nlp_level_t aec_set_nlp_level(const aec_handle_t *handle, aec_nlp_level_t level) {
+    assert(handle == &mock_aec && level == AEC_NLP_LEVEL_AGGR);
+    return level;
+}
+int aec_get_chunksize(const aec_handle_t *handle) {
+    assert(handle == &mock_aec);
+    return handle->frame_size;
+}
+char *aec_get_mode_string(aec_mode_t mode) {
+    assert(mode == AEC_MODE_FD_LOW_COST);
+    return "FD_LOW_COST";
+}
+char *aec_get_nlp_string(aec_nlp_level_t level) {
+    assert(level == AEC_NLP_LEVEL_AGGR);
+    return "AGGR";
+}
+void aec_process(const aec_handle_t *handle, int16_t *indata, int16_t *refdata, int16_t *outdata) {
+    assert(handle == &mock_aec && indata && refdata && outdata);
+    ++aec_calls;
+    for (int i = 0; i < handle->frame_size; ++i)
+        outdata[i] = indata[i];
+}
+void aec_destroy(aec_handle_t *handle) {
+    assert(handle == &mock_aec && aecs == 1);
+    --aecs;
+    ++aec_destroys;
 }
 mybot_pcm_playback_buffer_t *mybot_pcm_playback_buffer_create(mybot_pcm_write_fn write, void *ctx) {
     assert(write == playback_write_i2s && ctx);
@@ -228,6 +280,8 @@ static void reset(void) {
     host_reset();
     steps = fail_at = 0;
     fail_stop = fail_close = fail_delete = false;
+    fail_aec_create = false;
+    aecs = aec_calls = aec_creates = aec_destroys = 0;
 }
 static void *read_once(void *context) {
     int16_t output[2];
@@ -264,6 +318,32 @@ int main(void) {
         stream_destroy(capture);
         reset();
     }
+#if MYBOT_LOCAL_AEC
+    {
+        void *capture = NULL;
+        assert(capture_init(&capture, 16000, 1, 16) == 0);
+        fail_aec_create = true;
+        assert(capture_start(capture) < 0 && !((audio_stream_context_t *)capture)->local_aec);
+        fail_aec_create = false;
+        assert(capture_start(capture) == 0 && ((audio_stream_context_t *)capture)->local_aec);
+        assert(s_capture_ops.reset(capture) == 0);
+        assert(read_once(capture) == NULL);
+        int16_t output[AUDIO_MAX_FRAMES];
+        assert(capture_read(capture, output, AUDIO_MAX_FRAMES) == AUDIO_MAX_FRAMES);
+        for (int i = 0; i < AUDIO_MAX_FRAMES; ++i)
+            assert(output[i] == 123);
+        assert(aec_calls >= 15 && aec_creates == 2 && aec_destroys == 1);
+        fail_aec_create = true;
+        assert(s_capture_ops.reset(capture) == 0);
+        assert(capture_read(capture, output, 2) < 0);
+        fail_aec_create = false;
+        assert(s_capture_ops.reset(capture) == 0);
+        assert(read_once(capture) == NULL);
+        assert(stream_stop(capture) == 0);
+        stream_destroy(capture);
+        reset();
+    }
+#endif
     void *capture = NULL, *playback = NULL, *volume = NULL;
     assert(capture_init(&capture, 16000, 1, 16) == 0 &&
            playback_init(&playback, 16000, 1, 16) == 0);
@@ -329,7 +409,11 @@ int main(void) {
         host_real_delay(1);
     stream_destroy(capture);
     capture = NULL;
+#if MYBOT_LOCAL_AEC
+    assert(s_deferred && rx && tx && host_allocations == 7);
+#else
     assert(s_deferred && rx && tx && host_allocations == 2);
+#endif
     assert(capture_init(&other, 16000, 1, 16) < 0 && !other && s_deferred);
     atomic_store(&hold_read, false);
     assert(pthread_join(reader, NULL) == 0);

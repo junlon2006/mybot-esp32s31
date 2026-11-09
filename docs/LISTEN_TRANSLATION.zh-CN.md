@@ -1,6 +1,6 @@
 # S31 媒体与面对面翻译
 
-固定链路：板载 MIC → 现有云端 AEC/RTC → Bot 翻译 → RTC 译音 → 板载喇叭。输入与播放持续并行，同一会话的 RTM 原文/译文进入实时字幕、全文和本次历史。媒体翻译使用 `v2vt/listen`；面对面使用一个 `v2vt/listen_speak` 父会话和两个 RTC 发布身份。Mosaico 的会议互译另使用 `listen_speak`，两路同时处理电脑与板载麦克风原声，详见 [USB 接入说明](MOSAICO_USB_AUDIO.zh-CN.md)。
+固定链路：板载 MIC 与 ES8311 DAC 参考 → 默认的 ESP-SR 端侧 AEC → RTC → Bot 翻译 → RTC 译音 → 板载喇叭。输入与播放持续并行，同一会话的 RTM 原文/译文进入实时字幕、全文和本次历史。Cloud AEC 保留为可配置替代模式。媒体翻译使用 `v2vt/listen`；面对面使用一个 `v2vt/listen_speak` 父会话和两个 RTC 发布身份。Mosaico 的会议互译另使用 `listen_speak`，两路同时处理电脑与板载麦克风原声，详见 [USB 接入说明](MOSAICO_USB_AUDIO.zh-CN.md)。
 
 ## 配置与操作
 
@@ -40,7 +40,14 @@ idf.py --preview -B build/mosaico-v1.2 -p DOWNLOAD_PORT flash
 idf.py --preview -B build/mosaico-v1.2 -p RUNTIME_PORT monitor
 ```
 
-保留现有 G.722、16 kHz mono S16、60 ms RTSA 配置和 cloud AEC。AI QoS 默认关闭（`CONFIG_MYBOT_AI_QOS=n`），可在 menuconfig 中显式开启；关闭时启动请求发送 `ai_qos=false` 且不附带快发倍率。已有 sdkconfig 中的显式配置优先于默认值。云 AEC 上行是 MIC/播放参考交错，RTSA 的 PCM channel 数仍为 1，不能改成普通立体声。先检查最终 sdkconfig 的服务器、语种和 AI QoS 设置，再烧录。
+保留现有 G.722、16 kHz mono S16 和 60 ms RTSA 配置。AEC 在 menuconfig 中三选一：默认
+`CONFIG_MYBOT_LOCAL_AEC=y` 使用 ESP-SR 端侧 AEC；也可选择 Cloud AEC 或诊断时关闭。
+本地与云端 AEC 不叠加。AI QoS 默认关闭（`CONFIG_MYBOT_AI_QOS=n`），可在 menuconfig
+中显式开启；关闭时启动请求发送 `ai_qos=false` 且不附带快发倍率。先检查最终 sdkconfig
+的 AEC 模式、服务器、语种和 AI QoS 设置，再烧录。
+
+使用隔离目录构建 Cloud AEC 对照固件时，可在默认配置文件之后附加
+`ci/cloud-aec.defaults`。
 
 ## 验收
 

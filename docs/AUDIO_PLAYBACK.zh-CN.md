@@ -2,7 +2,7 @@
 
 [English](AUDIO_PLAYBACK.md) · [简体中文](AUDIO_PLAYBACK.zh-CN.md)
 
-MyBot 公开音频契约为 16 kHz、mono、signed 16-bit PCM，长度使用帧数。板级使用 ES8311 标准 Philips I2S、两个 16-bit 时隙及 MCLK256，播放样本复制到两个时隙并读取时隙 0。采集/播放独立持有 handle，共享 codec/I2S 引用计数，PA 跟随播放。
+MyBot 公开音频契约为 16 kHz、mono、signed 16-bit PCM，长度使用帧数。板级使用 ES8311 标准 Philips I2S、两个 16-bit 时隙及 MCLK256，播放样本复制到两个时隙。默认端侧 AEC 读取时隙 0 的麦克风和时隙 1 的同步 DAC 参考，处理后再返回 mono PCM。采集/播放独立持有 handle，共享 codec/I2S 引用计数，PA 跟随播放。
 
 共享 PCM buffer 的 FIFO、暂存数据和 worker 栈使用 PSRAM，同步控制留在内部内存。owner 提供有界 sink write，等待 worker 确认后才释放资源，stop 超时保留待清理资源。有限提示音播放完成时等待 FIFO 和 DMA 尾部排空再停止。
 

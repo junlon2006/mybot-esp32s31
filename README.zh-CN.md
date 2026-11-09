@@ -26,7 +26,9 @@ Mosaico 会议互译将电脑原声的译音送往设备喇叭，并通过 USB �
 - 通过 `esp-tls`、系统 CA bundle、SNI 与 hostname 校验实现 HTTPS。
 - 16 kHz 单声道 signed-16 PCM 采集与播放；随附 RTSA 固定使用 60 ms 音频包，其他包长需要
   匹配的 RTSA 构建。
-- Agora RTSA 麦克风/参考音频上行、Cloud AEC、可选 AI QoS（默认关闭）、RTM 频道订阅，并订阅响应指定的译音发布者。
+- 默认使用 ESP-SR 全双工端侧 AEC，参考信号来自与板载麦克风同步采集的 ES8311 DAC；
+  Cloud AEC 保留为可配置选项。Agora RTSA 另提供可选 AI QoS（默认关闭）、RTM 频道订阅，
+  并订阅响应指定的译音发布者。
 - 共享有界 PCM 播放缓冲；采集/播放独立挂载，共享引用计数的 codec/I2S 资源。
 - Mosaico 使用 ES8311 标准 I2S stereo 和 MCLK256；板级完成 SDK mono PCM 转换。
 - 480×480 CO5300 QSPI 屏和 CST9220 触摸使用方屏 LVGL 布局。
@@ -44,7 +46,7 @@ Mosaico 会议互译将电脑原声的译音送往设备喇叭，并通过 USB �
 基础 USB 双向会议互译，以及 40 行刷新缓冲的正常字幕显示；触摸导航及启动请求有实机日志。
 独立 UAC 麦克风／喇叭测试另有通过记录。
 此后的 review 修复已有 host 测试和中文构建结果，尚未重新进行真机验收。
-音质、Cloud AEC、重连／长稳、USB 电流及修订后的 VCC 软启动仍需单独验证。操作见[板卡说明](docs/esp-mosaico-v1.2.zh-CN.md)，
+端侧／Cloud AEC 音质、重连／长稳、USB 电流及修订后的 VCC 软启动仍需单独验证。操作见[板卡说明](docs/esp-mosaico-v1.2.zh-CN.md)，
 范围见[验证记录](docs/s31-validation.md)。
 
 ## 构建
@@ -98,7 +100,7 @@ Mosaico 翻译固件通过 Type-C 提供 UAC2 声卡与 CDC 日志串口。会�
 已通过的 [UAC 最小测试](diagnostics/mosaico_uac/README.zh-CN.md)作为独立 USB 音频参考保留。
 
 使用 `idf.py --preview -B build/mosaico-v1.2 menuconfig` 的 `mybot` 菜单选择产品语言、
-初始翻译语言、Cloud AEC 和 AI QoS。产品语言决定界面文字和提示音；两个构建均使用
+初始翻译语言、端侧／Cloud AEC 模式和 AI QoS。产品语言决定界面文字和提示音；两个构建均使用
 `https://mybot.sh3t.agoralab.co/api`。运行时保存的语言选择优先于初始翻译语言。
 
 随附 RTSA 仅接受 60 ms 音频帧。可设置 `CONFIG_MYBOT_DEBUG_RESOURCE_MONITOR=y` 启用 CPU、
