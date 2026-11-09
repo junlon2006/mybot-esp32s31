@@ -1337,3 +1337,37 @@ unchanged. These are host results; no device was flashed.
 
 Chinese build and source/link/OTA checks pass in build/mosaico-v1.2, with 461,568
 free bytes per OTA slot.
+
+## Japanese caption glyph coverage (2026-11-09)
+
+The user reported unreadable Japanese captions while testing the English image.
+A host case using the production caption store and JSON parser preserves both raw
+UTF-8 and escaped Japanese byte-for-byte. The old 20 px font lacks kana and common
+Japanese Han such as 語, 訳 and 開; adding kana alone would leave missing text.
+
+The same pinned Noto Sans SC input now supplies 10,993 glyphs at 20 px: existing
+GB2312/Latin/punctuation plus JIS X 0208, non-private-use CP932 extensions, modern
+and halfwidth kana. This includes names such as 髙/﨑. Combining kana voicing marks
+have zero advance and overlay the preceding character. The 204-glyph 28 px font
+retains its 20 px fallback. LVGL row-XOR RLE preserves the four alpha levels;
+generated bitmaps/descriptors/maps total 975,868 bytes within a 1 MiB font budget.
+Font input hash, Pillow 12.3.0, FreeType 2.14.3 and clang-format 18.1.8 are recorded.
+
+All 11,197 glyphs pass the real LVGL decoder under fail-fast UBSan: visible pixels
+match generation-time SHA256, A8 stride 1/8 agrees, row/outer guards survive and
+temporary allocations are released after every glyph (peak 58 bytes). Bilingual
+UI/layout/static fonts pass. A host-rendered preview confirms ordinary/halfwidth
+kana, Japanese Han, precomposed/combining voicing marks and existing Chinese/English.
+All 88 build-tool cases pass; the ownership case initially skipped with old Git
+and passed separately with Apple Git 2.50.1. Formatting/SPDX and whitespace checks
+pass. These results do not claim device display acceptance of this revision.
+
+Each OTA slot grows by 512 KiB to 0x470000 bytes, using space from the unmounted
+assets partition (now 7 MiB at 0x900000). NVS offsets/sizes are unchanged; the first
+application still starts at 0x20000. Upgrading requires idf.py flash with the new
+partition table and OTA initialization, not an application-only write. The 300 KiB
+minimum OTA reserve stays enforced.
+
+The user's active English configuration is retained. Direct en-US build and
+source/link/partition checks pass in build/mosaico-v1.2: application 3,980,016 bytes,
+minimum OTA free space 673,040 bytes. No device was flashed.

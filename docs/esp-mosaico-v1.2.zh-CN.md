@@ -50,6 +50,12 @@ Cloud AEC 继续使用 SDK 的麦克风/播放参考 PCM 契约；此处不启�
 Mosaico 固件。从其他板型或独立诊断切换时，先备份需要保留的生成固件，再通过 IDF
 `fullclean` 清理旧构建；不要混用旧 `sdkconfig`，不要手改生成配置。
 
+中英日字幕使用压缩的 2 bpp 字库。`partitions/v2/16m.csv` 的两个 OTA 槽均为
+`0x470000` 字节，起点分别是 `0x20000`、`0x490000`；未使用的 `assets` 分区为
+`0x900000` 起的 7 MiB。每个 OTA 槽比旧布局增加 512 KiB，仍要求至少 300 KiB
+固件余量。从旧布局升级需使用下方完整的 `idf.py flash`，同时写入分区表和初始 OTA
+状态，不能只写应用 BIN；NVS 的位置和大小未变，可保留配网、绑定和音量。
+
 ```sh
 . /path/to/esp-idf/export.sh
 idf.py --preview -B build/mosaico-v1.2 \
