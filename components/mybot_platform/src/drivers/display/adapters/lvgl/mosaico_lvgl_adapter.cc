@@ -29,7 +29,6 @@ struct Context {
     mybot_mosaico_panel_t panel{};
     void *draw_buffer = nullptr;
     mybot_mosaico_touch_t touch{};
-    bool touch_released = false;
     lv_display_t *display = nullptr;
     lv_indev_t *input = nullptr;
     lv_timer_t *apply_timer = nullptr;
@@ -129,19 +128,13 @@ void read_touch(lv_indev_t *input, lv_indev_data_t *data) {
     data->state = LV_INDEV_STATE_RELEASED;
     bool valid = !__atomic_load_n(&context.failed, __ATOMIC_ACQUIRE) &&
                  mybot_mosaico_touch_read(&context.touch, &x, &y, &pressed) == 0;
-    mybot_ui_input_touch_sample(valid, pressed);
-    if (!valid) {
-        context.touch_released = false;
-        lv_indev_reset(input, nullptr);
-    } else if (!pressed) {
-        context.touch_released = true;
-    }
-    if (valid && pressed && !context.touch_released)
-        lv_indev_reset(input, nullptr);
-    if (valid && pressed && context.touch_released) {
+    const mybot_ui_touch_sample_t sample = mybot_ui_input_touch_sample(valid, pressed);
+    if (sample == MYBOT_UI_TOUCH_PRESS) {
         data->point.x = x;
         data->point.y = y;
         data->state = LV_INDEV_STATE_PRESSED;
+    } else if (sample == MYBOT_UI_TOUCH_INVALID || pressed) {
+        lv_indev_reset(input, nullptr);
     }
 }
 

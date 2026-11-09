@@ -1,7 +1,8 @@
 # Mosaico input and board lifecycle host tests
 
 Run `sh tests/mosaico_input/run.sh`. The board drivers provide only GPIO
-sampling and hardware preparation; the shared router owns debounce, touch epochs,
+sampling and hardware preparation; the shared router owns touch contact state,
+debounce, touch epochs,
 UI command validation, maintenance holds and SDK attachment. Fault injection covers
 initialization, partial cleanup and retry, invalid samples, physical PLAY start/stop,
 volume and provisioning keys, callback/destroy ordering and repeated SDK attach.

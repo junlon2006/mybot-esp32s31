@@ -161,8 +161,8 @@ static void press(int mv) {
     feed(2000, 4);
 }
 
-static void touch_sample(bool valid, bool pressed) {
-    mybot_ui_input_touch_sample(valid, pressed);
+static mybot_ui_touch_sample_t touch_sample(bool valid, bool pressed) {
+    return mybot_ui_input_touch_sample(valid, pressed);
 }
 
 static void tap() {
@@ -230,11 +230,12 @@ int main(int argc, char **argv) {
         CHECK(provisioning == 3 && factory_resets == 1 && events.empty());
         CHECK(ops->init(&ctx, emit, &events) == 0);
     } else if (scenario == "touch") {
-        tap();
-        feed(2000, 1);
-        CHECK(events.empty()); // screen started with a finger down: require a clean release
-        tap();
-        CHECK(events.empty()); // UI callback only posts; SDK work belongs to key worker
+        CHECK(touch_sample(true, true) == MYBOT_UI_TOUCH_NONE);
+        touch_sample(true, false);
+        CHECK(touch_sample(true, true) == MYBOT_UI_TOUCH_PRESS);
+        CHECK(touch_sample(true, true) == MYBOT_UI_TOUCH_PRESS);
+        touch_sample(true, false);
+        mybot_ui_input_event(MYBOT_KEY_EVENT_CONVERSATION_START);
         feed(2000, 1);
         CHECK(events.size() == 1 && events.back() == MYBOT_KEY_EVENT_CONVERSATION_START);
         state = MYBOT_STATE_IN_CONVERSATION;
