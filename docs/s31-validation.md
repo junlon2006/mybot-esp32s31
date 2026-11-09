@@ -1268,3 +1268,22 @@ checks pass. No device was flashed; host re-enumeration remains a hardware check
 
 Chinese build and source/link/OTA checks pass in build/mosaico-v1.2, with 461,536
 free bytes per OTA slot.
+
+## Review follow-up: show USB capability failures in the meeting UI (2026-11-09)
+
+The meeting card now shows "USB unavailable" and is disabled when USB capture and
+playback capabilities are absent. The event handler also rejects that selection.
+Meeting setup and language submission recheck capability, including loss after
+entering setup or the language picker. An initialized device with an unopened host
+stream still uses the existing USB_AUDIO_NOT_READY response.
+
+The synthetic meeting preview and its language copies are removed; labels always
+show the SDK's accepted language pair. New host cases fail against the old view
+and pass with capability loss/restoration and no mode, language or start submission
+while unavailable. Both UI languages, rounded-corner bounds, media/face/meeting
+flows and allocation cleanup pass under fail-fast UBSan. All 211 static glyphs and
+existing caption font coverage pass without regenerating fonts. Formatting/SPDX
+and whitespace checks pass. These are host results; no device was flashed.
+
+Chinese build and source/link/OTA checks pass in build/mosaico-v1.2, with 462,000
+free bytes per OTA slot.

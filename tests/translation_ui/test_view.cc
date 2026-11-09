@@ -644,6 +644,44 @@ static void test_meeting_flow() {
                   "Select this device for computer input and output. Both sides can speak.")));
     CHECK(find(&display.root, tr("中文", "Chinese"))->parent->x <
           find(&display.root, tr("英语", "English"))->parent->x);
+    const size_t available_commands = commands.size();
+    std::strcpy(content.source_language, "ja-JP");
+    std::strcpy(content.target_language, "ko-KR");
+    content.usb_audio_available = false;
+    update(display, content);
+    CHECK(find(&display.root, tr("USB 不可用", "USB unavailable")));
+    CHECK(find(&display.root, tr("日语", "Japanese")) && find(&display.root, tr("韩语", "Korean")));
+    CHECK(!find(&display.root, tr("中文", "Chinese")) &&
+          !find(&display.root, tr("英语", "English")));
+    CHECK(lv_obj_has_state(find(&display.root, tr("日语", "Japanese"))->parent, LV_STATE_DISABLED));
+    CHECK(lv_obj_has_state(find(&display.root, tr("韩语", "Korean"))->parent, LV_STATE_DISABLED));
+    CHECK(lv_obj_has_state(find(&display.root, tr("开始翻译  >", "Start translation  >"))->parent,
+                           LV_STATE_DISABLED));
+    click(find(&display.root, tr("日语", "Japanese")));
+    click(find(&display.root, tr("开始翻译  >", "Start translation  >")));
+    CHECK(commands.size() == available_commands && events.empty());
+    content.usb_audio_available = true;
+    update(display, content);
+    CHECK(!find(&display.root, tr("USB 不可用", "USB unavailable")));
+    CHECK(
+        !lv_obj_has_state(find(&display.root, tr("日语", "Japanese"))->parent, LV_STATE_DISABLED));
+    CHECK(!lv_obj_has_state(find(&display.root, tr("开始翻译  >", "Start translation  >"))->parent,
+                            LV_STATE_DISABLED));
+    CHECK(commands.size() == available_commands);
+    std::strcpy(content.source_language, "zh-CN");
+    std::strcpy(content.target_language, "en-US");
+    update(display, content);
+    click(find(&display.root, tr("中文", "Chinese")));
+    content.usb_audio_available = false;
+    update(display, content);
+    CHECK(lv_obj_has_state(find(&display.root, tr("日语", "Japanese"))->parent, LV_STATE_DISABLED));
+    click(find(&display.root, tr("日语", "Japanese")));
+    CHECK(commands.size() == available_commands);
+    click(find(&display.root, tr("< 返回", "< Back")));
+    CHECK(find(&display.root, tr("USB 不可用", "USB unavailable")));
+    CHECK(find(&display.root, tr("中文", "Chinese")) && find(&display.root, tr("英语", "English")));
+    content.usb_audio_available = true;
+    update(display, content);
     click(find(&display.root, tr("中文", "Chinese")));
     CHECK(find(&display.root, tr("我的语言", "My language")));
     click(find(&display.root, tr("日语", "Japanese")));
@@ -862,16 +900,15 @@ int main() {
     CHECK(find(&display.root, tr("输出音量 37%", "Output volume 37%")));
     click(find(&display.root, home_action()));
     bounds(&display.root);
-    // The meeting preview can browse languages without changing a real session.
-    click(find(&display.root, tr("会议互译", "Meeting")));
+    // An unavailable USB subsystem cannot enter a synthetic meeting settings flow.
     const auto command_count = commands.size();
-    click(find(&display.root, tr("待开放", "Coming soon")));
-    CHECK(events.empty());
-    click(find(&display.root, tr("中文", "Chinese")));
-    click(find(&display.root, tr("日语", "Japanese")));
+    CHECK(lv_obj_has_state(find(&display.root, tr("会议互译", "Meeting"))->parent,
+                           LV_STATE_DISABLED));
+    CHECK(find(&display.root, tr("USB 不可用", "USB unavailable")));
+    click(find(&display.root, tr("会议互译", "Meeting")));
     CHECK(commands.size() == command_count && events.empty());
-    CHECK(find(&display.root, tr("日语", "Japanese")));
-    click(find(&display.root, tr("< 返回", "< Back")));
+    CHECK(find(&display.root, tr("选择翻译方式", "Choose a translation scene")));
+    CHECK(!find(&display.root, tr("我的语言", "My language")));
     click(find(&display.root, tr("媒体翻译", "Listen")));
     click(find(&display.root, tr("中文", "Chinese")));
     click(find(&display.root, tr("英语", "English"))); // Other language is disabled.
@@ -1283,6 +1320,6 @@ int main() {
     CHECK(!live && !timer && display.root.children.empty());
     test_face_flow();
     test_meeting_flow();
-    std::puts("PASS native simulator UI: scene previews, direct language selection, real volume, "
+    std::puts("PASS native simulator UI: USB availability, direct language selection, real volume, "
               "pause, streamed captions/history, lifecycle gates and allocation cleanup");
 }
