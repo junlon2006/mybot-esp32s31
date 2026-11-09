@@ -851,6 +851,10 @@ int main() {
     lv_display_t display;
     display.root.width = 480;
     display.root.height = 480;
+    CHECK(mybot_lvgl_view_create(nullptr) < 0);
+    display.width = 800;
+    display.height = 480;
+    CHECK(mybot_lvgl_view_create(&display) < 0);
     display.width = 480;
     display.height = 320;
     CHECK(mybot_lvgl_view_create(&display) < 0);
@@ -858,6 +862,8 @@ int main() {
     display.height = 480;
     CHECK(mybot_lvgl_view_create(&display) == 0);
     const unsigned initial_allocations = allocations;
+    CHECK(mybot_lvgl_view_create(&display) < 0);
+    CHECK(allocations == initial_allocations);
     mybot_lvgl_view_destroy();
     for (unsigned failure = 1; failure <= initial_allocations; ++failure) {
         allocations = 0;

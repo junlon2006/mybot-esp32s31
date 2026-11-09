@@ -1320,3 +1320,20 @@ Touch start/stop events still travel through the input worker, while the physica
 AI key handles provisioning and factory reset only. The obsolete physical-volume
 key claim and deleted GUI command-slot comment are removed. Source cross-checks,
 formatting/SPDX and whitespace checks pass; runtime behavior is unchanged.
+
+## Review follow-up: remove obsolete UI generalization and CDC probe (2026-11-09)
+
+The fixed 480x480 view now has one create(display) entry and constant geometry,
+without a mutable width, the sized wrapper or unused Volume/Brightness actions.
+The adapter and display mock use the same entry. Null displays, other resolutions
+and duplicate creation remain rejected without replacing the live view. The
+unused host CDC probe tool for the removed S31 USB Probe firmware is deleted;
+the separate Mosaico UAC diagnostic remains available.
+
+Both UI languages, rounded-corner layout, all static/caption fonts, input routing
+and display/touch lifecycle suites pass under fail-fast UBSan. Formatting/SPDX,
+remaining-reference and whitespace checks pass. The 40-row display buffers are
+unchanged. These are host results; no device was flashed.
+
+Chinese build and source/link/OTA checks pass in build/mosaico-v1.2, with 461,568
+free bytes per OTA slot.

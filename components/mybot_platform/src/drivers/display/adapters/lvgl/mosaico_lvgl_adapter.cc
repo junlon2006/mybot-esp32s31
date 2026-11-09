@@ -265,8 +265,7 @@ int initialize(void **out_ctx) {
                            context.panel.transfer_bytes, LV_DISPLAY_RENDER_MODE_PARTIAL);
     lv_display_add_event_cb(context.display, align_area, LV_EVENT_INVALIDATE_AREA, nullptr);
     lv_display_set_flush_cb(context.display, flush);
-    if (mybot_lvgl_view_create_sized(context.display, MYBOT_DISPLAY_WIDTH, MYBOT_DISPLAY_HEIGHT) <
-        0) {
+    if (mybot_lvgl_view_create(context.display) < 0) {
         lvgl_port_unlock();
         goto done;
     }

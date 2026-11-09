@@ -333,8 +333,8 @@ esp_err_t lvgl_port_task_wake(int event, void *) {
     CHECK(event == LVGL_PORT_EVENT_USER && port_open);
     return ESP_OK;
 }
-int mybot_lvgl_view_create_sized(lv_display_t *handle, int width, int height) {
-    CHECK(handle == &display && width == 480 && height == 480 && port_locked);
+int mybot_lvgl_view_create(lv_display_t *handle) {
+    CHECK(handle == &display && port_locked);
     view_open = true;
     return step("view_new");
 }
