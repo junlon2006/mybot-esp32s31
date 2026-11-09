@@ -30,6 +30,30 @@ class BuildConfigurationTests(unittest.TestCase):
     def test_builder_has_one_fixed_board(self) -> None:
         self.assertEqual(builder.DEFAULT_BOARD, "esp-mosaico-v1.2")
 
+    def test_board_configuration_has_no_profile_layer(self) -> None:
+        project = SCRIPT.parents[1]
+        root = (project / "CMakeLists.txt").read_text(encoding="utf-8")
+        platform = (project / "components/mybot_platform/CMakeLists.txt").read_text(
+            encoding="utf-8"
+        )
+        self.assertNotIn("board.cmake", root)
+        self.assertNotIn("board.cmake", platform)
+        self.assertIn('set(MYBOT_TARGET "esp32s31")', root)
+        self.assertIn("set(MYBOT_PLATFORM_SOURCES", platform)
+        for retired in (
+            "MYBOT_BOARD_TARGET",
+            "MYBOT_BOARD_SDKCONFIG_DEFAULTS",
+            "MYBOT_BOARD_INCLUDE_DIR",
+            "MYBOT_BOARD_EXTRA_COMPONENT_DIRS",
+            "MYBOT_BOARD_REQUIRED_CONFIGS",
+            "MYBOT_BOARD_FORBIDDEN_CONFIGS",
+            "MYBOT_BOARD_PARTITION_TABLE",
+            "MYBOT_BOARD_SOURCES",
+            "MYBOT_BOARD_REQUIRES",
+        ):
+            with self.subTest(symbol=retired):
+                self.assertNotIn(retired, root + platform)
+
     def test_every_executed_idf_command_uses_preview(self) -> None:
         with (
             mock.patch.dict(builder.os.environ, {"IDF_PATH": "/test/idf"}),
