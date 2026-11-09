@@ -750,6 +750,9 @@ static void test_controls(void) {
     get_control(entity_request(2, 0, AUDIO_FU_CTRL_VOLUME, AUDIO_CS_REQ_CUR, 2), master_volume, 2);
 
     tusb_control_request_t bad[] = {
+        /* The production microphone path has no Feature Unit controls. */
+        entity_request(0x12, 0, AUDIO_FU_CTRL_MUTE, AUDIO_CS_REQ_CUR, 1),
+        entity_request(0x12, 0, AUDIO_FU_CTRL_VOLUME, AUDIO_CS_REQ_CUR, 2),
         entity_request(99, 0, AUDIO_FU_CTRL_MUTE, AUDIO_CS_REQ_CUR, 1),
         entity_request(2, 3, AUDIO_FU_CTRL_MUTE, AUDIO_CS_REQ_CUR, 1),
         entity_request(2, 0, 99, AUDIO_CS_REQ_CUR, 1),

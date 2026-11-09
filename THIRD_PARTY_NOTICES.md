@@ -51,6 +51,9 @@ shared audio lifecycle and derived display/input glue. No full BSP or factory ar
 
 Production USB clock and speaker feature-unit control handling follows the pinned UAC 1.3.1
 protocol under Apache-2.0, with Espressif 2023–2026 attribution retained in the project adapter.
-The production build reuses the package's unmodified descriptor/configuration headers and
-Kconfig without compiling its singleton or worker runtime. TinyUSB remains the audio class
-and USB controller implementation.
+The production build reuses the package's unmodified configuration headers and Kconfig
+without compiling its singleton or worker runtime. Its fixed duplex descriptor graph in
+`components/mybot_platform/src/drivers/usb/mosaico_uac_descriptors.h` is adapted from
+UAC 1.3.1 `tusb_uac/uac_descriptors.h`, with the unused microphone Feature Unit removed.
+That derived header retains the complete MIT license and copyright (c) 2020 Jerzy
+Kasenbreg. TinyUSB remains the audio class and USB controller implementation.

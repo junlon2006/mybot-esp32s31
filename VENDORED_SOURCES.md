@@ -121,13 +121,21 @@ performs `479-y`; this does not alter the pinned BSP references or managed CST92
 ## Mosaico composite USB transport
 
 Production Mosaico uses the existing `espressif/esp_tinyusb` 2.4.0 and TinyUSB 0.19.0~3
-with the pinned `usb_device_uac` 1.3.1 descriptors and Kconfig in AS_PART mode. The UAC manifest belongs to the nested
+with the pinned `usb_device_uac` 1.3.1 headers and Kconfig in AS_PART mode. The UAC manifest belongs to the nested
 `boards/esp-mosaico-v1.2/mybot_mosaico_usb` component, registered only by that profile;
 The wrapper's project include redirects only the downloaded package's component registration
 to a project-owned header-only CMake file, exposing the original header directory and Kconfig.
 This explicit boundary is needed because IDF 6.1 adds downloaded components to the build even
 when their manifest has `require: no`.
 Project-owned descriptors/configuration combine one duplex UAC2 function and one CDC function.
+The fixed graph in `mosaico_uac_descriptors.h` derives from the pinned package's
+`tusb_uac/uac_descriptors.h` (SHA-256
+`b86b552cac0434d51766d8f08ee590a6ae95098034a2120480ef3187a95f5633`). It retains
+that file's MIT license and Jerzy Kasenbreg copyright. The unused 18-byte microphone
+Feature Unit is omitted; the microphone output already links directly to its input.
+Shared length constants describe the resulting graph to both the host and TinyUSB.
+Speaker controls, clock, streaming formats, interfaces and endpoints retain their
+existing definitions; the vendor package and standalone diagnostic are unchanged.
 The project adapter implements fixed 48 kHz clock and speaker feature-unit controls following
 the pinned package's protocol; Espressif attribution remains in that file. Its static state
 does not allocate a package singleton, PCM scratch buffers or speaker/microphone tasks.

@@ -1232,3 +1232,23 @@ retract PCM already accepted by RTC or a device. No hardware result is claimed.
 
 Chinese incremental build and source/link/OTA checks pass in build/mosaico-v1.2;
 minimum free space is 461,504 bytes per OTA slot.
+
+## Review follow-up: remove unsupported microphone controls (2026-11-09)
+
+The production duplex graph now omits the unused microphone Feature Unit rather
+than advertising unsupported mute/volume controls. Its microphone output keeps
+the existing direct input-terminal link. AudioControl length is 93 bytes, audio
+function length is 227 and configuration length is 302; the host descriptors and
+TinyUSB parser use shared length constants. A project header retains the source
+UAC descriptor's complete MIT notice; the pinned package and diagnostic stay
+unchanged. Source attribution is recorded in VENDORED_SOURCES and third-party notices.
+
+Real-header FS/HS tests validate entity references, the remaining speaker controls,
+all three lengths and the CDC boundary. Byte comparisons with the pinned graph
+find only the removed 18-byte unit and updated totals. USB initialization fault
+tests pass; all nine audio/control groups pass, including rejection of requests
+for the absent microphone unit. All 88 build-tool tests pass. These host results
+do not replace macOS re-enumeration and duplex-audio hardware verification.
+
+Chinese incremental build and source/link/OTA checks pass in build/mosaico-v1.2;
+minimum free space is 461,536 bytes per OTA slot. No device was flashed.
