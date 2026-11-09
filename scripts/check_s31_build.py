@@ -20,6 +20,21 @@ from capture_build_source import verify as verify_build_provenance
 
 SUPPORTED_BOARD = "esp-mosaico-v1.2"
 BOARD_CODEC = "CONFIG_CODEC_ES8311_SUPPORT"
+FORBIDDEN_CODEC_CONFIGS = (
+    "CONFIG_CODEC_ES7210_SUPPORT",
+    "CONFIG_CODEC_ES7243_SUPPORT",
+    "CONFIG_CODEC_ES7243E_SUPPORT",
+    "CONFIG_CODEC_ES8156_SUPPORT",
+    "CONFIG_CODEC_AW88298_SUPPORT",
+    "CONFIG_CODEC_ES8389_SUPPORT",
+    "CONFIG_CODEC_ES8374_SUPPORT",
+    "CONFIG_CODEC_ES8388_SUPPORT",
+    "CONFIG_CODEC_TAS5805M_SUPPORT",
+    "CONFIG_CODEC_ZL38063_SUPPORT",
+    "CONFIG_CODEC_CJC8910_SUPPORT",
+    "CONFIG_CODEC_DUMMY_SUPPORT",
+    "CONFIG_CODEC_DATA_ADC_SUPPORT",
+)
 RTSA_SHA256 = "7c6a81ab91f3b44c0cd581f84f779d7a022dac159020c19bdddd07c95da31dea"
 RTSA_FILES = {
     "lib/riscv32/libagora-rtc-sdk.a": "573a00d58ad19cc0b66fc1e41f17e23ada34b77fe5c7a8c3e8fa8729f73fb6c5",
@@ -225,8 +240,9 @@ def verify_build(build_dir: Path, language: str) -> dict:
     config = dict(re.findall(
         r"^(CONFIG_\w+)=(.*)$", build_file(build_dir, "sdkconfig").read_text(), re.MULTILINE
     ))
-    if config.get("CONFIG_CODEC_ES8389_SUPPORT") == "y":
-        raise RuntimeError("Mosaico V1.2 must not enable CONFIG_CODEC_ES8389_SUPPORT")
+    for symbol in FORBIDDEN_CODEC_CONFIGS:
+        if config.get(symbol) == "y":
+            raise RuntimeError(f"Mosaico V1.2 must not enable {symbol}")
     required = {
         "CONFIG_IDF_TARGET": '"esp32s31"',
         "CONFIG_ESPTOOLPY_FLASHSIZE_16MB": "y",

@@ -27,7 +27,8 @@ I/O, deferred destruction and volume persistence code. Board-specific I2S/codec
 setup is supplied by `mosaico_codec_audio.c`.
 `mosaico_codec_audio.c` and the power pin setup use Apache-2.0-licensed Espressif
 configuration patterns. The existing official `esp_codec_dev` 1.5.9 snapshot,
-including its Apache-2.0 ES8311 driver, is unchanged.
+including its Apache-2.0 ES8311 driver, is unchanged. Production defaults compile
+only the ES8311 driver; the other retained snapshot drivers are explicitly disabled.
 
 Host validation covers the Mosaico audio backend using `tests/codec_audio/run.sh`.
 The input suite also checks the Mosaico key's debounce, boot-held rejection,

@@ -149,6 +149,14 @@ class S31DeliveryTests(unittest.TestCase):
         self.assertEqual(metadata["board"], "esp-mosaico-v1.2")
         self.assertIn("Board: esp-mosaico-v1.2", self.merged.with_suffix(".flash.txt").read_text())
 
+    def test_mosaico_rejects_each_other_codec_driver(self) -> None:
+        for symbol in checker.FORBIDDEN_CODEC_CONFIGS:
+            with self.subTest(symbol=symbol):
+                (self.build / "sdkconfig").write_text(self.config + f"{symbol}=y\n")
+                self.refresh_provenance()
+                with self.assertRaisesRegex(RuntimeError, f"must not enable {symbol}"):
+                    checker.verify_build(self.build, "zh-CN")
+
     def enable_mosaico_uac(self) -> None:
         (self.build / "sdkconfig").write_text(
             self.config + "CONFIG_USB_DEVICE_UAC_AS_PART=y\n"
