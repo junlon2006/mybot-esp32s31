@@ -145,6 +145,11 @@ void app_main(void) {
 
             ESP_LOGE(TAG, "event=control state=starting_mybot elapsed_ms=%" PRId64 " result=error",
                      (esp_timer_get_time() - mybot_started_us) / 1000);
+            if (stop_mybot_bounded() < 0) {
+                ESP_LOGE(TAG, "event=control state=stop_incomplete action=halt "
+                              "provisioning=blocked network_shutdown=blocked");
+                return;
+            }
             break;
         }
 

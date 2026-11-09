@@ -51,3 +51,9 @@ after a failed/cancelled start. Both cloud-AEC configurations exercise simultane
 MIC→SPEAK and USB→LISTEN uplink with isolated remote destinations, meeting pause,
 USB disconnect admission closure, and retained resources after worker/RTC teardown
 failure. The USB pipeline is freed only after both RTC callbacks and workers drain.
+
+Start-admission tests deterministically inject capture/playback faults after the
+initial fault reads and before cancellation resets, using an optional atomic-read
+hook enabled only in the UI fixture. Media, face-to-face and meeting must reject
+the current cloud start, display MEDIA_NOT_READY and retain the recovery marker;
+the next attempt must recover before it can request a session and join RTC.
