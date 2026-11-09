@@ -1252,3 +1252,19 @@ do not replace macOS re-enumeration and duplex-audio hardware verification.
 
 Chinese incremental build and source/link/OTA checks pass in build/mosaico-v1.2;
 minimum free space is 461,536 bytes per OTA slot. No device was flashed.
+
+## Review follow-up: omit unsupported terminal Connector queries (2026-11-09)
+
+Both USB Input Terminals now declare no Connector Control access. The fixed graph
+keeps its entity links, lengths, endpoints and streaming formats. Descriptor tests
+check every control bitmap: only clock frequency/validity and speaker channel
+mute/volume remain accessible, matching the production callbacks. The previous
+Input Terminal fields fail the new assertions.
+
+Real-header FS/HS parsing and all nine USB audio/control groups pass under UBSan.
+Unadvertised Connector GET requests are rejected without submitting a transfer or
+changing the clock, channel volume or mute values. Formatting/SPDX and whitespace
+checks pass. No device was flashed; host re-enumeration remains a hardware check.
+
+Chinese build and source/link/OTA checks pass in build/mosaico-v1.2, with 461,536
+free bytes per OTA slot.

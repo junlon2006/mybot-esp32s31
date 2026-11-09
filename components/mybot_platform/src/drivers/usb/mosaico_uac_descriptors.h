@@ -30,7 +30,8 @@
 
 /* Derived from usb_device_uac 1.3.1's duplex graph. USB IN has no feature
  * controls: its output terminal is connected directly to its input terminal.
- * Preserve every other field from the pinned, hardware-validated graph. */
+ * Terminal Connector queries are not exposed. Streaming fields and the clock
+ * and speaker feature controls retain the pinned, hardware-validated graph. */
 #define MYBOT_MOSAICO_UAC_CONTROL_DESC_LEN                                                         \
     (TUD_AUDIO_DESC_CS_AC_TOTAL_LEN - TUD_AUDIO_DESC_MIC_FEATURE_UNIT_N_CHANNEL_LEN)
 #define MYBOT_MOSAICO_UAC_DESC_LEN                                                                 \
@@ -44,8 +45,8 @@
         TUD_AUDIO_DESC_CLK_SRC(UAC2_ENTITY_CLOCK, 3, 7, 0x00, 0x00),                               \
         TUD_AUDIO_DESC_INPUT_TERM(UAC2_ENTITY_SPK_INPUT_TERMINAL, AUDIO_TERM_TYPE_USB_STREAMING,   \
                                   0x00, UAC2_ENTITY_CLOCK, SPEAK_CHANNEL_NUM,                      \
-                                  AUDIO_CHANNEL_CONFIG_NON_PREDEFINED, 0x00,                       \
-                                  (AUDIO_CTRL_R << AUDIO_IN_TERM_CTRL_CONNECTOR_POS), 0x00),       \
+                                  AUDIO_CHANNEL_CONFIG_NON_PREDEFINED, 0x00, AUDIO_CTRL_NONE,      \
+                                  0x00),                                                           \
         TUD_AUDIO_DESC_FEATURE_UNIT_N_CHANNEL(TUD_AUDIO_DESC_SPK_FEATURE_UNIT_N_CHANNEL_LEN,       \
                                               UAC2_ENTITY_SPK_FEATURE_UNIT,                        \
                                               UAC2_ENTITY_SPK_INPUT_TERMINAL, 0x00, INPUT_CTRL),   \
@@ -55,7 +56,7 @@
         TUD_AUDIO_DESC_INPUT_TERM(UAC2_ENTITY_MIC_INPUT_TERMINAL, AUDIO_TERM_TYPE_IN_GENERIC_MIC,  \
                                   UAC2_ENTITY_MIC_OUTPUT_TERMINAL, UAC2_ENTITY_CLOCK,              \
                                   MIC_CHANNEL_NUM, AUDIO_CHANNEL_CONFIG_FRONT_CENTER, 0x00,        \
-                                  (AUDIO_CTRL_R << AUDIO_IN_TERM_CTRL_CONNECTOR_POS), 0x00),       \
+                                  AUDIO_CTRL_NONE, 0x00),                                          \
         TUD_AUDIO_DESC_OUTPUT_TERM(UAC2_ENTITY_MIC_OUTPUT_TERMINAL, AUDIO_TERM_TYPE_USB_STREAMING, \
                                    0x00, UAC2_ENTITY_MIC_INPUT_TERMINAL, UAC2_ENTITY_CLOCK,        \
                                    0x0000, 0x00),                                                  \

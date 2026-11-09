@@ -8,7 +8,10 @@ After resolving the pinned managed dependencies, run
 The descriptor test checks factory-derived identity, UAC/CDC interface and endpoint
 layout, 500 mA bus-power declaration, and fixed 48 kHz stereo S16 transport. It
 requires the speaker's mute/volume feature unit and the microphone's direct
-input-to-output path without a feature unit. Every entity reference, AudioControl
+input-to-output path without a feature unit. Input terminals have no controls;
+only clock frequency/validity and speaker mute/volume are advertised. Full control
+fields are checked on terminals, clock, feature unit, interfaces and endpoints.
+Every entity reference, AudioControl
 total length, configuration length and TinyUSB function length is checked; the
 audio parser must end exactly at the CDC function boundary. The shared configuration
 also retains the validated PIO/FIFO path and high-speed feedback interval.

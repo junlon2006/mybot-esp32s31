@@ -750,6 +750,9 @@ static void test_controls(void) {
     get_control(entity_request(2, 0, AUDIO_FU_CTRL_VOLUME, AUDIO_CS_REQ_CUR, 2), master_volume, 2);
 
     tusb_control_request_t bad[] = {
+        /* Neither fixed input terminal advertises Connector Control (selector 0x02). */
+        entity_request(0x01, 0, 0x02, AUDIO_CS_REQ_CUR, 6),
+        entity_request(0x11, 0, 0x02, AUDIO_CS_REQ_CUR, 6),
         /* The production microphone path has no Feature Unit controls. */
         entity_request(0x12, 0, AUDIO_FU_CTRL_MUTE, AUDIO_CS_REQ_CUR, 1),
         entity_request(0x12, 0, AUDIO_FU_CTRL_VOLUME, AUDIO_CS_REQ_CUR, 2),
@@ -760,13 +763,20 @@ static void test_controls(void) {
         entity_request(4, 1, AUDIO_CS_CTRL_SAM_FREQ, AUDIO_CS_REQ_CUR, 4),
         entity_request(4, 0, AUDIO_CS_CTRL_CLK_VALID, AUDIO_CS_REQ_RANGE, 1),
     };
-    uint8_t data[4] = {0};
+    uint8_t data[6] = {0};
     unsigned gets_before = control_gets;
     for (unsigned i = 0; i < sizeof(bad) / sizeof(bad[0]); ++i) {
         assert(!tud_audio_get_req_entity_cb(0, &bad[i]));
         assert(!tud_audio_set_req_entity_cb(0, &bad[i], data));
     }
     assert(control_gets == gets_before);
+    get_control(entity_request(4, 0, AUDIO_CS_CTRL_SAM_FREQ, AUDIO_CS_REQ_CUR, 4), sample_rate, 4);
+    for (unsigned channel = 0; channel < 3; ++channel) {
+        get_control(entity_request(2, channel, AUDIO_FU_CTRL_MUTE, AUDIO_CS_REQ_CUR, 1), zero, 1);
+        uint8_t expected[] = {(uint8_t)volumes[channel], (uint8_t)(volumes[channel] >> 8)};
+        get_control(entity_request(2, channel, AUDIO_FU_CTRL_VOLUME, AUDIO_CS_REQ_CUR, 2), expected,
+                    2);
+    }
     tusb_control_request_t volume = entity_request(2, 0, AUDIO_FU_CTRL_VOLUME, AUDIO_CS_REQ_CUR, 2);
     assert(!tud_audio_get_req_entity_cb(1, &volume));
     assert(!tud_audio_set_req_entity_cb(1, &volume, data));
