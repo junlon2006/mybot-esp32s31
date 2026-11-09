@@ -1757,19 +1757,21 @@ mybot_state_t mybot_get_state(void) {
     return runtime_get_state(&s_default_runtime);
 }
 
-void mybot_stop(void) {
+int mybot_stop(void) {
     mybot_runtime_t *runtime = &s_default_runtime;
     lifecycle_lock();
     if (!aosl_atomic_read(&runtime->aosl_ref_held)) {
         lifecycle_unlock();
-        return;
+        return 0;
     }
 
     runtime_publish_exit(runtime);
     /* Cleanup belongs to the control finalizer; it needs no separate queue admission. */
-    if (destroy_control_queue(runtime)) {
+    bool complete = destroy_control_queue(runtime);
+    if (complete) {
         aosl_dtor();
         aosl_atomic_set(&runtime->aosl_ref_held, false);
     }
     lifecycle_unlock();
+    return complete ? 0 : -1;
 }

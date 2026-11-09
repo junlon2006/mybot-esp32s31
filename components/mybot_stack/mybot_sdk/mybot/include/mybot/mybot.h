@@ -181,20 +181,22 @@ MYBOT_API mybot_state_t mybot_get_state(void);
  * reference for a later call to retry. Failed driver teardown remains driver-owned.
  *
  * Safe to call when not running, after a failed mybot_start(), or repeatedly.
- * Return does not guarantee complete reclamation or that a new start will succeed.
  * Cloud cleanup records survive shutdown until the service confirms the session
  * ended. Terminal vendor RTC finalization failure is not retried; reboot is required
  * before starting another translation.
  *
  * RTC shutdown is attempted before releasing the application AOSL reference.
  *
+ * @return 0 when known application resources and the AOSL reference are released;
+ *         -1 when cleanup remains incomplete and a later call may be retried.
+ *         Product-owned network resources are not included in this result.
  * @warning Waits for worker shutdown, so it must be called from the
  *          main application thread — never from inside a platform event
  *          callback, an SDK worker thread, or a signal handler.
  * @note Calls concurrent with mybot_start() are serialized and wait for the
  *       startup attempt to finish before teardown begins.
  */
-MYBOT_API void mybot_stop(void);
+MYBOT_API int mybot_stop(void);
 
 #ifdef __cplusplus
 }
