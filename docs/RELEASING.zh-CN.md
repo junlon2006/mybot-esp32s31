@@ -15,7 +15,7 @@ python3 scripts/build_all.py --language both \
 
 该入口与 CI 相同：为每种语言创建独立 build/sdkconfig 目录，再统一执行配置、编译、
 size、merge-bin 和交付校验。CI 使用临时独立构建／交付根目录；本地交付使用上面的专用根目录。
-单板日常增量开发继续使用 `idf.py --preview -B build/korvo-s31`。
+单板日常增量开发继续使用 `idf.py --preview -B build/mosaico-v1.2`。
 
 检查项包括目标／配置、RTSA 固定输入、最终链接与实际写入段，并读取已构建分区表，
 要求所有 OTA 应用槽至少留出 **300 KiB**。生成目录只有在所有权标记校验通过后才会清理，
@@ -38,7 +38,7 @@ esp-mosaico-v1.2-zh-CN.flash.txt
 
 manifest 记录项目／IDF 版本、绑定构建的源码版本及 dirty 状态、语言、板型／target、RTSA 包／hash、构建与合并镜像 hash、段偏移和 OTA 余量。它表示构建来源，不代表真机验收。交付时保留四个文件。
 
-合并镜像烧录地址为 **0x0**，padding 覆盖 NVS／OTA 状态，需要重新配网。日常用 `idf.py --preview -B build/korvo-s31 -p PORT flash` 保留 NVS。运行时 CDC 与 ROM 下载端口不同；随后选择当前端口执行 `idf.py --preview -B build/korvo-s31 -p RUNTIME_PORT monitor`。
+合并镜像烧录地址为 **0x0**，padding 覆盖 NVS／OTA 状态，需要重新配网。日常用 `idf.py --preview -B build/mosaico-v1.2 -p PORT flash` 保留 NVS。运行时 CDC 与 ROM 下载端口不同；随后选择当前端口执行 `idf.py --preview -B build/mosaico-v1.2 -p RUNTIME_PORT monitor`。
 
 ## CI
 

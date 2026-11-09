@@ -46,15 +46,15 @@ Cloud AEC 继续使用 SDK 的麦克风/播放参考 PCM 契约；此处不启�
 
 ## 构建与烧录
 
-开发只构建中文版本，目录固定为 `build/korvo-s31`。本次生成的是
+开发只构建中文版本，目录固定为 `build/mosaico-v1.2`。本次生成的是
 Mosaico 固件。从其他板型或独立诊断切换时，先备份需要保留的生成固件，再通过 IDF
 `fullclean` 清理旧构建；不要混用旧 `sdkconfig`，不要手改生成配置。
 
 ```sh
 . /path/to/esp-idf/export.sh
-idf.py --preview -B build/korvo-s31 \
+idf.py --preview -B build/mosaico-v1.2 \
   -DMYBOT_MOSAICO_UAC_TEST=OFF \
-  -DSDKCONFIG=build/korvo-s31/sdkconfig \
+  -DSDKCONFIG=build/mosaico-v1.2/sdkconfig \
   -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;ci/ptime60.defaults" build
 ```
 
@@ -63,13 +63,13 @@ idf.py --preview -B build/korvo-s31 \
 
 ```sh
 ls /dev/cu.usbmodem*
-idf.py --preview -B build/korvo-s31 -p /dev/cu.usbmodem144101 flash
+idf.py --preview -B build/mosaico-v1.2 -p /dev/cu.usbmodem144101 flash
 ```
 
 启动后 Type-C 会重新枚举为 `MyBot Mosaico` 复合设备，包含 UAC2 音频和 CDC 日志；端口号可能变化。监视应用日志：
 
 ```sh
-idf.py --preview -B build/korvo-s31 -p RUNTIME_PORT monitor
+idf.py --preview -B build/mosaico-v1.2 -p RUNTIME_PORT monitor
 ```
 
 应用 CDC 在板级准备时启动，无法提供此前的 ROM / bootloader 日志。CDC 不实现自动进入

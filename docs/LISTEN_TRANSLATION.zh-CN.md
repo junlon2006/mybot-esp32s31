@@ -25,18 +25,18 @@
 
 ## 构建和烧录
 
-开发只构建中文，所有本地增量编译固定使用 `build/korvo-s31`，生成配置固定为
-`build/korvo-s31/sdkconfig`：
+开发只构建中文，所有本地增量编译固定使用 `build/mosaico-v1.2`，生成配置固定为
+`build/mosaico-v1.2/sdkconfig`：
 
 ```sh
 . /path/to/esp-idf/export.sh
-idf.py --preview -B build/korvo-s31 \
+idf.py --preview -B build/mosaico-v1.2 \
   -DMYBOT_MOSAICO_UAC_TEST=OFF \
-  -DSDKCONFIG=build/korvo-s31/sdkconfig \
+  -DSDKCONFIG=build/mosaico-v1.2/sdkconfig \
   -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;ci/ptime60.defaults" build
-idf.py --preview -B build/korvo-s31 -p DOWNLOAD_PORT flash
+idf.py --preview -B build/mosaico-v1.2 -p DOWNLOAD_PORT flash
 # 启动后使用运行时 CDC 端口查看日志
-idf.py --preview -B build/korvo-s31 -p RUNTIME_PORT monitor
+idf.py --preview -B build/mosaico-v1.2 -p RUNTIME_PORT monitor
 ```
 
 保留现有 G.722、16 kHz mono S16、60 ms RTSA 配置和 cloud AEC。AI QoS 默认关闭（`CONFIG_MYBOT_AI_QOS=n`），可在 menuconfig 中显式开启；关闭时启动请求发送 `ai_qos=false` 且不附带快发倍率。已有 sdkconfig 中的显式配置优先于默认值。云 AEC 上行是 MIC/播放参考交错，RTSA 的 PCM channel 数仍为 1，不能改成普通立体声。先检查最终 sdkconfig 的服务器、语种和 AI QoS 设置，再烧录。

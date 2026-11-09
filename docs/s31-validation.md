@@ -18,8 +18,8 @@ power/current measurements and endurance still require separate hardware results
 - The build now fixes ESP-Mosaico CoreBoard V1.2. The board registry, `MYBOT_BOARD`
   selection, Korvo drivers/tests/probes, 800x480 UI branches and dual-board CI matrix
   have been removed.
-- Local builds use `build/korvo-s31`; the standalone USB diagnostic also uses
-  that fixed local build directory. Delivery variants remain `esp-mosaico-v1.2-{zh-CN,en-US}`.
+- Local firmware builds use `build/mosaico-v1.2`; the standalone USB diagnostic uses
+  `build/mosaico-uac`. Delivery variants remain `esp-mosaico-v1.2-{zh-CN,en-US}`.
 - The ES8311 codec, 480x480 CO5300/CST9220 UI, 60 ms audio, PSRAM policy and USB
   meeting routing are unchanged. ES8389 is rejected by both CMake and delivery checks.
 - Local CI-equivalent quality and host-test stages pass: formatting with clang-format
