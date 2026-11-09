@@ -5,7 +5,7 @@
 仅支持 ESP-Mosaico CoreBoard V1.2。本仓库是独立 S31 工程，没有运行时板型选择；
 旧 S3 板型、Korvo 板型和 generic 驱动已移除。
 
-目录与 ESP32 工程保持一致：`components/mybot_stack/mybot_sdk/` 是组件包装及项目维护的听译 SDK，`components/mybot_stack/aosl/` 是 AOSL 上游源码及 S31 组件包装，`components/mybot_stack/agora_rtc/` 是固定 S31 RTSA；三者都是独立 ESP-IDF 组件。`main/` 负责启动、设备身份和 MyBot/网络生命周期，`components/mybot_platform/boards/esp-mosaico-v1.2/` 定义当前硬件和默认值。平台 `services/` 管理 Wi-Fi、HTTPS、NVS、提示音、PCM FIFO 和诊断，`drivers/` 管理 ES8311、按键、触摸及 QSPI／LVGL，`internal/` 为私有接口。
+目录与 ESP32 工程保持一致：`components/mybot_stack/mybot_sdk/` 是组件包装及项目维护的听译 SDK，`components/mybot_stack/aosl/` 是 AOSL 上游源码及 S31 组件包装，`components/mybot_stack/agora_rtc/` 是固定 S31 RTSA；三者都是独立 ESP-IDF 组件。`main/` 负责配置组装、设备身份和 MyBot 生命周期编排，`components/mybot_platform/boards/esp-mosaico-v1.2/` 定义当前硬件和默认值。平台 `services/` 管理 netif/SNTP、Wi-Fi、HTTPS、NVS、提示音、PCM FIFO 和诊断，`drivers/` 管理 ES8311、按键、触摸及 QSPI／LVGL，`internal/` 为私有接口。
 
 平台仅使用 SDK 的公开 `include/mybot/` API。SDK 是项目维护的 V2VT 媒体／面对面／会议翻译分支，硬件细节留在平台组件；AOSL 除组件包装/S31 适配器外及保留的依赖快照仍不可修改。根 CMake 通过 `EXTRA_COMPONENT_DIRS` 分别注册三个运行时组件，`mybot_stack` 父目录只是 bundle。
 

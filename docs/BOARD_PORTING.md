@@ -6,7 +6,7 @@ The only supported hardware is ESP-Mosaico CoreBoard V1.2. This dedicated ESP32-
 project has no runtime board selector; earlier ESP32-S3 and multi-board profiles are not maintained.
 
 ```text
-main/                              startup, device identity, MyBot/network lifecycle
+main/                              configuration assembly and MyBot lifecycle
 components/mybot_stack/
   mybot_sdk/                       component wrapper + maintained V2VT translation SDK
   aosl/                            upstream sources + S31 component wrapper
@@ -14,7 +14,7 @@ components/mybot_stack/
 components/mybot_platform/
   boards/esp-mosaico-v1.2/          hardware, lifetime and defaults
   src/platform/                    platform registration
-  src/services/                    Wi-Fi, HTTPS, NVS, prompts, PCM FIFO, diagnostics
+  src/services/                    netif/SNTP, Wi-Fi, HTTPS, NVS, prompts, PCM FIFO, diagnostics
   src/drivers/                     ES8311, keys, touch, QSPI/LVGL
   src/internal/                    platform-private interfaces
 ```
