@@ -5,7 +5,7 @@
 Both languages use 60 ms audio without video and have isolated build/sdkconfig
 directories. Verified images and metadata are written to releases/ by default.
 CI and local delivery builds use this entrypoint; direct idf.py remains available
-for iterative development in build/korvo-s31.
+for iterative development in build/mosaico-v1.2.
 """
 
 from __future__ import annotations

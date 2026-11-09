@@ -17,7 +17,7 @@ This is the same entrypoint used by CI. It creates isolated language build/sdkco
 directories, then performs configure, build, size, merge and delivery validation.
 CI supplies language-specific temporary build/output roots; local delivery uses the
 dedicated roots above. For daily incremental development, continue using
-`idf.py --preview -B build/korvo-s31`.
+`idf.py --preview -B build/mosaico-v1.2`.
 
 The checker validates target/configuration, pinned RTSA inputs, final links and exact
 flash segments. It reads the built partition table and requires at least **300 KiB** free
@@ -42,7 +42,7 @@ esp-mosaico-v1.2-zh-CN.flash.txt
 
 The manifest records project/IDF versions, build-bound source revision/dirty state, language, board/target, RTSA package/hash, artifact and merged-image hashes, segment offsets and OTA free space. It records build provenance, not hardware acceptance. Keep all four files together.
 
-Merged images are flashed at **0x0**. They include padding over NVS and OTA state; provisioning is required afterwards. For daily development use `idf.py --preview -B build/korvo-s31 -p PORT flash` to preserve NVS. The runtime CDC port differs from its ROM download port; select the current port before running `idf.py --preview -B build/korvo-s31 -p RUNTIME_PORT monitor`.
+Merged images are flashed at **0x0**. They include padding over NVS and OTA state; provisioning is required afterwards. For daily development use `idf.py --preview -B build/mosaico-v1.2 -p PORT flash` to preserve NVS. The runtime CDC port differs from its ROM download port; select the current port before running `idf.py --preview -B build/mosaico-v1.2 -p RUNTIME_PORT monitor`.
 
 ## CI
 

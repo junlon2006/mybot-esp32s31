@@ -64,12 +64,12 @@ python3 scripts/build_all.py --build-root build/delivery --output-root releases/
 ```
 
 CI 按语言调用同一脚本，并使用临时独立构建／交付根目录。脚本统一执行 reconfigure、build、
-size、merge-bin、构建来源和交付校验。单板日常增量开发继续使用 `build/korvo-s31`：
+size、merge-bin、构建来源和交付校验。单板日常增量开发继续使用 `build/mosaico-v1.2`：
 
 ```sh
-idf.py --preview -B build/korvo-s31 \
+idf.py --preview -B build/mosaico-v1.2 \
   -DMYBOT_MOSAICO_UAC_TEST=OFF \
-  -DSDKCONFIG=build/korvo-s31/sdkconfig \
+  -DSDKCONFIG=build/mosaico-v1.2/sdkconfig \
   -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;ci/ptime60.defaults" build
 ```
 
@@ -97,7 +97,7 @@ Mosaico 翻译固件通过 Type-C 提供 UAC2 声卡与 CDC 日志串口。会�
 48 kHz / 16 kHz 转换。操作见 [USB 接入说明](docs/MOSAICO_USB_AUDIO.zh-CN.md)。
 已通过的 [UAC 最小测试](diagnostics/mosaico_uac/README.zh-CN.md)作为独立 USB 音频参考保留。
 
-使用 `idf.py --preview -B build/korvo-s31 menuconfig` 的 `mybot` 菜单选择产品语言、
+使用 `idf.py --preview -B build/mosaico-v1.2 menuconfig` 的 `mybot` 菜单选择产品语言、
 初始翻译语言、Cloud AEC 和 AI QoS。产品语言决定界面文字和提示音；两个构建均使用
 `https://mybot.sh3t.agoralab.co/api`。运行时保存的语言选择优先于初始翻译语言。
 
