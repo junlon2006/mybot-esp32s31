@@ -13,6 +13,12 @@ time synchronization. Its volume slider spans the screen width. Battery and
 brightness placeholders are not part of the product UI. Pairing, provisioning,
 confirmation, caption history and full-text pages also use the native panel width.
 
+If USB initialization does not provide capture/playback capabilities, the meeting
+card shows "USB unavailable" and is disabled. Meeting setup and language submission
+also require that capability; their labels always use SDK language readback.
+An initialized USB device whose host stream is not open still uses the existing
+USB_AUDIO_NOT_READY start response.
+
 Media translation uses the real `v2vt/listen` microphone-to-cloud-to-speaker path, initially Chinese to English. Face-to-face uses `listen_speak`: choose my/other languages, start one parent session, then select a language button to open the microphone direction. Two RTC connections share one RTM login and channel subscription. Meetings use listen_speak with both directions active concurrently: PC audio goes to LISTEN and its translation plays on the device speaker; the physical microphone goes to SPEAK and its translation returns through USB input to the PC. My language is local (initially Chinese); the other language is remote (initially English). The live page follows the latest caption from either direction, shows its language route, and pauses both paths without turn-selection buttons. Live captions, full text and session history share original/translated text received through the two trusted Agents' RTM messages. Defaults remain Chinese input to English output for media and Chinese as my language / English as the other language for face-to-face.
 
 Face-to-face initially shows no selected direction. The language buttons select speak (my language) or listen (other language); selection remains locked until the SDK acknowledges it. Direction changes fence and clear local PCM before resuming, and only the selected direction reaches the speaker. Existing cloud AEC keeps capture and playback concurrent. The UI does not infer speech completion from caption final flags or timers.

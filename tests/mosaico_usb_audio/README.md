@@ -9,7 +9,8 @@ adapter and filters run against mocked TinyUSB, DCD and locks.
 Tests cover static preparation without package runtime dependencies, endpoint accounting and
 unchanged non-audio forwarding; fixed 48 kHz clock controls, channel mute/volume readback,
 short/full/oversized RANGE probes and rejection of invalid or absent microphone
-Feature Unit control requests; owned OUT queues,
+Feature Unit and Input Terminal Connector control requests without changing clock
+or channel mute/volume state; owned OUT queues,
 bounded capture, channel mute/gain, alternate-interface
 changes and concurrent stop/close/destroy; host-paced USB IN packets, independent
 playback lifecycle, short-utterance prebuffering, overflow/underflow and closed-host

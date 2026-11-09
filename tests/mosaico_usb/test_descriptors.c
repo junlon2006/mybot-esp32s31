@@ -105,6 +105,7 @@ static void validate(const uint8_t *configuration, bool high_speed) {
                 control_bytes += d[0];
                 if (d[2] == AUDIO_CS_AC_INTERFACE_HEADER) {
                     assert(d[0] == 9 && !declared_control_bytes);
+                    assert(d[8] == AUDIO_CTRL_NONE);
                     declared_control_bytes = le16(d + 6);
                     break;
                 }
@@ -115,15 +116,19 @@ static void validate(const uint8_t *configuration, bool high_speed) {
                 switch (d[2]) {
                 case AUDIO_CS_AC_INTERFACE_CLOCK_SOURCE:
                     assert(d[0] == 8 && entity == 0x04);
+                    assert(d[5] == ((AUDIO_CTRL_RW << AUDIO_CLOCK_SOURCE_CTRL_CLK_FRQ_POS) |
+                                    (AUDIO_CTRL_R << AUDIO_CLOCK_SOURCE_CTRL_CLK_VAL_POS)));
                     associated[entity] = d[6];
                     break;
                 case AUDIO_CS_AC_INTERFACE_INPUT_TERMINAL:
                     assert(d[0] == 17 && (entity == 0x01 || entity == 0x11));
+                    assert(le16(d + 14) == AUDIO_CTRL_NONE); /* No terminal controls. */
                     associated[entity] = d[6];
                     clocks[entity] = d[7];
                     break;
                 case AUDIO_CS_AC_INTERFACE_OUTPUT_TERMINAL:
                     assert(d[0] == 12 && (entity == 0x03 || entity == 0x13));
+                    assert(le16(d + 9) == AUDIO_CTRL_NONE);
                     associated[entity] = d[6];
                     sources[entity] = d[7];
                     clocks[entity] = d[8];
@@ -145,8 +150,13 @@ static void validate(const uint8_t *configuration, bool high_speed) {
             }
             if (itf > 0 && itf < 3 && d[2] == AUDIO_CS_AS_INTERFACE_AS_GENERAL) {
                 assert(d[10] == 2); /* Two physical channels on each USB stream. */
+                assert(d[4] == AUDIO_CTRL_NONE);
                 stream_terminals[itf] = d[3];
             }
+            break;
+        case TUSB_DESC_CS_ENDPOINT:
+            assert(itf > 0 && itf < 3 && alt == 1 && d[0] == 8);
+            assert(d[2] == AUDIO_CS_EP_SUBTYPE_GENERAL && d[4] == AUDIO_CTRL_NONE);
             break;
         default:
             break;

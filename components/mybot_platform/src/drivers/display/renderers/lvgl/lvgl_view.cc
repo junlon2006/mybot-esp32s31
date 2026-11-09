@@ -140,8 +140,6 @@ struct View {
     char pending_source[33]{};
     char pending_target[33]{};
     int width = 480;
-    char preview_source[33] = "zh-CN";
-    char preview_target[33] = "en-US";
 };
 View s_view;
 
@@ -169,9 +167,6 @@ bool face_session() {
 bool meeting_session() {
     return s_view.content.audio_source == MYBOT_AUDIO_SOURCE_USB;
 }
-bool meeting_preview() {
-    return s_view.scene == Scene::Meeting && !s_view.content.usb_audio_available;
-}
 mybot_translation_mode_t scene_mode() {
     return s_view.scene == Scene::Media ? MYBOT_TRANSLATION_LISTEN : MYBOT_TRANSLATION_LISTEN_SPEAK;
 }
@@ -179,12 +174,12 @@ mybot_audio_source_t scene_audio_source() {
     return s_view.scene == Scene::Meeting ? MYBOT_AUDIO_SOURCE_USB : MYBOT_AUDIO_SOURCE_CODEC;
 }
 bool mode_ready() {
-    return !meeting_preview() && s_view.pending_mode < 0 &&
-           s_view.content.translation_mode == scene_mode() &&
+    return (s_view.scene != Scene::Meeting || s_view.content.usb_audio_available) &&
+           s_view.pending_mode < 0 && s_view.content.translation_mode == scene_mode() &&
            s_view.content.audio_source == scene_audio_source();
 }
 bool languages_allowed() {
-    return meeting_preview() || (mode_ready() && !s_view.command_pending && !languages_pending());
+    return mode_ready() && !s_view.command_pending && !languages_pending();
 }
 uint32_t live_caption_sequence() {
     if (!face_session())
@@ -295,12 +290,6 @@ const char *language_name(const char *code) {
         if (std::strcmp(code, languages[i].code) == 0)
             return tr(languages[i].name_zh, languages[i].name_en);
     return code[0] ? code : "--";
-}
-const char *source_code() {
-    return meeting_preview() ? s_view.preview_source : s_view.content.source_language;
-}
-const char *target_code() {
-    return meeting_preview() ? s_view.preview_target : s_view.content.target_language;
 }
 const char *scene_name() {
     return s_view.scene == Scene::Media  ? tr("媒体翻译", "Media translation")
@@ -447,13 +436,14 @@ void entry() {
     const char *notes[] = {tr("单向听译", "One way"), tr("轮流交流", "Take turns"),
                            s_view.content.usb_audio_available
                                ? tr("双向会议翻译", "Two-way meeting audio")
-                               : tr("听译与发言 · 待开放", "Two way · Soon")};
+                               : tr("USB 不可用", "USB unavailable")};
     const Action actions[] = {Media, Face, Meeting};
     const uint32_t colors[] = {kTeal, kPurple, kYellow};
     for (unsigned i = 0; i < 3; ++i) {
         auto *card =
             button(margin(), 78 + i * 112, content_width(), 100, "", actions[i], colors[i],
-                   s_view.pending_mode < 0 && !s_view.command_pending && !languages_pending());
+                   s_view.pending_mode < 0 && !s_view.command_pending && !languages_pending() &&
+                       (i != 2 || s_view.content.usb_audio_available));
         label(card, 12, 12, content_width() - 24, 40, names[i], &mybot_lvgl_font_28);
         label(card, 12, 58, content_width() - 24, 30, notes[i], &mybot_lvgl_font_20);
     }
@@ -469,29 +459,27 @@ void setup() {
     label(s_view.body, right, 78, column, 30,
           s_view.scene == Scene::Media ? tr("翻译为", "Translate to")
                                        : tr("对方语言", "Other language"));
-    button(left, 116, column, 96, language_name(source_code()), Source, kTeal, languages_allowed());
+    button(left, 116, column, 96, language_name(s_view.content.source_language), Source, kTeal,
+           languages_allowed());
     label(s_view.body, left + column, 144, right - left - column, 40,
           s_view.scene == Scene::Media ? ">" : "<>", &mybot_lvgl_font_28);
-    button(right, 116, column, 96, language_name(target_code()), Target, kPurple,
+    button(right, 116, column, 96, language_name(s_view.content.target_language), Target, kPurple,
            languages_allowed());
     label(s_view.body, margin(), 236, content_width(), 76,
-          s_view.pending_mode >= 0 ? tr("正在切换翻译方式", "Changing translation mode")
+          s_view.scene == Scene::Meeting && !s_view.content.usb_audio_available
+              ? tr("USB 不可用", "USB unavailable")
+          : s_view.pending_mode >= 0 ? tr("正在切换翻译方式", "Changing translation mode")
           : s_view.scene == Scene::Media
               ? tr("板载麦克风拾音，板载扬声器播放译音",
                    "Board microphone input and speaker translation output")
           : s_view.scene == Scene::Face
               ? tr("连接后选择发言语言，双方轮流交流",
                    "Connect, then select each speaker's language to take turns")
-          : !meeting_preview()
-              ? tr("电脑选择设备输入与输出，双方可同时发言",
-                   "Select this device for computer input and output. Both sides can speak.")
-              : tr("界面预览，业务待实现", "UI preview. This scene is not available yet."),
+              : tr("电脑选择设备输入与输出，双方可同时发言",
+                   "Select this device for computer input and output. Both sides can speak."),
           &mybot_lvgl_font_20, LV_TEXT_ALIGN_CENTER, kMuted);
-    button((s_view.width - 364) / 2, 328, 364, 64,
-           !meeting_preview() ? tr("开始翻译  >", "Start translation  >")
-                              : tr("待开放", "Coming soon"),
-           Start, !meeting_preview() ? kTeal : kSoft,
-           mode_ready() && idle() && !s_view.command_pending && !languages_pending());
+    button((s_view.width - 364) / 2, 328, 364, 64, tr("开始翻译  >", "Start translation  >"), Start,
+           kTeal, mode_ready() && idle() && !s_view.command_pending && !languages_pending());
 }
 void languages() {
     heading(s_view.scene == Scene::Media ? (s_view.pick_target ? tr("翻译为", "Translate to")
@@ -502,8 +490,10 @@ void languages() {
     size_t count = 0;
     const auto *list = mybot_ui_port_languages(&count);
     const unsigned begin = s_view.language_page * kLanguagesPerPage;
-    const char *other = s_view.pick_target ? source_code() : target_code();
-    const char *selected = s_view.pick_target ? target_code() : source_code();
+    const char *other =
+        s_view.pick_target ? s_view.content.source_language : s_view.content.target_language;
+    const char *selected =
+        s_view.pick_target ? s_view.content.target_language : s_view.content.source_language;
     for (unsigned i = 0; i < kLanguagesPerPage && begin + i < count; ++i) {
         const auto &item = list[begin + i];
         const bool chosen = std::strcmp(item.code, selected) == 0;
@@ -1003,30 +993,22 @@ void clicked(lv_event_t *event) {
         const auto index = static_cast<unsigned>(action - LanguageBase);
         if (index >= count)
             return;
-        const char *source = s_view.pick_target ? source_code() : list[index].code;
-        const char *destination = s_view.pick_target ? list[index].code : target_code();
+        const char *source = s_view.pick_target ? s_view.content.source_language : list[index].code;
+        const char *destination =
+            s_view.pick_target ? list[index].code : s_view.content.target_language;
         if (std::strcmp(source, destination) == 0)
             return;
-        if (!meeting_preview()) {
-            mybot_ui_command_t request{};
-            request.type = MYBOT_UI_SET_LANGUAGES;
-            std::snprintf(request.source_language, sizeof(request.source_language), "%s", source);
-            std::snprintf(request.target_language, sizeof(request.target_language), "%s",
-                          destination);
-            /* A language pair must be read back before another pair is built.
-             * Submit directly so a rejected mailbox cannot leave a permanent guard. */
-            if (mybot_ui_port_command(&request) == 0) {
-                std::memcpy(s_view.pending_source, request.source_language,
-                            sizeof(s_view.pending_source));
-                std::memcpy(s_view.pending_target, request.target_language,
-                            sizeof(s_view.pending_target));
-            }
-        } else {
-            char source_copy[33]{}, target_copy[33]{};
-            std::snprintf(source_copy, sizeof(source_copy), "%s", source);
-            std::snprintf(target_copy, sizeof(target_copy), "%s", destination);
-            std::memcpy(s_view.preview_source, source_copy, sizeof(source_copy));
-            std::memcpy(s_view.preview_target, target_copy, sizeof(target_copy));
+        mybot_ui_command_t request{};
+        request.type = MYBOT_UI_SET_LANGUAGES;
+        std::snprintf(request.source_language, sizeof(request.source_language), "%s", source);
+        std::snprintf(request.target_language, sizeof(request.target_language), "%s", destination);
+        /* A language pair must be read back before another pair is built.
+         * Submit directly so a rejected mailbox cannot leave a permanent guard. */
+        if (mybot_ui_port_command(&request) == 0) {
+            std::memcpy(s_view.pending_source, request.source_language,
+                        sizeof(s_view.pending_source));
+            std::memcpy(s_view.pending_target, request.target_language,
+                        sizeof(s_view.pending_target));
         }
         s_view.page = Page::Setup;
         redraw();
@@ -1053,9 +1035,10 @@ void clicked(lv_event_t *event) {
             scene == Scene::Media ? MYBOT_TRANSLATION_LISTEN : MYBOT_TRANSLATION_LISTEN_SPEAK;
         const auto audio_source =
             scene == Scene::Meeting ? MYBOT_AUDIO_SOURCE_USB : MYBOT_AUDIO_SOURCE_CODEC;
-        const bool preview = scene == Scene::Meeting && !s_view.content.usb_audio_available;
-        if (!preview && (s_view.content.translation_mode != mode ||
-                         s_view.content.audio_source != audio_source)) {
+        if (scene == Scene::Meeting && !s_view.content.usb_audio_available)
+            return;
+        if (s_view.content.translation_mode != mode ||
+            s_view.content.audio_source != audio_source) {
             mybot_ui_command_t request{};
             request.type = MYBOT_UI_SET_MODE;
             request.value = mode;

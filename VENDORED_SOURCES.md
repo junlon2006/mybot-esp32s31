@@ -133,8 +133,9 @@ The fixed graph in `mosaico_uac_descriptors.h` derives from the pinned package's
 `b86b552cac0434d51766d8f08ee590a6ae95098034a2120480ef3187a95f5633`). It retains
 that file's MIT license and Jerzy Kasenbreg copyright. The unused 18-byte microphone
 Feature Unit is omitted; the microphone output already links directly to its input.
-Shared length constants describe the resulting graph to both the host and TinyUSB.
-Speaker controls, clock, streaming formats, interfaces and endpoints retain their
+Both input terminals also omit unsupported Connector Control access. Shared length
+constants describe the resulting graph to both the host and TinyUSB.
+Speaker feature controls, clock, streaming formats, interfaces and endpoints retain their
 existing definitions; the vendor package and standalone diagnostic are unchanged.
 The project adapter implements fixed 48 kHz clock and speaker feature-unit controls following
 the pinned package's protocol; Espressif attribution remains in that file. Its static state

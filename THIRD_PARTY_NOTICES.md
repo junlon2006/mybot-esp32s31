@@ -54,6 +54,7 @@ protocol under Apache-2.0, with Espressif 2023–2026 attribution retained in th
 The production build reuses the package's unmodified configuration headers and Kconfig
 without compiling its singleton or worker runtime. Its fixed duplex descriptor graph in
 `components/mybot_platform/src/drivers/usb/mosaico_uac_descriptors.h` is adapted from
-UAC 1.3.1 `tusb_uac/uac_descriptors.h`, with the unused microphone Feature Unit removed.
+UAC 1.3.1 `tusb_uac/uac_descriptors.h`, with the unused microphone Feature Unit removed
+and unsupported terminal Connector Control access disabled.
 That derived header retains the complete MIT license and copyright (c) 2020 Jerzy
 Kasenbreg. TinyUSB remains the audio class and USB controller implementation.

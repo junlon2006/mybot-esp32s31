@@ -4,7 +4,7 @@
 Run `sh tests/translation_ui/run.sh`. Both display languages compile the real LVGL
 view and SDK language list against an object/event model. Tests cover the native
 480×480 bounds, initial allocation failures, repeated teardown, media translation,
-face-to-face turn selection, simultaneous USB meeting translation, and the capability-gated meeting preview.
+face-to-face turn selection, simultaneous USB meeting translation, and USB capability failures.
 
 Media and face-to-face share one stored language pair. The face-to-face UI labels
 that pair as my/other language, starts with microphone direction NONE, and exposes
@@ -17,16 +17,16 @@ locked until selection_revision changes and the actual result or failure is read
 back; volume, subtitle updates, timer expiry and an old failure code do not complete
 the request. The tests also cover mailbox rejection and repeated same-code failures.
 
-Meeting selects LISTEN_SPEAK plus USB audio atomically. Switching audio sources defaults
-to my language Chinese and the other language English; re-entering the same meeting
-preserves its accepted pair. Both routes run without face-to-face turn buttons, and pause
+Meeting selects LISTEN_SPEAK plus USB audio atomically. Scene changes preserve the
+accepted language pair, and capability loss never substitutes a local default pair.
+Both routes run without face-to-face turn buttons, and pause
 remains available without selecting an input direction. The live caption follows the
 latest record from either route and updates its language direction without rebuilding
 widgets. Tests cover source/mode acknowledgement, language mapping, USB-not-ready retry,
 both caption routes and history, pause/resume/end, the absence of direction commands,
 and restoring codec input when returning to media.
 
-Language tests cover shared real settings, unsupported-board previews, duplicate-language
+Language tests cover shared real settings, USB-unavailable admission, duplicate-language
 rejection, delayed acknowledgement, rejected submissions and failed saves. Input
 checks cover slider commit on release, actual volume readback and acknowledged
 pause/resume. Lifecycle coverage includes start/cancel/late start, stop/cleanup retry,
