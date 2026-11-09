@@ -29,7 +29,6 @@ static void *s_user;
 /* Odd epochs mean attached; state and event bits are validated with the gesture. */
 static uint32_t s_epoch;
 static uint32_t s_touch_pending;
-/* One copied GUI command: 0 empty, 1 producer, 2 ready, 3 consumer. */
 /* These gesture fields and the contact state belong exclusively to the LVGL owner. */
 typedef enum {
     TOUCH_UNARMED,

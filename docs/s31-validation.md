@@ -1311,3 +1311,12 @@ injections do not establish physical reconnect timing; no device was flashed.
 
 Chinese build and source/link/OTA checks pass in build/mosaico-v1.2, with 461,232
 free bytes per OTA slot.
+
+## Review follow-up: align UI command documentation (2026-11-09)
+
+The bilingual UI guide now describes all five parameter command types passing
+gesture validation and submitting directly to the SDK's nonblocking mailbox.
+Touch start/stop events still travel through the input worker, while the physical
+AI key handles provisioning and factory reset only. The obsolete physical-volume
+key claim and deleted GUI command-slot comment are removed. Source cross-checks,
+formatting/SPDX and whitespace checks pass; runtime behavior is unchanged.
