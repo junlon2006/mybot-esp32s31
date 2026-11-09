@@ -28,6 +28,11 @@ The stop callback is also exercised after cleanup state publication: RTC failure
 replaces temporary cleanup hints but preserves storage/start errors, and audio teardown
 still runs when RTC finalization fails.
 
+Every scene must stop device playback before RTC finalization. Tests retain
+separate device-owned PCM and check physical/USB quiesce ordering, independent
+attempts when one output fails, successful end-session recovery and retained
+recovery requirements when cleanup still fails.
+
 The caption integration tests use the production model and JSON parser with the
 application's real RTM handlers and copied-read API. They cover sender/channel
 filtering, borrowed payload ownership, the eight-message inbox and overflow,

@@ -856,18 +856,16 @@ static void dev_on_conversation_stop(void *user_data) {
     mybot_runtime_t *runtime = user_data;
     aosl_atomic_set(&runtime->media_cancel_requested, true);
     aosl_atomic_set(&runtime->input_direction, MYBOT_TRANSLATION_DIRECTION_NONE);
-    if (runtime->usb_media) {
-        /* Clear both device queues before any potentially slow RTC finalization.
-         * A disconnect already closed rtc_connected; quiesce still owns playback. */
-        int physical = aosl_atomic_read(&runtime->media.running)
-                           ? mybot_media_pipeline_quiesce(&runtime->media)
-                           : 0;
-        int usb = aosl_atomic_read(&runtime->usb_media->running)
-                      ? mybot_media_pipeline_quiesce(runtime->usb_media)
-                      : 0;
-        if (physical < 0 || usb < 0)
-            AOSL_LOG_WRN("meeting audio quiesce incomplete; session cleanup will retry");
-    }
+    /* Clear device-owned PCM before any potentially slow RTC finalization.
+     * A disconnect already closed rtc_connected; quiesce still owns playback. */
+    int physical = aosl_atomic_read(&runtime->media.running)
+                       ? mybot_media_pipeline_quiesce(&runtime->media)
+                       : 0;
+    int usb = runtime->usb_media && aosl_atomic_read(&runtime->usb_media->running)
+                  ? mybot_media_pipeline_quiesce(runtime->usb_media)
+                  : 0;
+    if (physical < 0 || usb < 0)
+        AOSL_LOG_WRN("audio quiesce incomplete; session cleanup will retry");
     if (strcmp(runtime->lifecycle.error_code, "MODE_CHANGE_FAILED") == 0 ||
         strcmp(runtime->lifecycle.error_code, "DIRECTION_CHANGE_FAILED") == 0)
         runtime->lifecycle.error_code[0] = '\0';

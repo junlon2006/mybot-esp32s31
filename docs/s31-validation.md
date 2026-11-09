@@ -1192,3 +1192,21 @@ Direct Chinese build, size, merge-bin and S31 delivery checks pass in
 build/mosaico-v1.2: application 3,666,864 bytes and minimum OTA free space 461,904
 bytes. The recorded manifest marks that verification build as dirty=true.
 No device was flashed.
+
+## Review follow-up: stop device playback in every scene (2026-11-09)
+
+Session teardown now quiesces physical playback before RTC finalization in media,
+face-to-face and meeting scenes; meetings also quiesce USB independently. Device
+PCM is discarded before a slow RTC exit. The existing end-session recovery still
+retries an initial quiesce failure and retains resources only when cleanup remains
+incomplete. Capture and persisted volume remain independent.
+
+Eleven new application cases verify device-queue clearing and stop ordering in
+all scenes, independent output failures, immediate recovery and retained cleanup.
+The original callback fails these cases. Control tests pass 16 shutdown, 27 UI and
+nine caption cases, plus 26 face/meeting audio cases for each AEC setting. The 19 pipeline
+cases for each AEC setting, PCM playback and codec lifecycle suites pass. These
+are host results; no device was flashed.
+
+Chinese incremental build and source/link/OTA checks pass in build/mosaico-v1.2;
+the application has 461,936 free bytes in each OTA slot.
