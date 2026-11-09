@@ -138,16 +138,10 @@ jobs:
     defaults:
       run:
         shell: bash
-    env:
-      BUILD_DIR: build/ci-esp-mosaico-v1.2-${{ matrix.language }}
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - language: zh-CN
-            defaults: ci/ptime60.defaults
-          - language: en-US
-            defaults: ci/ptime60.defaults;ci/en-us.defaults
+        language: [zh-CN, en-US]
     steps:
       - uses: actions/checkout@v4
       - name: Allow Git access to checked-out workspace
@@ -162,24 +156,14 @@ jobs:
         run: |
           source /opt/esp/idf/export.sh >/dev/null
           test "$(idf.py --preview --version)" = "ESP-IDF v6.1"
-      - name: Build translation firmware without video
-        run: |
-          source /opt/esp/idf/export.sh >/dev/null
-          idf.py --preview -B "$BUILD_DIR" \
-            -DSDKCONFIG="$BUILD_DIR/sdkconfig" \
-            -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;${{ matrix.defaults }}" \
-            build
       - name: Verify composite descriptors against pinned USB headers
         run: sh tests/mosaico_usb/run_descriptors.sh
-      - name: Report size, verify S31 link and package firmware
+      - name: Build and package translation firmware
         run: |
           source /opt/esp/idf/export.sh >/dev/null
-          idf.py --preview -B "$BUILD_DIR" size
-          mkdir -p "$GITHUB_WORKSPACE/releases"
-          merged="$GITHUB_WORKSPACE/releases/esp-mosaico-v1.2-${{ matrix.language }}.bin"
-          idf.py --preview -B "$BUILD_DIR" merge-bin -o "$merged"
-          python3 scripts/check_s31_build.py --build-dir "$BUILD_DIR" \
-            --language "${{ matrix.language }}" --merged "$merged"
+          python3 scripts/build_all.py --language "${{ matrix.language }}" \
+            --build-root "$RUNNER_TEMP/mybot-build" \
+            --output-root "$GITHUB_WORKSPACE/releases"
       - name: Upload firmware
         uses: actions/upload-artifact@v4
         with:

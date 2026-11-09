@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
-"""Build the ESP-Mosaico V1.2 firmware variants for isolated automation.
+"""Build and validate ESP-Mosaico V1.2 firmware variants.
 
 Both languages use 60 ms audio without video and have isolated build/sdkconfig
 directories. Verified images and metadata are written to releases/ by default.
-Local development uses idf.py directly in build/mosaico-v1.2.
+CI and local delivery builds use this entrypoint; direct idf.py remains available
+for iterative development in build/korvo-s31.
 """
 
 from __future__ import annotations

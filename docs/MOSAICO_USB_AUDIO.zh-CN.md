@@ -73,17 +73,17 @@ Mosaico V1.2 固件采用固定的 USB 2.0 总线供电策略：FS/HS 配置描�
 ## 构建与烧录
 
 ```sh
-idf.py --preview -B build/mosaico-v1.2 \
+idf.py --preview -B build/korvo-s31 \
   -DMYBOT_MOSAICO_UAC_TEST=OFF \
-  -DSDKCONFIG=build/mosaico-v1.2/sdkconfig \
+  -DSDKCONFIG=build/korvo-s31/sdkconfig \
   -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;ci/ptime60.defaults" build
 ```
 
-固件仍为 `build/mosaico-v1.2/mybot_esp32s31.bin`。按住 BOOT 开机进入下载模式，使用实际
+固件仍为 `build/korvo-s31/mybot_esp32s31.bin`。按住 BOOT 开机进入下载模式，使用实际
 下载端口烧录：
 
 ```sh
-idf.py --preview -B build/mosaico-v1.2 -p /dev/cu.usbmodem144101 flash
+idf.py --preview -B build/korvo-s31 -p /dev/cu.usbmodem144101 flash
 ```
 
 应用启动后 USB 会以复合设备重新枚举，CDC 接口号发生变化，日志串口名称也可能变化。
@@ -91,7 +91,7 @@ idf.py --preview -B build/mosaico-v1.2 -p /dev/cu.usbmodem144101 flash
 
 ```sh
 ls /dev/cu.usbmodem*
-idf.py --preview -B build/mosaico-v1.2 -p 实际运行时串口 monitor
+idf.py --preview -B build/korvo-s31 -p 实际运行时串口 monitor
 ```
 
 ## 日志与验收范围
@@ -100,7 +100,7 @@ idf.py --preview -B build/mosaico-v1.2 -p 实际运行时串口 monitor
 使用 `ls /dev/cu.usbmodem*` 查询，选取当前应用 CDC；它与 ROM 下载端口不同：
 
 ```sh
-idf.py --preview -B build/mosaico-v1.2 -p RUNTIME_PORT monitor
+idf.py --preview -B build/korvo-s31 -p RUNTIME_PORT monitor
 ```
 
 `ready=1` 只表示 USB 已配置且未挂起。`speaker_open=1` 表示电脑输出流已打开，
