@@ -366,30 +366,45 @@ int main(int argc, char **argv) {
         command.value = 1;
         CHECK(submit() == 0);
         CHECK(commands.size() == 3 && commands.back().type == MYBOT_UI_SET_PAUSED);
+        command.type = MYBOT_UI_SET_DIRECTION;
+        command.value = MYBOT_TRANSLATION_DIRECTION_SPEAK;
+        CHECK(submit() == 0);
+        CHECK(commands.size() == 4 && commands.back().type == MYBOT_UI_SET_DIRECTION);
         state = MYBOT_STATE_READY;
-        CHECK(submit() < 0);
-        CHECK(commands.size() == 3); // pause requires an active session
+        CHECK(submit() < 0); // A direction requires an active session.
+        command.type = MYBOT_UI_SET_PAUSED;
+        CHECK(submit() < 0); // Pause also requires an active session.
+        CHECK(commands.size() == 4);
+        command.type = MYBOT_UI_SET_MODE;
+        command.value = MYBOT_TRANSLATION_LISTEN_SPEAK;
+        command.audio_source = MYBOT_AUDIO_SOURCE_CODEC;
+        CHECK(submit() == 0);
+        CHECK(commands.size() == 5 && commands.back().type == MYBOT_UI_SET_MODE);
+        state = MYBOT_STATE_TRANSLATION_STARTING;
+        CHECK(submit() < 0); // Mode changes are admitted only while idle.
+        CHECK(commands.size() == 5);
+        state = MYBOT_STATE_READY;
         command.type = MYBOT_UI_SET_VOLUME;
         command.value = 101;
         CHECK(submit() < 0);
-        CHECK(commands.size() == 3);
+        CHECK(commands.size() == 5);
         command.value = 20;
         touch_sample(true, true);
         ops->destroy(ctx);
         CHECK(ops->init(&ctx, emit, &events) == 0);
         touch_sample(true, false);
         CHECK(mybot_ui_input_command(&command) < 0);
-        CHECK(commands.size() == 3); // attachment generation cannot replay
+        CHECK(commands.size() == 5); // attachment generation cannot replay
         touch_sample(true, true);
         touch_sample(false, false);
         touch_sample(true, false);
         CHECK(mybot_ui_input_command(&command) < 0);
-        CHECK(commands.size() == 3); // read error cancels the gesture
+        CHECK(commands.size() == 5); // read error cancels the gesture
         failure = "ui_command";
         CHECK(submit() < 0);
-        CHECK(commands.size() == 3);
+        CHECK(commands.size() == 5);
         CHECK(submit() == 0);
-        CHECK(commands.size() == 4 && commands.back().value == 20);
+        CHECK(commands.size() == 6 && commands.back().value == 20);
     } else if (scenario == "ui_controls") {
         touch_sample(true, false);
         touch_sample(true, true);

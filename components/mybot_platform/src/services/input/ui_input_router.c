@@ -119,11 +119,17 @@ static bool command_allowed(const mybot_ui_command_t *command, mybot_state_t sta
         return event_allowed(MYBOT_KEY_EVENT_SOURCE_LANGUAGE_NEXT, state) &&
                memchr(command->source_language, '\0', sizeof(command->source_language)) &&
                memchr(command->target_language, '\0', sizeof(command->target_language));
+    case MYBOT_UI_SET_MODE:
+        /* Mode/source and optional language validation belong to the SDK. */
+        return event_allowed(MYBOT_KEY_EVENT_SOURCE_LANGUAGE_NEXT, state);
     case MYBOT_UI_SET_VOLUME:
         return event_allowed(MYBOT_KEY_EVENT_VOLUME_UP, state) && command->value >= 0 &&
                command->value <= 100;
     case MYBOT_UI_SET_PAUSED:
         return state == MYBOT_STATE_IN_CONVERSATION && (command->value == 0 || command->value == 1);
+    case MYBOT_UI_SET_DIRECTION:
+        /* The SDK verifies the active mode, audio source and requested direction. */
+        return state == MYBOT_STATE_IN_CONVERSATION;
     default:
         return false;
     }
