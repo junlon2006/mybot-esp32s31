@@ -156,14 +156,14 @@ jobs:
         run: |
           source /opt/esp/idf/export.sh >/dev/null
           test "$(idf.py --preview --version)" = "ESP-IDF v6.1"
-      - name: Verify composite descriptors against pinned USB headers
-        run: sh tests/mosaico_usb/run_descriptors.sh
       - name: Build and package translation firmware
         run: |
           source /opt/esp/idf/export.sh >/dev/null
           python3 scripts/build_all.py --language "${{ matrix.language }}" \
             --build-root "$RUNNER_TEMP/mybot-build" \
             --output-root "$GITHUB_WORKSPACE/releases"
+      - name: Verify composite descriptors against pinned USB headers
+        run: sh tests/mosaico_usb/run_descriptors.sh
       - name: Upload firmware
         uses: actions/upload-artifact@v4
         with:

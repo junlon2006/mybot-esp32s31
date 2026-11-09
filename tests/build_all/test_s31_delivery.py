@@ -634,6 +634,10 @@ class WorkflowDeliveryTests(unittest.TestCase):
         descriptor_step = build_job.split(
             "      - name: Verify composite descriptors against pinned USB headers\n", 1
         )[1].split("      - name:", 1)[0]
+        self.assertLess(
+            build_job.index("      - name: Build and package translation firmware\n"),
+            build_job.index("      - name: Verify composite descriptors against pinned USB headers\n"),
+        )
         self.assertNotIn("matrix.board", descriptor_step)
         self.assertIn("run: sh tests/mosaico_usb/run_descriptors.sh", descriptor_step)
 
