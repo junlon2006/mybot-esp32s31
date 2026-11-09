@@ -19,6 +19,20 @@ static bool fail_usb_stop, fail_rtc_fini;
 static unsigned usb_pushes, usb_stops, usb_destroys, quiesces;
 static bool fail_physical_quiesce, fail_usb_quiesce, fail_physical_end;
 static unsigned physical_device_pcm, usb_device_pcm, expected_stop_quiesces;
+static unsigned physical_buffered_pcm, usb_buffered_pcm;
+static bool fail_usb_flush, flush_hook_on_usb;
+static void (*flush_hook)(void);
+enum {
+    READY_CANCELLED,
+    READY_STOP_REQUESTED,
+    READY_OFFLINE,
+    READY_NETWORK_LOSS,
+    READY_CAPTURE_FAULT,
+    READY_PLAYBACK_FAULT,
+    READY_RUNTIME_EXIT,
+    READY_INVALIDATION_COUNT
+};
+static unsigned ready_invalidation;
 static const mybot_audio_capture_ops_t usb_capture_ops = {0};
 static const mybot_audio_playback_ops_t usb_playback_ops = {0};
 static int fail_send_direction, fake_pending_pcm;
@@ -110,8 +124,21 @@ int mybot_media_pipeline_set_paused(mybot_media_pipeline_t *pipeline, bool pause
 }
 int mybot_media_pipeline_flush_session(mybot_media_pipeline_t *pipeline) {
     assert(pipeline == &runtime.media || pipeline == runtime.usb_media);
+    assert(!runtime.ui_gate && !runtime.media.rtc_connected);
+    assert(!runtime.usb_media || !runtime.usb_media->rtc_connected);
     flushes++;
-    return fail_flush ? -1 : 0;
+    if (fail_flush || (pipeline == runtime.usb_media && fail_usb_flush))
+        return -1;
+    if (pipeline == &runtime.media)
+        physical_buffered_pcm = 0;
+    else
+        usb_buffered_pcm = 0;
+    if (flush_hook && (pipeline == runtime.usb_media) == flush_hook_on_usb) {
+        void (*hook)(void) = flush_hook;
+        flush_hook = NULL;
+        hook();
+    }
+    return 0;
 }
 int mybot_media_pipeline_end_session(mybot_media_pipeline_t *pipeline) {
     assert(pipeline == &runtime.media);
@@ -130,6 +157,10 @@ int mybot_media_pipeline_end_session(mybot_media_pipeline_t *pipeline) {
 }
 void mybot_media_pipeline_set_rtc_connected(mybot_media_pipeline_t *pipeline, bool connected) {
     assert(pipeline == &runtime.media || pipeline == runtime.usb_media);
+    if (connected) {
+        assert(runtime.ui_gate);
+        assert(!physical_buffered_pcm && !usb_buffered_pcm);
+    }
     pipeline->rtc_connected = connected;
 }
 void mybot_device_lifecycle_notify_conversation_ended(mybot_device_lifecycle_t *lifecycle) {
@@ -211,6 +242,19 @@ int mybot_lcd_show_content(mybot_lcd_t *lcd, const mybot_lcd_content_t *content)
     (void)content;
     return 0;
 }
+void mybot_device_lifecycle_tick(mybot_device_lifecycle_t *lifecycle) {
+    assert(lifecycle == &runtime.lifecycle);
+}
+int mybot_media_pipeline_get_volume(mybot_media_pipeline_t *pipeline, int *volume) {
+    assert(pipeline == &runtime.media);
+    *volume = 45;
+    return 0;
+}
+
+static void tick_control(void) {
+    uintptr_t argument = (uintptr_t)&runtime;
+    control_tick_timer(AOSL_MPQ_TIMER_INVALID, NULL, 1, &argument);
+}
 
 static void reset(void) {
     aosl_hal_free(runtime.silent_audio);
@@ -225,6 +269,8 @@ static void reset(void) {
     memset(direction_at_pause, 0, sizeof(direction_at_pause));
     s_lifecycle_gate = s_exit_generation = s_run_exit_generation = 0;
     runtime.running = runtime.media.running = 1;
+    runtime.lifecycle.network_available = true;
+    runtime.lifecycle.local_media_active = true;
     runtime.lifecycle.mode = MYBOT_TRANSLATION_LISTEN_SPEAK;
     strcpy(runtime.lifecycle.conversation_id, "face-parent");
     conversation.mode = MYBOT_TRANSLATION_LISTEN_SPEAK;
@@ -252,6 +298,9 @@ static void reset(void) {
     usb_pushes = usb_stops = usb_destroys = quiesces = 0;
     fail_physical_quiesce = fail_usb_quiesce = fail_physical_end = false;
     physical_device_pcm = usb_device_pcm = expected_stop_quiesces = 0;
+    physical_buffered_pcm = usb_buffered_pcm = 0;
+    fail_usb_flush = flush_hook_on_usb = false;
+    flush_hook = NULL;
     platform.audio_usb_capture = &usb_capture_ops;
     platform.audio_usb_playback = &usb_playback_ops;
     for (unsigned i = 0; i < FRAME_SAMPLES; ++i)
@@ -264,7 +313,9 @@ static void start(void) {
     assert(runtime.input_direction == MYBOT_TRANSLATION_DIRECTION_NONE);
     assert(runtime.audio_mode == MYBOT_TRANSLATION_LISTEN_SPEAK);
     registered.on_state_changed(MYBOT_RTC_STATE_CONNECTED, registered.user_data);
-    assert(runtime.media.rtc_connected);
+    assert(!runtime.media.rtc_connected);
+    tick_control();
+    assert(runtime.media.rtc_connected && flushes == 2);
 }
 static void expect_frames(mybot_translation_direction_t selected) {
     assert(sends == 2);
@@ -421,7 +472,9 @@ static void start_meeting(void) {
     assert(!runtime.silent_audio && runtime.input_direction == MYBOT_TRANSLATION_DIRECTION_NONE);
     assert(!runtime.media.rtc_connected && !runtime.usb_media->rtc_connected);
     registered.on_state_changed(MYBOT_RTC_STATE_CONNECTED, registered.user_data);
-    assert(runtime.media.rtc_connected && runtime.usb_media->rtc_connected);
+    assert(!runtime.media.rtc_connected && !runtime.usb_media->rtc_connected);
+    tick_control();
+    assert(runtime.media.rtc_connected && runtime.usb_media->rtc_connected && flushes == 4);
 }
 static void test_meeting_routes_remain_independent(void) {
     start_meeting();
@@ -487,6 +540,7 @@ static void test_physical_audio_error_closes_session_media(void) {
         }
         dev_on_conversation_start(&conversation, &runtime);
         registered.on_state_changed(MYBOT_RTC_STATE_CONNECTED, registered.user_data);
+        tick_control();
         assert(runtime.media.rtc_connected);
         media_error(&runtime);
         assert(runtime.media_cancel_requested && !runtime.media.rtc_connected);
@@ -528,7 +582,172 @@ static void start_codec_translation(bool bidirectional) {
     }
     dev_on_conversation_start(&conversation, &runtime);
     registered.on_state_changed(MYBOT_RTC_STATE_CONNECTED, registered.user_data);
+    assert(!runtime.media.rtc_connected);
+    tick_control();
     assert(runtime.media.rtc_connected);
+}
+
+static void start_ready_scene(unsigned scene) {
+    if (scene == 2)
+        start_meeting();
+    else
+        start_codec_translation(scene == 1);
+}
+
+static void test_ready_waits_for_control_flush(void) {
+    for (unsigned scene = 0; scene < 3; ++scene) {
+        start_ready_scene(scene);
+        unsigned previous_flushes = flushes;
+        physical_buffered_pcm = 960;
+        usb_buffered_pcm = scene == 2 ? 960 : 0;
+        registered.on_state_changed(MYBOT_RTC_STATE_RECONNECTING, registered.user_data);
+        registered.on_state_changed(MYBOT_RTC_STATE_CONNECTED, registered.user_data);
+        assert(!runtime.media.rtc_connected);
+        assert(!runtime.usb_media || !runtime.usb_media->rtc_connected);
+        assert(flushes == previous_flushes);
+        tick_control();
+        assert(runtime.media.rtc_connected);
+        assert(!runtime.usb_media || runtime.usb_media->rtc_connected);
+        assert(!physical_buffered_pcm && !usb_buffered_pcm && !runtime.ui_gate);
+        assert(flushes == previous_flushes + (scene == 2 ? 2U : 1U));
+        previous_flushes = flushes;
+        tick_control();
+        assert(flushes == previous_flushes);
+        tests++;
+    }
+}
+
+static void reconnect_during_flush(void) {
+    registered.on_state_changed(MYBOT_RTC_STATE_RECONNECTING, registered.user_data);
+    registered.on_state_changed(MYBOT_RTC_STATE_CONNECTED, registered.user_data);
+}
+
+static void fail_rtc_during_flush(void) {
+    registered.on_state_changed(MYBOT_RTC_STATE_ERROR, registered.user_data);
+}
+
+static void test_ready_rejects_changed_rtc_epoch(void) {
+    for (unsigned meeting = 0; meeting < 2; ++meeting) {
+        for (unsigned terminal = 0; terminal < 2; ++terminal) {
+            start_ready_scene(meeting ? 2 : 1);
+            reconnect_during_flush();
+            unsigned previous_flushes = flushes;
+            flush_hook_on_usb = meeting != 0;
+            flush_hook = terminal ? fail_rtc_during_flush : reconnect_during_flush;
+            tick_control();
+            assert(!runtime.media.rtc_connected);
+            assert(!runtime.usb_media || !runtime.usb_media->rtc_connected);
+            assert(flushes == previous_flushes + (meeting ? 2U : 1U));
+            assert(!flush_hook && !runtime.ui_gate);
+            previous_flushes = flushes;
+            tick_control();
+            assert(runtime.media.rtc_connected == !terminal);
+            assert(!runtime.usb_media || runtime.usb_media->rtc_connected == !terminal);
+            assert(flushes == previous_flushes + (terminal ? 0U : (meeting ? 2U : 1U)));
+            tests++;
+        }
+    }
+}
+
+static void invalidate_ready_during_flush(void) {
+    switch (ready_invalidation) {
+    case READY_CANCELLED:
+        runtime.media_cancel_requested = true;
+        break;
+    case READY_STOP_REQUESTED:
+        runtime.lifecycle.stop_request = true;
+        break;
+    case READY_OFFLINE:
+        runtime.lifecycle.network_available = false;
+        break;
+    case READY_NETWORK_LOSS:
+        runtime.lifecycle.network_loss_pending = true;
+        break;
+    case READY_CAPTURE_FAULT:
+        runtime.media.capture_fault = true;
+        break;
+    case READY_PLAYBACK_FAULT:
+        runtime.media.playback_fault = true;
+        break;
+    case READY_RUNTIME_EXIT:
+        runtime_publish_exit(&runtime);
+        break;
+    }
+}
+
+static void test_ready_rechecks_cancellation_after_flush(void) {
+    for (ready_invalidation = 0; ready_invalidation < READY_INVALIDATION_COUNT;
+         ++ready_invalidation) {
+        start_ready_scene(ready_invalidation & 1U ? 2 : 1);
+        reconnect_during_flush();
+        flush_hook = invalidate_ready_during_flush;
+        tick_control();
+        assert(!flush_hook && !runtime.ui_gate);
+        assert(!runtime.media.rtc_connected);
+        assert(!runtime.usb_media || !runtime.usb_media->rtc_connected);
+        tests++;
+    }
+}
+
+static void test_ready_flush_failure_ends_session(void) {
+    for (unsigned usb_failure = 0; usb_failure < 2; ++usb_failure) {
+        start_ready_scene(usb_failure ? 2 : 1);
+        reconnect_during_flush();
+        fail_flush = !usb_failure;
+        fail_usb_flush = usb_failure != 0;
+        unsigned previous_flushes = flushes;
+        tick_control();
+        assert(flushes == previous_flushes + (usb_failure ? 2U : 1U));
+        assert(runtime.media_cancel_requested && runtime.lifecycle.stop_request);
+        assert(cleanup_requests == 1 && !runtime.media.rtc_connected);
+        assert(!runtime.usb_media || !runtime.usb_media->rtc_connected);
+        assert(!runtime.ui_gate);
+        tests++;
+    }
+}
+
+static void test_ready_preserves_pause_and_direction(void) {
+    for (unsigned meeting = 0; meeting < 2; ++meeting) {
+        start_ready_scene(meeting ? 2 : 1);
+        runtime.input_direction = MYBOT_TRANSLATION_DIRECTION_SPEAK;
+        runtime.media.paused = true;
+        if (runtime.usb_media)
+            runtime.usb_media->paused = true;
+        reconnect_during_flush();
+        tick_control();
+        assert(runtime.media.rtc_connected && runtime.media.paused);
+        assert(!runtime.usb_media ||
+               (runtime.usb_media->rtc_connected && runtime.usb_media->paused));
+        assert(runtime.input_direction == MYBOT_TRANSLATION_DIRECTION_SPEAK);
+        assert(!pause_calls);
+        tests++;
+    }
+}
+
+static void test_ready_epoch_wrap(void) {
+    start_ready_scene(1);
+    runtime.rtc_media_state = INTPTR_MAX;
+    registered.on_state_changed(MYBOT_RTC_STATE_RECONNECTING, registered.user_data);
+    assert(runtime.rtc_media_state == 0 && !runtime.media.rtc_connected);
+    registered.on_state_changed(MYBOT_RTC_STATE_CONNECTED, registered.user_data);
+    assert(runtime.rtc_media_state == 3 && !runtime.media.rtc_connected);
+    tick_control();
+    assert(runtime.media.rtc_connected);
+    tests++;
+}
+
+static void test_stopped_session_discards_pending_ready(void) {
+    start_ready_scene(1);
+    reconnect_during_flush();
+    assert(runtime.rtc_media_state & 1);
+    intptr_t previous_generation = runtime.conversation_generation;
+    dev_on_conversation_stop(&runtime);
+    assert(!runtime.rtc_media_state && runtime.conversation_generation != previous_generation);
+    unsigned previous_flushes = flushes;
+    tick_control();
+    assert(flushes == previous_flushes && !runtime.media.rtc_connected);
+    assert(runtime.media_cancel_requested);
+    tests++;
 }
 
 static void test_all_scenes_quiesce_device_pcm_before_rtc(void) {
@@ -609,6 +828,13 @@ static void test_meeting_quiesce_failure_still_cleans_both_routes(void) {
 }
 
 int main(void) {
+    test_ready_waits_for_control_flush();
+    test_ready_rejects_changed_rtc_epoch();
+    test_ready_rechecks_cancellation_after_flush();
+    test_ready_flush_failure_ends_session();
+    test_ready_preserves_pause_and_direction();
+    test_ready_epoch_wrap();
+    test_stopped_session_discards_pending_ready();
     test_all_scenes_quiesce_device_pcm_before_rtc();
     test_codec_quiesce_failure_retries_session_cleanup();
     test_meeting_quiesce_failure_still_cleans_both_routes();

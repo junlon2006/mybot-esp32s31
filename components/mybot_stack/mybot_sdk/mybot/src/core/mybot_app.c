@@ -62,6 +62,8 @@ typedef struct {
     mybot_video_t video;
 #endif
     aosl_atomic_t conversation_generation;
+    /* RTC callbacks publish an epoch and a ready low bit; control drains media before admission. */
+    aosl_atomic_t rtc_media_state;
     aosl_atomic_t media_cancel_requested;
     aosl_atomic_t audio_mode;
     aosl_atomic_t input_direction;
@@ -367,6 +369,7 @@ static void control_start_conversation(mybot_runtime_t *runtime) {
          * Key STOP admission shares this short fence with the cancellation reset. */
         lock_ui_commands(runtime);
         aosl_atomic_inc(&runtime->conversation_generation);
+        aosl_atomic_set(&runtime->rtc_media_state, 0);
         aosl_atomic_set(&runtime->media_cancel_requested, false);
         aosl_atomic_set(&runtime->ui_gate, 0);
         /* A media worker can fail after preflight but before cancellation resets.
@@ -699,9 +702,16 @@ static void rtc_on_state_changed(mybot_rtc_state_t state, void *user_data) {
     mybot_runtime_t *runtime = user_data;
     bool connected =
         state == MYBOT_RTC_STATE_CONNECTED && !aosl_atomic_read(&runtime->media_cancel_requested);
-    mybot_media_pipeline_set_rtc_connected(&runtime->media, connected);
+    /* This short gate also serializes control's final readiness publication.
+     * Never wait for media/RTC workers while holding it. */
+    lock_ui_commands(runtime);
+    uintptr_t pending = ((uintptr_t)aosl_atomic_read(&runtime->rtc_media_state) + 2U) &
+                        (uintptr_t)INTPTR_MAX & ~(uintptr_t)1;
+    aosl_atomic_set(&runtime->rtc_media_state, (intptr_t)(pending | (connected ? 1U : 0U)));
+    mybot_media_pipeline_set_rtc_connected(&runtime->media, false);
     if (runtime->usb_media)
-        mybot_media_pipeline_set_rtc_connected(runtime->usb_media, connected);
+        mybot_media_pipeline_set_rtc_connected(runtime->usb_media, false);
+    aosl_atomic_set(&runtime->ui_gate, 0);
 #if MYBOT_ENABLE_VIDEO
     if (connected) {
         queue_video_control(runtime, VIDEO_CONTROL_START, 0);
@@ -712,6 +722,43 @@ static void rtc_on_state_changed(mybot_rtc_state_t state, void *user_data) {
     if (state == MYBOT_RTC_STATE_DISCONNECTED || state == MYBOT_RTC_STATE_ERROR) {
         mybot_device_lifecycle_notify_conversation_ended(&runtime->lifecycle);
     }
+}
+
+static bool rtc_media_resume_allowed(mybot_runtime_t *runtime) {
+    return runtime_is_running(runtime) &&
+           runtime_get_state(runtime) == MYBOT_STATE_IN_CONVERSATION &&
+           !aosl_atomic_read(&runtime->media_cancel_requested) &&
+           !aosl_atomic_read(&runtime->lifecycle.stop_request) &&
+           aosl_atomic_read(&runtime->lifecycle.network_available) &&
+           !aosl_atomic_read(&runtime->lifecycle.network_loss_pending) &&
+           !aosl_atomic_read(&runtime->media.capture_fault) &&
+           !aosl_atomic_read(&runtime->media.playback_fault) &&
+           aosl_atomic_read(&runtime->media.running) &&
+           (!runtime->usb_media || aosl_atomic_read(&runtime->usb_media->running));
+}
+
+static void control_sync_rtc_media(mybot_runtime_t *runtime) {
+    uintptr_t pending = (uintptr_t)aosl_atomic_read(&runtime->rtc_media_state);
+    uintptr_t generation = (uintptr_t)aosl_atomic_read(&runtime->conversation_generation);
+    if (!(pending & 1U) || aosl_atomic_read(&runtime->media.rtc_connected) ||
+        !rtc_media_resume_allowed(runtime))
+        return;
+    /* The RTC worker must stay free to finish an already-submitted send while
+     * these barriers join the capture/playback/send owners and discard old PCM. */
+    if (mybot_media_pipeline_flush_session(&runtime->media) < 0 ||
+        (runtime->usb_media && mybot_media_pipeline_flush_session(runtime->usb_media) < 0)) {
+        media_error(runtime);
+        return;
+    }
+    lock_ui_commands(runtime);
+    if (pending == (uintptr_t)aosl_atomic_read(&runtime->rtc_media_state) &&
+        generation == (uintptr_t)aosl_atomic_read(&runtime->conversation_generation) &&
+        rtc_media_resume_allowed(runtime)) {
+        mybot_media_pipeline_set_rtc_connected(&runtime->media, true);
+        if (runtime->usb_media)
+            mybot_media_pipeline_set_rtc_connected(runtime->usb_media, true);
+    }
+    aosl_atomic_set(&runtime->ui_gate, 0);
 }
 
 static void rtc_on_rtm_event(const char *rtm_uid, mybot_rtm_event_type_t event_type, int error_code,
@@ -873,6 +920,7 @@ static void dev_on_conversation_stop(void *user_data) {
     refresh_caption_metadata(runtime);
     lock_ui_commands(runtime);
     aosl_atomic_inc(&runtime->conversation_generation);
+    aosl_atomic_set(&runtime->rtc_media_state, 0);
     aosl_atomic_set(&runtime->ui_gate, 0);
     caption_lock(&runtime->caption_inbox_gate);
     runtime->rtc_channel[0] = '\0';
@@ -1274,6 +1322,7 @@ static void control_tick_timer(aosl_timer_t id, const aosl_ts_t *now, uintptr_t 
     mybot_runtime_t *runtime = (mybot_runtime_t *)argv[0];
     if (runtime_is_running(runtime)) {
         mybot_device_lifecycle_tick(&runtime->lifecycle);
+        control_sync_rtc_media(runtime);
         release_unclaimed_usb_media(runtime);
         bool captions_changed = drain_caption_inbox(runtime);
         bool ready = aosl_atomic_read(&runtime->media.rtc_connected) != 0;

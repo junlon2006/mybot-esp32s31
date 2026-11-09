@@ -62,3 +62,10 @@ initial fault reads and before cancellation resets, using an optional atomic-rea
 hook enabled only in the UI fixture. Media, face-to-face and meeting must reject
 the current cloud start, display MEDIA_NOT_READY and retain the recovery marker;
 the next attempt must recover before it can request a session and join RTC.
+
+RTC readiness is handed from the RTC callback to the control tick. Reconnect
+tests verify that callbacks never wait for media workers or publish ready,
+that both meeting pipelines drain before admission, and that newer connection
+states, session changes, pending stops and cleanup failures invalidate recovery.
+User pause survives the handoff. `tests/media_pause` checks the actual PCM queues
+and capture/reference contents across these worker barriers.

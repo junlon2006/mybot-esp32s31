@@ -1210,3 +1210,25 @@ are host results; no device was flashed.
 
 Chinese incremental build and source/link/OTA checks pass in build/mosaico-v1.2;
 the application has 461,936 free bytes in each OTA slot.
+
+## Review follow-up: drain stale PCM before RTC readiness (2026-11-09)
+
+RTC state callbacks now close both media routes and publish a connection epoch.
+The existing control tick drains the capture, reference and playback owners before
+restoring ready. Final publication shares the short UI admission gate with RTC
+state changes and validates the epoch, session, cancellation, stop, network and
+device-fault state. No gate is held while waiting for a media or RTC worker.
+Initial connection and reconnect use the same handoff; pause state is preserved.
+
+Application tests cover rapid state changes, events arriving during flush,
+cancel/stop/network/fault/exit rejection, failed drains, paused recovery, meeting
+duplex and epoch wrap. Control tests pass 16 shutdown, 27 UI and nine caption
+cases, plus 46 face/meeting cases for each AEC setting. Three additional real-pipeline cases
+verify 600 ms MIC/reference backlogs, partial playback, failed flush retry and
+pause preservation for physical and USB routes; 22 cases pass for each AEC
+setting. Omitting the barriers reproduces the old MIC sample. The existing 50
+RTC wrapper cases pass. Draining waits for already-submitted sends; it does not
+retract PCM already accepted by RTC or a device. No hardware result is claimed.
+
+Chinese incremental build and source/link/OTA checks pass in build/mosaico-v1.2;
+minimum free space is 461,504 bytes per OTA slot.
