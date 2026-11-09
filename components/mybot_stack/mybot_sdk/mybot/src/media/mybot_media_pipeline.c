@@ -47,16 +47,18 @@ static void capture_timer(aosl_timer_t id, const aosl_ts_t *now, uintptr_t argc,
     }
 
     mybot_media_pipeline_t *pipeline = (mybot_media_pipeline_t *)argv[0];
-    if (!aosl_atomic_read(&pipeline->running)) {
+    if (!aosl_atomic_read(&pipeline->running) || aosl_atomic_read(&pipeline->capture_fault)) {
         return;
     }
 
     const mybot_audio_capture_ops_t *ops = pipeline->audio.capture_ops;
     int frames = ops->read(pipeline->cap_ctx, pipeline->cap_frame, MYBOT_MEDIA_FRAME_SAMPLES);
     if (frames <= 0) {
-        if (frames < 0 && pipeline->usb && aosl_atomic_read(&pipeline->running) &&
-            pipeline->cbs.on_audio_error)
-            pipeline->cbs.on_audio_error(pipeline->cbs.user_data);
+        if (frames < 0 && aosl_atomic_read(&pipeline->running)) {
+            aosl_atomic_set(&pipeline->capture_fault, true);
+            if (pipeline->cbs.on_audio_error)
+                pipeline->cbs.on_audio_error(pipeline->cbs.user_data);
+        }
         return;
     }
     if (frames > MYBOT_MEDIA_FRAME_SAMPLES) {
@@ -408,6 +410,7 @@ static int start_pipeline(mybot_media_pipeline_t *pipeline,
     pipeline->usb = usb;
     pipeline->stop_complete = false;
     aosl_atomic_set(&pipeline->paused, false);
+    aosl_atomic_set(&pipeline->capture_fault, false);
     aosl_atomic_set(&pipeline->playback_fault, false);
     pipeline->playback_suspended = false;
     mybot_audio_context_init(&pipeline->audio);
@@ -644,6 +647,17 @@ int mybot_media_pipeline_end_session(mybot_media_pipeline_t *pipeline) {
     int result = mybot_media_pipeline_flush_session(pipeline);
     if (result < 0) {
         return result;
+    }
+    if (aosl_atomic_read(&pipeline->capture_fault) && aosl_atomic_read(&pipeline->running)) {
+        /* A hard capture error can leave the codec stream unusable across
+         * sessions. Reinitialize it before the next cloud start. */
+        if (pipeline->audio.capture_ops->stop(pipeline->cap_ctx) < 0) {
+            return -1;
+        }
+        if (pipeline->audio.capture_ops->start(pipeline->cap_ctx) < 0) {
+            return -1;
+        }
+        aosl_atomic_set(&pipeline->capture_fault, false);
     }
     if ((pipeline->playback_suspended || aosl_atomic_read(&pipeline->playback_fault)) &&
         aosl_atomic_read(&pipeline->running)) {

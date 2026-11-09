@@ -14,6 +14,8 @@
 #include "mybot_platform/board.h"
 #include "mybot_platform/factory_reset.h"
 #include "mybot_platform/network.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #if CONFIG_MYBOT_DEBUG_RESOURCE_MONITOR
 #include "resource_monitor.h"
 #endif
@@ -24,6 +26,8 @@
 
 #define TAG "mybot_bootstrap"
 #define CONTROL_EVENT_WAIT_MS 100
+#define STOP_RETRY_ATTEMPTS 3
+#define STOP_RETRY_DELAY_MS 20
 #define DEVICE_ID_DIGEST_BYTES 12
 
 static const char k_device_id_hmac_key[] = "mybot-esp32-device-id-v1";
@@ -63,6 +67,17 @@ static int build_device_id(char *device_id, size_t capacity, const uint8_t mac[6
     digest_hex[sizeof(digest_hex) - 1] = '\0';
     int written = snprintf(device_id, capacity, "ESP32-%s", digest_hex);
     return written > 0 && (size_t)written < capacity ? 0 : -1;
+}
+
+static int stop_mybot_bounded(void) {
+    for (unsigned attempt = 0; attempt < STOP_RETRY_ATTEMPTS; ++attempt) {
+        if (mybot_stop() == 0)
+            return 0;
+        ESP_LOGE(TAG, "event=stop_mybot attempt=%u result=retained", attempt + 1);
+        if (attempt + 1 < STOP_RETRY_ATTEMPTS)
+            vTaskDelay(pdMS_TO_TICKS(STOP_RETRY_DELAY_MS));
+    }
+    return -1;
 }
 
 void app_main(void) {
@@ -152,7 +167,11 @@ void app_main(void) {
         ESP_LOGI(TAG, "event=control state=stopping_mybot sdk_state=%d running=%d reason=%s",
                  (int)mybot_get_state(), mybot_is_running() ? 1 : 0,
                  provisioning_requested ? "provision_request" : "sdk_stopped");
-        mybot_stop();
+        if (stop_mybot_bounded() < 0) {
+            ESP_LOGE(TAG, "event=control state=stop_incomplete action=halt "
+                          "provisioning=blocked network_shutdown=blocked");
+            return;
+        }
 
         if (!provisioning_requested) {
             provisioning_requested = mybot_board_wait_wifi_provisioning_request(0);

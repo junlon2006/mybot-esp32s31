@@ -173,6 +173,7 @@ int mybot_media_pipeline_end_session(mybot_media_pipeline_t *pipeline) {
     if (fail_end_session)
         return -1;
     paused = false;
+    pipeline->capture_fault = false;
     pipeline->playback_fault = false;
     return 0;
 }
@@ -477,6 +478,20 @@ static void test_idle_playback_fault_blocks_start_until_recovered(void) {
     fail_end_session = false;
     control_start_conversation(&runtime);
     assert(session_ends == 2 && conversation_starts == 1 && !runtime.media.playback_fault);
+    assert(!runtime.media_recovery_required && !runtime.media_cancel_requested);
+    tests++;
+}
+
+static void test_idle_capture_fault_blocks_start_until_recovered(void) {
+    reset();
+    runtime.media.capture_fault = true;
+    fail_end_session = true;
+    control_start_conversation(&runtime);
+    assert(session_ends == 1 && !conversation_starts && runtime.media.capture_fault);
+    assert(runtime.media_recovery_required && !paused);
+    fail_end_session = false;
+    control_start_conversation(&runtime);
+    assert(session_ends == 2 && conversation_starts == 1 && !runtime.media.capture_fault);
     assert(!runtime.media_recovery_required && !runtime.media_cancel_requested);
     tests++;
 }
@@ -847,6 +862,7 @@ int main(void) {
     test_pause_only_active_and_actual_state();
     test_media_recovery_before_cloud_start();
     test_idle_playback_fault_blocks_start_until_recovered();
+    test_idle_capture_fault_blocks_start_until_recovered();
     test_each_session_releases_rtc_before_next_start();
     test_rtc_cleanup_failure_blocks_cloud_start();
     test_rtc_cleanup_failure_preserves_real_error();

@@ -346,7 +346,7 @@ static void test_stop_before_media_initialization(void) {
     runtime.kv_store.ctx = NULL;
     runtime.service_mpq = AOSL_MPQ_INVALID;
     run_control_finalizer = true;
-    mybot_stop();
+    assert(mybot_stop() == 0);
     assert(aosl_releases == 1 && !runtime.aosl_ref_held && !allocations);
     assert(!physical_stops && !physical_destroys && !usb_stops && !usb_destroys);
     tests++;
@@ -359,13 +359,13 @@ static void test_physical_stop_and_destroy_retry(void) {
         fail_physical_stop = failure == 0;
         fail_physical_destroy = failure == 1;
         int16_t *retained = runtime.silent_audio;
-        mybot_stop();
+        assert(mybot_stop() < 0);
         assert_stop_retained();
         assert(runtime.silent_audio == retained && !runtime.usb_media);
         assert(failure ? runtime.media.stop_complete : runtime.media.cap_mpq == 11);
         assert(runtime.control_mpq == AOSL_MPQ_INVALID);
         fail_physical_stop = fail_physical_destroy = false;
-        mybot_stop();
+        assert(mybot_stop() == 0);
         assert(aosl_releases == 1 && !runtime.aosl_ref_held && !allocations);
         assert(!runtime.media.initialized && !runtime.silent_audio);
         tests++;
@@ -376,13 +376,13 @@ static void test_standalone_rtc_cleanup_retry(void) {
     reset();
     retain_physical_media();
     fail_rtc_fini = rtc_pending = true;
-    mybot_stop();
+    assert(mybot_stop() < 0);
     assert_stop_retained();
     assert(!physical_destroys && rtc_finalizations >= 2 && rtc_pending);
-    mybot_stop();
+    assert(mybot_stop() < 0);
     assert_stop_retained(); /* A terminal vendor failure must remain blocked. */
     fail_rtc_fini = false;  /* A retryable forwarding-queue failure can instead clear. */
-    mybot_stop();
+    assert(mybot_stop() == 0);
     assert(aosl_releases == 1 && !runtime.aosl_ref_held && !rtc_pending && !allocations);
     tests++;
 }
@@ -400,14 +400,14 @@ static void test_usb_and_physical_shutdown_retry(void) {
         fail_physical_stop = failure == 0;
         fail_usb_stop = failure == 1;
         fail_usb_destroy = failure == 2;
-        mybot_stop();
+        assert(mybot_stop() < 0);
         assert(!aosl_releases && runtime.aosl_ref_held && runtime.usb_media == retained);
         assert(mybot_get_state() == MYBOT_STATE_STOPPING && physical_stops && usb_stops);
         assert(runtime.silent_audio);
         if (failure < 2)
             assert(!physical_destroys && !usb_destroys);
         fail_physical_stop = fail_usb_stop = fail_usb_destroy = false;
-        mybot_stop();
+        assert(mybot_stop() == 0);
         assert(aosl_releases == 1 && !runtime.aosl_ref_held && !runtime.usb_media);
         assert(!allocations);
         tests++;
@@ -418,21 +418,21 @@ static void test_pending_service_and_control_join(void) {
     reset();
     retain_physical_media();
     fail_service_join = true;
-    mybot_stop();
+    assert(mybot_stop() < 0);
     assert(runtime.aosl_ref_held && !aosl_releases && runtime.lifecycle_initialized);
     assert(mybot_get_state() == MYBOT_STATE_STOPPING && runtime.kv_store.ctx);
     fail_service_join = false;
-    mybot_stop();
+    assert(mybot_stop() == 0);
     assert(aosl_releases == 1 && !runtime.aosl_ref_held && !allocations);
 
     reset();
     retain_physical_media();
     fail_control_join = true;
-    mybot_stop();
+    assert(mybot_stop() < 0);
     assert(runtime.aosl_ref_held && !aosl_releases && runtime.media.initialized);
     assert(runtime.control_mpq != AOSL_MPQ_INVALID && !physical_stops);
     fail_control_join = false;
-    mybot_stop();
+    assert(mybot_stop() == 0);
     assert(aosl_releases == 1 && !runtime.aosl_ref_held && !allocations);
     tests++;
 }
@@ -442,11 +442,11 @@ static void test_pending_service_after_lifecycle_init_failure(void) {
     runtime.lifecycle_initialized = false;
     run_control_finalizer = true;
     fail_service_join = true;
-    mybot_stop();
+    assert(mybot_stop() < 0);
     assert(runtime.aosl_ref_held && !aosl_releases && runtime.kv_store.ctx);
     assert(mybot_get_state() == MYBOT_STATE_STOPPING);
     fail_service_join = false;
-    mybot_stop();
+    assert(mybot_stop() == 0);
     assert(aosl_releases == 1 && !runtime.aosl_ref_held && !runtime.kv_store.ctx);
     assert(kv_deinitialized == 1 && !allocations);
     tests++;

@@ -351,6 +351,7 @@ static void control_start_conversation(mybot_runtime_t *runtime) {
         }
         if (runtime->media_recovery_required || runtime->usb_media ||
             mybot_media_pipeline_is_paused(&runtime->media) ||
+            aosl_atomic_read(&runtime->media.capture_fault) ||
             aosl_atomic_read(&runtime->media.playback_fault)) {
             runtime->media_recovery_required = end_session_media(runtime, true);
             if (runtime->media_recovery_required) {
@@ -1757,19 +1758,21 @@ mybot_state_t mybot_get_state(void) {
     return runtime_get_state(&s_default_runtime);
 }
 
-void mybot_stop(void) {
+int mybot_stop(void) {
     mybot_runtime_t *runtime = &s_default_runtime;
     lifecycle_lock();
     if (!aosl_atomic_read(&runtime->aosl_ref_held)) {
         lifecycle_unlock();
-        return;
+        return 0;
     }
 
     runtime_publish_exit(runtime);
     /* Cleanup belongs to the control finalizer; it needs no separate queue admission. */
-    if (destroy_control_queue(runtime)) {
+    bool complete = destroy_control_queue(runtime);
+    if (complete) {
         aosl_dtor();
         aosl_atomic_set(&runtime->aosl_ref_held, false);
     }
     lifecycle_unlock();
+    return complete ? 0 : -1;
 }
