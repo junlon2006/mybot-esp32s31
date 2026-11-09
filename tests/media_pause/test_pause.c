@@ -805,6 +805,8 @@ static void test_usb_pipeline_zero_reference_and_unity_gain(void) {
     usb_disconnected = true;
     tick(CAPTURE_QUEUE);
     assert(audio_errors == 1);
+    tick(CAPTURE_QUEUE);
+    assert(audio_errors == 1); /* A latched capture fault does not notify every frame. */
     usb_disconnected = false;
     pause_usb_write = true;
     push(3456);
@@ -898,6 +900,47 @@ static void test_physical_playback_fault_recovery_retries(void) {
     tests++;
 }
 
+static void test_physical_capture_fault_reports_once_and_recovers(void) {
+    reset();
+    capture_frames = -1;
+    tick(CAPTURE_QUEUE);
+    assert(pipeline.capture_fault && audio_errors == 1 && capture_reads == 1);
+    tick(CAPTURE_QUEUE);
+    assert(capture_reads == 1 && audio_errors == 1);
+    capture_frames = MYBOT_MEDIA_FRAME_SAMPLES;
+    assert(mybot_media_pipeline_end_session(&pipeline) == 0);
+    assert(!pipeline.capture_fault && cap_active && cap_stops == 1);
+    mybot_media_pipeline_set_rtc_connected(&pipeline, true);
+    tick(CAPTURE_QUEUE);
+    tick(SEND_QUEUE);
+    expect_sent(captured_sample, 0);
+    finish();
+    tests++;
+}
+
+static void test_physical_capture_fault_recovery_retries(void) {
+    reset();
+    capture_frames = -1;
+    tick(CAPTURE_QUEUE);
+    fail_cap_stop = true;
+    assert(mybot_media_pipeline_end_session(&pipeline) < 0);
+    assert(pipeline.capture_fault && cap_active && cap_stops == 1);
+    fail_cap_stop = false;
+    fail_codec_start = true;
+    assert(mybot_media_pipeline_end_session(&pipeline) < 0);
+    assert(pipeline.capture_fault && !cap_active);
+    fail_codec_start = false;
+    assert(mybot_media_pipeline_end_session(&pipeline) == 0);
+    assert(!pipeline.capture_fault && cap_active);
+    capture_frames = MYBOT_MEDIA_FRAME_SAMPLES;
+    mybot_media_pipeline_set_rtc_connected(&pipeline, true);
+    tick(CAPTURE_QUEUE);
+    tick(SEND_QUEUE);
+    expect_sent(captured_sample, 0);
+    finish();
+    tests++;
+}
+
 static void test_physical_write_interrupted_by_pause_or_stop(void) {
     for (unsigned stopping = 0; stopping < 2; ++stopping) {
         reset();
@@ -914,6 +957,8 @@ static void test_physical_write_interrupted_by_pause_or_stop(void) {
 int main(void) {
     test_physical_playback_fault_recovers_at_session_end();
     test_physical_playback_fault_recovery_retries();
+    test_physical_capture_fault_reports_once_and_recovers();
+    test_physical_capture_fault_recovery_retries();
     test_physical_write_interrupted_by_pause_or_stop();
     test_disconnected_quiesce_clears_device_pcm();
     test_usb_pipeline_zero_reference_and_unity_gain();

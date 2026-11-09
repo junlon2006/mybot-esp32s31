@@ -351,6 +351,7 @@ static void control_start_conversation(mybot_runtime_t *runtime) {
         }
         if (runtime->media_recovery_required || runtime->usb_media ||
             mybot_media_pipeline_is_paused(&runtime->media) ||
+            aosl_atomic_read(&runtime->media.capture_fault) ||
             aosl_atomic_read(&runtime->media.playback_fault)) {
             runtime->media_recovery_required = end_session_media(runtime, true);
             if (runtime->media_recovery_required) {
