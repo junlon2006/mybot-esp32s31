@@ -32,8 +32,9 @@ The panel file owns controller/DMA buffers and uses QSPI partial transfers with
 separate draw/staging buffers. The LVGL adapter coordinates touch reads and shared
 view lifetime. The shared view uses `ui/ui_port.h` for Wi-Fi status, captions and
 admitted UI actions instead of calling network, SDK or board-key internals directly.
-A common `input/ui_input_router.c` owns gesture epochs, UI-command mailboxes and
-maintenance holds; the board supplies only button sampling and hardware preparation.
+A common `input/ui_input_router.c` owns gesture epochs, touch event handoff and
+maintenance holds; parameter commands validate the released touch and submit through
+the SDK's nonblocking command API. The board supplies only button sampling and hardware preparation.
 Display callbacks perform no network work. Detach prevents late callbacks. Scene
 behavior is described in [the UI guide](PLATFORM_UI.md).
 

@@ -19,8 +19,8 @@ void mybot_ui_input_destroy(void *ctx);
 void mybot_ui_input_touch_sample(bool valid, bool pressed);
 void mybot_ui_input_event(mybot_key_event_t event);
 
-/* Gesture-gated parameter commands are dispatched by the board input worker. */
-void mybot_ui_input_command(const mybot_ui_command_t *command);
+/* Validate the released touch gesture and submit one nonblocking UI command. */
+int mybot_ui_input_command(const mybot_ui_command_t *command);
 
 #ifdef __cplusplus
 }

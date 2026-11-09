@@ -15,7 +15,7 @@
 保持 16 kHz、mono、signed-16 PCM，长度使用**帧数**。提示音结束需 drain。
 stop/destroy 有界等待；超时保留资源和所有权，后续初始化/清理可恢复。
 
-板级 panel 文件拥有面板及 DMA 缓冲，使用独立绘制／暂存区的 QSPI 局部刷新。LVGL adapter 协调刷新、触摸及共享 view 生命周期。共享 view 只通过 `ui/ui_port.h` 获取 Wi-Fi 状态、字幕和已准入的 UI 动作，不再直接调用网络、SDK 或板级按键内部接口。公共 `input/ui_input_router.c` 统一管理触摸代次、UI 命令邮箱和设备维护长按；板级只提供按键采样及硬件准备。显示回调不执行网络操作，detach 后不再发出旧回调。显示板自动使用共享原生 LVGL 翻译界面，场景行为见[界面说明](PLATFORM_UI.zh-CN.md)。
+板级 panel 文件拥有面板及 DMA 缓冲，使用独立绘制／暂存区的 QSPI 局部刷新。LVGL adapter 协调刷新、触摸及共享 view 生命周期。共享 view 只通过 `ui/ui_port.h` 获取 Wi-Fi 状态、字幕和已准入的 UI 动作，不再直接调用网络、SDK 或板级按键内部接口。公共 `input/ui_input_router.c` 统一管理触摸代次、触摸事件移交和设备维护长按；参数命令先校验释放手势，再通过 SDK 非阻塞命令接口提交。板级只提供按键采样及硬件准备。显示回调不执行网络操作，detach 后不再发出旧回调。显示板自动使用共享原生 LVGL 翻译界面，场景行为见[界面说明](PLATFORM_UI.zh-CN.md)。
 
 CO5300 QSPI/CST9220 adapter 使用 480×480 方屏布局和内部 DMA 暂存。
 翻译启停只通过触摸屏；AI 键短按小于 3 秒无动作，
