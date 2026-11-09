@@ -1,7 +1,10 @@
 /* SPDX-License-Identifier: Apache-2.0 */
-#ifndef TEST_CAPTIONS_AOSL_MEMORY_H_
-#define TEST_CAPTIONS_AOSL_MEMORY_H_
+#ifndef MYBOT_HOST_AOSL_HAL_MEMORY_H
+#define MYBOT_HOST_AOSL_HAL_MEMORY_H
+
 #include <stddef.h>
+
 void *aosl_hal_malloc(size_t size);
 void aosl_hal_free(void *memory);
+
 #endif

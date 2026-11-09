@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 #ifndef MOSAICO_HOST_INPUT_H_
 #define MOSAICO_HOST_INPUT_H_
+#include "esp_err.h"
 #include <pthread.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -8,9 +9,6 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-typedef int esp_err_t;
-#define ESP_OK 0
-#define ESP_FAIL -1
 #define ESP_LOGI(...) ((void)0)
 #define ESP_LOGW(...) ((void)0)
 #define ESP_LOGE(...) ((void)0)

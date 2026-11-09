@@ -7,7 +7,8 @@ board_dir="$repo_root/components/mybot_platform/boards/esp-mosaico-v1.2"
 test_build_dir=$(mktemp -d)
 trap 'rm -r -- "$test_build_dir"' EXIT HUP INT TERM
 "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -fsanitize=undefined \
-    -I"$test_dir/init_mocks" -I"$board_dir" \
+    -I"$test_dir/init_mocks" -I"$repo_root/tests/host_support/include" \
+    -I"$board_dir" \
     -I"$repo_root/components/mybot_platform/src/internal" \
     -I"$repo_root/components/mybot_stack/mybot_sdk/mybot/include" \
     "$test_dir/test_init.c" "$board_dir/mosaico_usb_console.c" \

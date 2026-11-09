@@ -7,7 +7,7 @@ test_build_dir=$(mktemp -d /tmp/mybot-s31-audio.XXXXXX)
 trap 'rm -r -- "$test_build_dir"' EXIT HUP INT TERM
 "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -pthread -fsanitize=undefined \
  -D_POSIX_C_SOURCE=200809L -DCONFIG_MYBOT_DEBUG_RESOURCE_MONITOR=0 \
- -I"$test_dir/mocks" \
+ -I"$test_dir/mocks" -I"$repo_root/tests/host_support/include" \
  -I"$repo_root/components/mybot_platform/boards/esp-mosaico-v1.2" \
  -I"$repo_root/tests/pcm_playback_buffer/mocks" -I"$repo_root/tests/pcm_playback_buffer" \
  -I"$repo_root/components/mybot_platform/src/internal" \

@@ -13,7 +13,8 @@ esac
 "${CC:-cc}" -std=c99 -Wall -Wextra -Werror -Wno-unused-function \
     -fsanitize="${SANITIZERS:-undefined}" -fno-omit-frame-pointer \
     -ffunction-sections -fdata-sections "$strip_flag" \
-    -I"$test_dir/mocks" -I"$sdk_dir/src/internal" -I"$sdk_dir/include" \
+    -I"$test_dir/mocks" -I"$repo_dir/tests/host_support/include" \
+    -I"$sdk_dir/src/internal" -I"$sdk_dir/include" \
     -I"$repo_dir/components/mybot_stack/agora_rtc/include" \
     "$test_dir/test_rtc.c" -o "$test_binary"
 "$test_binary"
