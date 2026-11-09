@@ -138,7 +138,7 @@ int mybot_media_pipeline_end_session(mybot_media_pipeline_t *pipeline);
  */
 int mybot_media_pipeline_set_paused(mybot_media_pipeline_t *pipeline, bool paused);
 /** Close media admission, stop playback and fence workers even after RTC disconnects.
- * Meeting teardown uses this before RTC finalization. Retains paused/suspended state
+ * Session teardown uses this before RTC finalization. Retains paused/suspended state
  * on failure; end_session() retries playback cleanup and restores idle prompts. */
 int mybot_media_pipeline_quiesce(mybot_media_pipeline_t *pipeline);
 bool mybot_media_pipeline_is_paused(const mybot_media_pipeline_t *pipeline);

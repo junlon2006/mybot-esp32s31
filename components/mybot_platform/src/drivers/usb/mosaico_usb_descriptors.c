@@ -2,22 +2,22 @@
 #include "usb/mosaico_usb_descriptors.h"
 
 #include "esp_mac.h"
-#include "uac_descriptors.h"
+#include "mosaico_uac_descriptors.h"
 
 #include <stddef.h>
 #include <stdio.h>
 
 #define MOSAICO_USB_MAX_POWER_MA 500
 #define MYBOT_USB_CONFIGURATION_BYTES                                                              \
-    (TUD_CONFIG_DESC_LEN + TUD_AUDIO_DEVICE_DESC_LEN + TUD_CDC_DESC_LEN)
+    (TUD_CONFIG_DESC_LEN + CFG_TUD_AUDIO_FUNC_1_DESC_LEN + TUD_CDC_DESC_LEN)
 
 /* Audio endpoints keep the addresses verified by the standalone UAC test.
  * CDC adds independent endpoints and does not start another USB controller. */
 #define MYBOT_USB_CONFIGURATION(cdc_packet)                                                        \
     TUD_CONFIG_DESCRIPTOR(1, MYBOT_USB_ITF_COUNT, 0, MYBOT_USB_CONFIGURATION_BYTES, 0,             \
                           MOSAICO_USB_MAX_POWER_MA),                                               \
-        TUD_AUDIO_DESCRIPTOR(MYBOT_USB_ITF_AUDIO_CONTROL, 4, MYBOT_USB_EP_AUDIO_OUT,               \
-                             MYBOT_USB_EP_AUDIO_IN, MYBOT_USB_EP_AUDIO_FEEDBACK),                  \
+        MYBOT_MOSAICO_UAC_DESCRIPTOR(MYBOT_USB_ITF_AUDIO_CONTROL, 4, MYBOT_USB_EP_AUDIO_OUT,       \
+                                     MYBOT_USB_EP_AUDIO_IN, MYBOT_USB_EP_AUDIO_FEEDBACK),          \
         TUD_CDC_DESCRIPTOR(MYBOT_USB_ITF_CDC, 7, MYBOT_USB_EP_CDC_NOTIF, 8, MYBOT_USB_EP_CDC_OUT,  \
                            MYBOT_USB_EP_CDC_IN, cdc_packet)
 
@@ -36,6 +36,12 @@ _Static_assert(sizeof(s_high_speed) == MYBOT_USB_CONFIGURATION_BYTES,
 _Static_assert(CFG_TUD_AUDIO == 1 && CFG_TUD_CDC == 1,
                "Descriptors require one duplex UAC and one CDC function");
 _Static_assert(CFG_TUD_AUDIO_FUNC_1_N_AS_INT == 2, "Duplex UAC has two streaming interfaces");
+_Static_assert(TUD_AUDIO_DESC_MIC_FEATURE_UNIT_N_CHANNEL_LEN == 18,
+               "Fixed stereo graph omits one 18-byte microphone feature unit");
+_Static_assert(MYBOT_MOSAICO_UAC_CONTROL_DESC_LEN ==
+                   TUD_AUDIO_DESC_CLK_SRC_LEN + TUD_AUDIO_DESC_SPK_FEATURE_UNIT_N_CHANNEL_LEN +
+                       2 * (TUD_AUDIO_DESC_INPUT_TERM_LEN + TUD_AUDIO_DESC_OUTPUT_TERM_LEN),
+               "Audio control graph length mismatch");
 
 esp_err_t mybot_mosaico_usb_descriptors_configure(tinyusb_config_t *config) {
     if (!config)

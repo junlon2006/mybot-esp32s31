@@ -1192,3 +1192,63 @@ Direct Chinese build, size, merge-bin and S31 delivery checks pass in
 build/mosaico-v1.2: application 3,666,864 bytes and minimum OTA free space 461,904
 bytes. The recorded manifest marks that verification build as dirty=true.
 No device was flashed.
+
+## Review follow-up: stop device playback in every scene (2026-11-09)
+
+Session teardown now quiesces physical playback before RTC finalization in media,
+face-to-face and meeting scenes; meetings also quiesce USB independently. Device
+PCM is discarded before a slow RTC exit. The existing end-session recovery still
+retries an initial quiesce failure and retains resources only when cleanup remains
+incomplete. Capture and persisted volume remain independent.
+
+Eleven new application cases verify device-queue clearing and stop ordering in
+all scenes, independent output failures, immediate recovery and retained cleanup.
+The original callback fails these cases. Control tests pass 16 shutdown, 27 UI and
+nine caption cases, plus 26 face/meeting audio cases for each AEC setting. The 19 pipeline
+cases for each AEC setting, PCM playback and codec lifecycle suites pass. These
+are host results; no device was flashed.
+
+Chinese incremental build and source/link/OTA checks pass in build/mosaico-v1.2;
+the application has 461,936 free bytes in each OTA slot.
+
+## Review follow-up: drain stale PCM before RTC readiness (2026-11-09)
+
+RTC state callbacks now close both media routes and publish a connection epoch.
+The existing control tick drains the capture, reference and playback owners before
+restoring ready. Final publication shares the short UI admission gate with RTC
+state changes and validates the epoch, session, cancellation, stop, network and
+device-fault state. No gate is held while waiting for a media or RTC worker.
+Initial connection and reconnect use the same handoff; pause state is preserved.
+
+Application tests cover rapid state changes, events arriving during flush,
+cancel/stop/network/fault/exit rejection, failed drains, paused recovery, meeting
+duplex and epoch wrap. Control tests pass 16 shutdown, 27 UI and nine caption
+cases, plus 46 face/meeting cases for each AEC setting. Three additional real-pipeline cases
+verify 600 ms MIC/reference backlogs, partial playback, failed flush retry and
+pause preservation for physical and USB routes; 22 cases pass for each AEC
+setting. Omitting the barriers reproduces the old MIC sample. The existing 50
+RTC wrapper cases pass. Draining waits for already-submitted sends; it does not
+retract PCM already accepted by RTC or a device. No hardware result is claimed.
+
+Chinese incremental build and source/link/OTA checks pass in build/mosaico-v1.2;
+minimum free space is 461,504 bytes per OTA slot.
+
+## Review follow-up: remove unsupported microphone controls (2026-11-09)
+
+The production duplex graph now omits the unused microphone Feature Unit rather
+than advertising unsupported mute/volume controls. Its microphone output keeps
+the existing direct input-terminal link. AudioControl length is 93 bytes, audio
+function length is 227 and configuration length is 302; the host descriptors and
+TinyUSB parser use shared length constants. A project header retains the source
+UAC descriptor's complete MIT notice; the pinned package and diagnostic stay
+unchanged. Source attribution is recorded in VENDORED_SOURCES and third-party notices.
+
+Real-header FS/HS tests validate entity references, the remaining speaker controls,
+all three lengths and the CDC boundary. Byte comparisons with the pinned graph
+find only the removed 18-byte unit and updated totals. USB initialization fault
+tests pass; all nine audio/control groups pass, including rejection of requests
+for the absent microphone unit. All 88 build-tool tests pass. These host results
+do not replace macOS re-enumeration and duplex-audio hardware verification.
+
+Chinese incremental build and source/link/OTA checks pass in build/mosaico-v1.2;
+minimum free space is 461,536 bytes per OTA slot. No device was flashed.

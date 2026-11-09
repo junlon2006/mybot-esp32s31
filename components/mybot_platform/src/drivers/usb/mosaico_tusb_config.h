@@ -5,6 +5,12 @@
  * owns runtime state. One configuration reaches both USB layers and the board. */
 #include "tusb_config.h"
 #include "tusb_config_uac.h"
+#include "mosaico_uac_descriptors.h"
+
+/* TinyUSB parses the project-owned duplex graph, which omits the unused
+ * microphone feature unit from the pinned package's descriptor. */
+#undef CFG_TUD_AUDIO_FUNC_1_DESC_LEN
+#define CFG_TUD_AUDIO_FUNC_1_DESC_LEN MYBOT_MOSAICO_UAC_DESC_LEN
 
 #if !CONFIG_USB_DEVICE_UAC_AS_PART || !CONFIG_IDF_TARGET_ESP32S31
 #error "Mosaico USB requires S31 and UAC composite mode"

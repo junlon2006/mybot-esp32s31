@@ -580,13 +580,17 @@ static void test_each_session_releases_rtc_before_next_start(void) {
     active();
     strcpy(runtime.rtc_channel, "first-project-channel");
     strcpy(runtime.rtc_agent_uid[0], "first-project-agent");
+    runtime.rtc_media_state = 7; /* A previous RTC CONNECTED is waiting for the control tick. */
     dev_on_conversation_stop(&runtime);
     assert(rtc_finalizations == 1 && session_ends == 1);
+    assert(!runtime.rtc_media_state);
     assert(runtime.media_cancel_requested && !runtime.rtc_channel[0] &&
            !runtime.rtc_agent_uid[0][0]);
     assert(mybot_state_model_set_device_state(&runtime.state_model, MYBOT_DEVICE_STATE_RUNTIME));
+    runtime.rtc_media_state = 9; /* New starts must also clear any retained ready snapshot. */
     control_start_conversation(&runtime);
     assert(rtc_finalizations == 2 && conversation_starts == 1);
+    assert(!runtime.rtc_media_state);
     assert(!runtime.media_cancel_requested && !runtime.lifecycle.error_code[0]);
 
     active();

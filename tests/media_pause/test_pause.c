@@ -10,7 +10,17 @@
 #include <stdlib.h>
 #include <string.h>
 
-enum { CAPTURE_QUEUE = 1, PLAYBACK_QUEUE, SEND_QUEUE, QUEUE_COUNT };
+enum {
+    CAPTURE_QUEUE = 1,
+    PLAYBACK_QUEUE,
+    SEND_QUEUE,
+    USB_CAPTURE_QUEUE,
+    USB_PLAYBACK_QUEUE,
+    USB_SEND_QUEUE,
+    QUEUE_COUNT,
+    CONTROL_QUEUE = QUEUE_COUNT,
+    RTC_QUEUE,
+};
 enum { MAX_QUEUED = 32, MAX_DEVICE_FRAMES = MYBOT_MEDIA_FRAME_SAMPLES * 8 };
 
 typedef struct {
@@ -29,6 +39,7 @@ typedef struct {
 } worker_t;
 
 static mybot_media_pipeline_t pipeline;
+static mybot_media_pipeline_t meeting_usb;
 static mybot_platform_descriptor_t platform;
 static worker_t workers[QUEUE_COUNT];
 static queued_call_t queued[MAX_QUEUED];
@@ -43,11 +54,16 @@ static unsigned audio_errors, volume_inits, announce_inits;
 static bool fail_usb_start, fail_cap_stop, fail_codec_start, fail_cap_create;
 static unsigned usb_destroyed, codec_destroyed;
 static int16_t captured_sample, played[MAX_DEVICE_FRAMES], sent[MYBOT_MEDIA_FRAME_SAMPLES * 2];
+static int16_t usb_captured_sample, usb_sent[MYBOT_MEDIA_FRAME_SAMPLES * 2];
+static unsigned usb_sends;
 static unsigned played_frames, sends, capture_reads, playback_writes, pb_stops, cap_stops;
 static unsigned hardware_volume_sets, waited_ms, tests;
 static int capture_frames, write_limit, hardware_volume;
 static bool tick_during_fence;
 static unsigned fence_ticks;
+static bool disconnect_during_capture, check_reconnect_owner;
+static aosl_mpq_t fail_call_queue, reconnect_calls[6];
+static unsigned reconnect_call_count;
 static bool hold_remote_producer, producer_acquired, release_remote_producer;
 static pthread_mutex_t producer_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t producer_cond = PTHREAD_COND_INITIALIZER;
@@ -102,6 +118,11 @@ static int capture_read(void *context, void *buffer, int frames) {
         int16_t *samples = buffer;
         for (int i = 0; i < capture_frames; ++i)
             samples[i] = captured_sample;
+    }
+    if (disconnect_during_capture) {
+        disconnect_during_capture = false;
+        mybot_media_pipeline_set_rtc_connected(&pipeline, false);
+        mybot_media_pipeline_set_rtc_connected(&meeting_usb, false);
     }
     return capture_frames;
 }
@@ -218,7 +239,7 @@ static int usb_read(void *context, void *buffer, int frames) {
         return -1;
     int16_t *samples = buffer;
     for (int i = 0; i < frames; ++i)
-        samples[i] = 5678;
+        samples[i] = usb_captured_sample;
     return frames;
 }
 static int usb_stop(void *context) {
@@ -249,10 +270,16 @@ static const mybot_audio_volume_ops_t volume_ops = {volume_init, volume_set, vol
                                                     volume_destroy};
 
 static int send_audio(const void *data, size_t bytes, void *context) {
-    assert(context == &pipeline);
     assert(bytes == 960 * (MYBOT_CLOUD_AEC ? 2U : 1U) * sizeof(int16_t));
-    memcpy(sent, data, bytes);
-    sends++;
+    if (context == &meeting_usb) {
+        assert(current_queue == USB_SEND_QUEUE);
+        memcpy(usb_sent, data, bytes);
+        usb_sends++;
+    } else {
+        assert(context == &pipeline);
+        memcpy(sent, data, bytes);
+        sends++;
+    }
     return 0;
 }
 
@@ -353,8 +380,11 @@ static void tick(aosl_mpq_t queue) {
     assert(queue > 0 && queue < QUEUE_COUNT);
     if (!workers[queue].active)
         return;
+    aosl_mpq_t previous = current_queue;
+    current_queue = queue;
     uintptr_t argument = workers[queue].argument;
     workers[queue].callback((aosl_timer_t)queue, NULL, 1, &argument);
+    current_queue = previous;
 }
 
 int aosl_mpq_queue(aosl_mpq_t queue, aosl_mpq_t source, aosl_ref_t ref, const char *name,
@@ -387,6 +417,16 @@ int aosl_mpq_call(aosl_mpq_t queue, aosl_ref_t ref, const char *name, aosl_mpq_f
                   uintptr_t argc, ...) {
     (void)ref;
     (void)name;
+    if (check_reconnect_owner) {
+        /* RTC callbacks must not wait on a send worker which can synchronously
+         * call RTC. Only the control owner performs these consumer barriers. */
+        assert(current_queue == CONTROL_QUEUE && current_queue != RTC_QUEUE);
+        assert(!pipeline.rtc_connected && !meeting_usb.rtc_connected);
+        assert(reconnect_call_count < sizeof(reconnect_calls) / sizeof(reconnect_calls[0]));
+        reconnect_calls[reconnect_call_count++] = queue;
+        if (queue == fail_call_queue)
+            return -1;
+    }
     va_list args;
     va_start(args, argc);
     queued_call_t call = take_call(queue, callback, argc, args);
@@ -431,12 +471,18 @@ static void reset(void) {
     memset(&platform, 0, sizeof(platform));
     memset(workers, 0, sizeof(workers));
     memset(sent, 0, sizeof(sent));
+    memset(&meeting_usb, 0, sizeof(meeting_usb));
+    memset(usb_sent, 0, sizeof(usb_sent));
+    usb_sends = 0;
     queued_count = 0;
     current_queue = fail_queue = delay_queue = AOSL_MPQ_INVALID;
     next_queue = CAPTURE_QUEUE;
     fail_pb_stop = fail_pb_start = stop_during_wait = release_producer_during_wait = false;
     fail_destroy = tick_during_fence = false;
     hold_remote_producer = producer_acquired = release_remote_producer = false;
+    disconnect_during_capture = check_reconnect_owner = false;
+    fail_call_queue = AOSL_MPQ_INVALID;
+    reconnect_call_count = 0;
     cap_active = pb_active = usb_active = usb_pb_active = false;
     usb_disconnected = pause_usb_write = false;
     physical_playback_fault = pause_physical_write = stop_physical_write = false;
@@ -446,6 +492,7 @@ static void reset(void) {
     played_frames = sends = capture_reads = playback_writes = pb_stops = cap_stops = 0;
     hardware_volume_sets = waited_ms = fence_ticks = 0;
     captured_sample = 1234;
+    usb_captured_sample = 5678;
     hardware_volume = 45;
     capture_frames = write_limit = MYBOT_MEDIA_FRAME_SAMPLES;
     platform.audio_capture = &capture_ops;
@@ -467,24 +514,192 @@ static void finish(void) {
     assert(queued_count == 0);
 }
 
-static void push(int16_t value) {
+static void push_to(mybot_media_pipeline_t *target, int16_t value) {
     int16_t remote[MYBOT_MEDIA_FRAME_SAMPLES];
     for (unsigned i = 0; i < MYBOT_MEDIA_FRAME_SAMPLES; ++i)
         remote[i] = value;
-    mybot_media_pipeline_push_remote_audio(&pipeline, remote, sizeof(remote));
+    mybot_media_pipeline_push_remote_audio(target, remote, sizeof(remote));
+}
+
+static void push(int16_t value) {
+    push_to(&pipeline, value);
+}
+
+static void expect_samples(const int16_t *samples, int16_t mic, int16_t reference) {
+    for (unsigned i = 0; i < MYBOT_MEDIA_FRAME_SAMPLES; ++i) {
+#if MYBOT_CLOUD_AEC
+        assert(samples[i * 2] == mic);
+        assert(samples[i * 2 + 1] == reference);
+#else
+        (void)reference;
+        assert(samples[i] == mic);
+#endif
+    }
 }
 
 static void expect_sent(int16_t mic, int16_t reference) {
     assert(sends > 0);
-    for (unsigned i = 0; i < MYBOT_MEDIA_FRAME_SAMPLES; ++i) {
-#if MYBOT_CLOUD_AEC
-        assert(sent[i * 2] == mic);
-        assert(sent[i * 2 + 1] == reference);
-#else
-        (void)reference;
-        assert(sent[i] == mic);
-#endif
+    expect_samples(sent, mic, reference);
+}
+
+static void start_meeting_pair(void) {
+    reset();
+    mybot_media_pipeline_init(&meeting_usb);
+    mybot_media_pipeline_callbacks_t callbacks = {.send_audio = send_audio,
+                                                  .user_data = &meeting_usb};
+    assert(mybot_media_pipeline_start_usb(&meeting_usb, &callbacks) == 0);
+    mybot_media_pipeline_set_rtc_connected(&meeting_usb, true);
+    assert(meeting_usb.cap_mpq == USB_CAPTURE_QUEUE && meeting_usb.pb_mpq == USB_PLAYBACK_QUEUE &&
+           meeting_usb.send_mpq == USB_SEND_QUEUE);
+}
+
+static void finish_meeting_pair(void) {
+    assert(mybot_media_pipeline_stop(&meeting_usb) == 0);
+    assert(mybot_media_pipeline_destroy(&meeting_usb) == 0);
+    finish();
+}
+
+static void seed_reconnect_backlogs(void) {
+    captured_sample = 999;
+    usb_captured_sample = 888;
+    for (unsigned frame = 0; frame < 10; ++frame) {
+        tick(CAPTURE_QUEUE);
+        tick(USB_CAPTURE_QUEUE);
     }
+    /* Keep both unplayed RTC PCM and a partially admitted playback block.
+     * Physical playback also supplies an old, incomplete AEC reference. */
+    write_limit = 240;
+    push(2500);
+    tick(PLAYBACK_QUEUE);
+    push(3500);
+    push_to(&meeting_usb, 4500);
+    tick(USB_PLAYBACK_QUEUE);
+    push_to(&meeting_usb, 5500);
+    assert(pipeline.pb_pending_frames == 720 && meeting_usb.pb_pending_frames == 720);
+    assert(mybot_ringbuf_get_data_size(pipeline.cap_ringbuf) == 10 * MYBOT_MEDIA_FRAME_BYTES);
+    assert(mybot_ringbuf_get_data_size(meeting_usb.cap_ringbuf) == 10 * MYBOT_MEDIA_FRAME_BYTES);
+    disconnect_during_capture = true;
+    tick(CAPTURE_QUEUE); /* The read started before ready closed; its result must be discarded. */
+    assert(!disconnect_during_capture && !pipeline.rtc_connected && !meeting_usb.rtc_connected);
+    assert(mybot_ringbuf_get_data_size(pipeline.cap_ringbuf) == 10 * MYBOT_MEDIA_FRAME_BYTES);
+    write_limit = MYBOT_MEDIA_FRAME_SAMPLES;
+}
+
+static int recover_meeting_from_control(void) {
+    aosl_mpq_t previous = current_queue;
+    current_queue = CONTROL_QUEUE;
+    reconnect_call_count = 0;
+    check_reconnect_owner = true;
+    int physical = mybot_media_pipeline_flush_session(&pipeline);
+    int usb = mybot_media_pipeline_flush_session(&meeting_usb);
+    check_reconnect_owner = false;
+    assert(reconnect_call_count == 6);
+    for (unsigned i = 0; i < reconnect_call_count; ++i)
+        assert(reconnect_calls[i] == (aosl_mpq_t)(i + 1));
+    if (physical == 0 && usb == 0) {
+        mybot_media_pipeline_set_rtc_connected(&pipeline, true);
+        mybot_media_pipeline_set_rtc_connected(&meeting_usb, true);
+    }
+    current_queue = previous;
+    return physical < 0 || usb < 0 ? -1 : 0;
+}
+
+static void expect_session_queues_empty(mybot_media_pipeline_t *target) {
+    assert(!mybot_ringbuf_get_data_size(target->cap_ringbuf));
+    assert(!mybot_ringbuf_get_data_size(target->pb_ringbuf));
+    assert(!target->pb_pending_frames && !target->pb_pending_offset);
+#if MYBOT_CLOUD_AEC
+    if (target->ref_ringbuf)
+        assert(!mybot_ringbuf_get_data_size(target->ref_ringbuf));
+#endif
+}
+
+static void send_fresh_meeting_audio(void) {
+    captured_sample = 1234;
+    usb_captured_sample = 8765;
+    push(6000);
+    tick(PLAYBACK_QUEUE);
+    push_to(&meeting_usb, 7000);
+    tick(USB_PLAYBACK_QUEUE);
+    tick(CAPTURE_QUEUE);
+    tick(USB_CAPTURE_QUEUE);
+    tick(SEND_QUEUE);
+    tick(USB_SEND_QUEUE);
+    assert(sends == 1 && usb_sends == 1);
+    expect_sent(1234, 6000);
+    expect_samples(usb_sent, 8765, 0);
+}
+
+static void test_reconnect_flushes_both_routes_before_ready(void) {
+    start_meeting_pair();
+    seed_reconnect_backlogs();
+    unsigned admitted_device_frames = played_frames;
+    assert(recover_meeting_from_control() == 0);
+    expect_session_queues_empty(&pipeline);
+    expect_session_queues_empty(&meeting_usb);
+    /* Session flush cannot retract PCM already accepted by a device or RTC. */
+    assert(played_frames == admitted_device_frames && !pb_stops && !cap_stops);
+    assert(!pipeline.paused && !meeting_usb.paused && !sends && !usb_sends);
+    send_fresh_meeting_audio();
+    finish_meeting_pair();
+    tests++;
+}
+
+static void test_reconnect_flush_failure_keeps_both_routes_closed(void) {
+    start_meeting_pair();
+    seed_reconnect_backlogs();
+    fail_call_queue = SEND_QUEUE;
+    assert(recover_meeting_from_control() < 0);
+    assert(!pipeline.rtc_connected && !meeting_usb.rtc_connected);
+    assert(mybot_ringbuf_get_data_size(pipeline.cap_ringbuf) == 10 * MYBOT_MEDIA_FRAME_BYTES);
+    expect_session_queues_empty(&meeting_usb); /* A failure never skips the other route. */
+    tick(SEND_QUEUE);
+    tick(USB_SEND_QUEUE);
+    assert(!sends && !usb_sends);
+    fail_call_queue = AOSL_MPQ_INVALID;
+    assert(recover_meeting_from_control() == 0);
+    expect_session_queues_empty(&pipeline);
+    expect_session_queues_empty(&meeting_usb);
+    send_fresh_meeting_audio();
+    finish_meeting_pair();
+    tests++;
+}
+
+static void test_reconnect_flush_preserves_user_pause(void) {
+    start_meeting_pair();
+    assert(mybot_media_pipeline_set_paused(&pipeline, true) == 0);
+    assert(mybot_media_pipeline_set_paused(&meeting_usb, true) == 0);
+    int16_t old[MYBOT_MEDIA_FRAME_SAMPLES];
+    for (unsigned i = 0; i < MYBOT_MEDIA_FRAME_SAMPLES; ++i)
+        old[i] = 9999;
+    mybot_media_pipeline_t *routes[] = {&pipeline, &meeting_usb};
+    for (unsigned i = 0; i < sizeof(routes) / sizeof(routes[0]); ++i) {
+        mybot_media_pipeline_t *target = routes[i];
+        /* Model publications admitted before pause/reconnect closed admission. */
+        assert(mybot_ringbuf_write(target->cap_ringbuf, (const char *)old, sizeof(old)) > 0);
+        assert(mybot_ringbuf_write(target->pb_ringbuf, (const char *)old, sizeof(old)) > 0);
+#if MYBOT_CLOUD_AEC
+        if (target->ref_ringbuf)
+            assert(mybot_ringbuf_write(target->ref_ringbuf, (const char *)old, sizeof(old)) > 0);
+#endif
+        target->pb_pending_frames = 240;
+        mybot_media_pipeline_set_rtc_connected(target, false);
+    }
+    assert(recover_meeting_from_control() == 0);
+    expect_session_queues_empty(&pipeline);
+    expect_session_queues_empty(&meeting_usb);
+    assert(pipeline.paused && meeting_usb.paused);
+    assert(pipeline.playback_suspended && meeting_usb.playback_suspended);
+    assert(!pb_active && !usb_pb_active && cap_active && usb_active);
+    tick(CAPTURE_QUEUE);
+    tick(USB_CAPTURE_QUEUE);
+    tick(SEND_QUEUE);
+    tick(USB_SEND_QUEUE);
+    assert(sends == 1 && usb_sends == 1);
+    expect_sent(0, 0);
+    expect_samples(usb_sent, 0, 0);
+    finish_meeting_pair();
+    tests++;
 }
 
 static void test_unchanged_audio(void) {
@@ -955,6 +1170,9 @@ static void test_physical_write_interrupted_by_pause_or_stop(void) {
 }
 
 int main(void) {
+    test_reconnect_flushes_both_routes_before_ready();
+    test_reconnect_flush_failure_keeps_both_routes_closed();
+    test_reconnect_flush_preserves_user_pause();
     test_physical_playback_fault_recovers_at_session_end();
     test_physical_playback_fault_recovery_retries();
     test_physical_capture_fault_reports_once_and_recovers();
