@@ -25,7 +25,7 @@ jobs:
       - name: Format check
         run: |
           find main diagnostics/mosaico_uac components/mybot_platform components/mybot_stack/aosl/s31_port tests/aosl_s31_tasks tests/host_support tests/mosaico_display tests/mosaico_hardware tests/mosaico_usb tests/mosaico_usb_audio \
-            tests/codec_audio tests/mosaico_input tests/platform_network tests/pcm_playback_buffer tests/media_pause \
+            tests/codec_audio tests/mosaico_input tests/platform_network tests/bootstrap_main tests/pcm_playback_buffer tests/media_pause \
             tests/conversation_http_trace tests/http_time_sync tests/translation_http tests/translation_ui tests/translation_client \
             tests/translation_lifecycle tests/translation_rtc tests/translation_control tests/translation_state tests/translation_volume tests/translation_captions tests/kv_store tests/storage_init tests/factory_reset \
             -path '*/mybot_stack/agora_rtc' -prune -o \
@@ -66,7 +66,7 @@ jobs:
       - name: SPDX check
         run: |
           find main diagnostics/mosaico_uac components/mybot_platform components/mybot_stack/aosl/s31_port tests/aosl_s31_tasks tests/host_support tests/mosaico_display tests/mosaico_hardware tests/mosaico_usb tests/mosaico_usb_audio \
-            tests/codec_audio tests/mosaico_input tests/platform_network tests/pcm_playback_buffer tests/media_pause \
+            tests/codec_audio tests/mosaico_input tests/platform_network tests/bootstrap_main tests/pcm_playback_buffer tests/media_pause \
             tests/conversation_http_trace tests/http_time_sync tests/translation_http tests/translation_ui tests/translation_client \
             tests/translation_lifecycle tests/translation_rtc tests/translation_control tests/translation_state tests/translation_volume tests/translation_captions tests/kv_store tests/storage_init tests/factory_reset \
             -path '*/mybot_stack/agora_rtc' -prune -o -type f \
@@ -88,8 +88,10 @@ jobs:
         run: sh tests/mosaico_hardware/run.sh
       - name: Mosaico codec audio lifecycle tests
         run: sh tests/codec_audio/run.sh
-      - name: Platform network bootstrap and SNTP lifecycle tests
-        run: sh tests/platform_network/run.sh
+      - name: Network and application bootstrap lifecycle tests
+        run: |
+          sh tests/platform_network/run.sh
+          sh tests/bootstrap_main/run.sh
       - name: Translation protocol, lifecycle and RTC ownership tests
         run: |
           sh tests/translation_http/run.sh

@@ -369,6 +369,18 @@ static void control_start_conversation(mybot_runtime_t *runtime) {
         aosl_atomic_inc(&runtime->conversation_generation);
         aosl_atomic_set(&runtime->media_cancel_requested, false);
         aosl_atomic_set(&runtime->ui_gate, 0);
+        /* A media worker can fail after preflight but before cancellation resets.
+         * Its sticky fault must reject this attempt even if that reset won. */
+        if (aosl_atomic_read(&runtime->media.capture_fault) ||
+            aosl_atomic_read(&runtime->media.playback_fault)) {
+            aosl_atomic_set(&runtime->media_cancel_requested, true);
+            runtime->media_recovery_required = true;
+            snprintf(runtime->lifecycle.error_code, sizeof(runtime->lifecycle.error_code),
+                     "MEDIA_NOT_READY");
+            refresh_translation_view(runtime);
+            mybot_presenter_render_state(&runtime->presenter, &runtime->state_model);
+            return;
+        }
         if (runtime->lifecycle.audio_source == MYBOT_AUDIO_SOURCE_USB &&
             start_usb_media(runtime) < 0) {
             snprintf(runtime->lifecycle.error_code, sizeof(runtime->lifecycle.error_code),

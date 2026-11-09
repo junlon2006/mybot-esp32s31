@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#define TEST_ATOMIC_READ_HOOK test_ui_atomic_read_hook
 #include "../../components/mybot_stack/mybot_sdk/mybot/src/core/mybot_app.c"
 
 #define runtime s_default_runtime
@@ -16,7 +17,7 @@ typedef struct {
 } notification_t;
 static notification_t notifications[32];
 static unsigned notification_count, language_sets, volume_sets, pause_sets, renders, tests;
-static unsigned conversation_starts, session_ends, rtc_finalizations, mode_sets;
+static unsigned conversation_starts, session_ends, rtc_finalizations, rtc_joins, mode_sets;
 static unsigned conversation_stops;
 static bool fail_queue, fail_volume, fail_pause, fail_end_session, fail_mode, paused;
 static int hardware_volume, rtc_fini_result;
@@ -27,6 +28,21 @@ static const mybot_audio_playback_ops_t usb_playback_ops = {0};
 static bool fail_capture_source;
 static unsigned capture_switches;
 static bool stop_during_caption_wait;
+enum { LATE_FAULT_NONE, LATE_FAULT_CAPTURE, LATE_FAULT_PLAYBACK };
+static unsigned late_audio_fault;
+
+void test_ui_atomic_read_hook(const aosl_atomic_t *value) {
+    if (!late_audio_fault || value != &runtime.media.playback_fault)
+        return;
+    unsigned fault = late_audio_fault;
+    late_audio_fault = LATE_FAULT_NONE;
+    /* Complete a worker error after both preflight fault reads observed zero,
+     * before control resets cancellation for its new start attempt. */
+    aosl_atomic_set(fault == LATE_FAULT_CAPTURE ? &runtime.media.capture_fault
+                                                : &runtime.media.playback_fault,
+                    true);
+    media_error(&runtime);
+}
 
 const mybot_platform_descriptor_t *mybot_platform_registry_get(void) {
     return &platform;
@@ -65,7 +81,9 @@ int mybot_agora_rtc_send_audio(mybot_translation_direction_t direction, const vo
     return 0;
 }
 void mybot_device_lifecycle_notify_conversation_ended(mybot_device_lifecycle_t *lifecycle) {
-    lifecycle->stop_request = true;
+    if (!aosl_atomic_read(&lifecycle->shutting_down) &&
+        aosl_atomic_read(&lifecycle->state) == MYBOT_DEVICE_STATE_IN_CONVERSATION)
+        lifecycle->stop_request = true;
 }
 void mybot_device_lifecycle_notify_credentials_expiring(mybot_device_lifecycle_t *lifecycle) {
     lifecycle->stop_request = true;
@@ -182,7 +200,7 @@ int mybot_agora_rtc_fini(void) {
     return rtc_fini_result;
 }
 int mybot_media_pipeline_flush_session(mybot_media_pipeline_t *pipeline) {
-    assert(pipeline == &runtime.media);
+    assert(pipeline == &runtime.media || (runtime.usb_media && pipeline == runtime.usb_media));
     return 0;
 }
 int mybot_agora_rtc_init(const char *app_id, const mybot_agora_rtc_callbacks_t *callbacks) {
@@ -191,7 +209,8 @@ int mybot_agora_rtc_init(const char *app_id, const mybot_agora_rtc_callbacks_t *
     return 0;
 }
 int mybot_agora_rtc_join(const mybot_device_translation_route_t *routes, size_t count) {
-    assert(routes && count == 1);
+    assert(routes && (count == 1 || count == 2));
+    rtc_joins++;
     return 0;
 }
 void mybot_device_lifecycle_request_start(mybot_device_lifecycle_t *lifecycle) {
@@ -225,15 +244,19 @@ int mybot_lcd_show_content(mybot_lcd_t *lcd, const mybot_lcd_content_t *content)
 static void reset(void) {
     free(runtime.usb_media);
     runtime.usb_media = NULL;
+    free(runtime.silent_audio);
+    runtime.silent_audio = NULL;
     memset(&runtime, 0, sizeof(runtime));
     memset(&platform, 0, sizeof(platform));
     fail_capture_source = false;
     capture_switches = 0;
     stop_during_caption_wait = false;
+    late_audio_fault = LATE_FAULT_NONE;
     memset(notifications, 0, sizeof(notifications));
     memset(&displayed, 0, sizeof(displayed));
     notification_count = language_sets = volume_sets = pause_sets = renders = 0;
-    conversation_starts = conversation_stops = session_ends = rtc_finalizations = mode_sets = 0;
+    conversation_starts = conversation_stops = session_ends = rtc_finalizations = rtc_joins =
+        mode_sets = 0;
     fail_queue = fail_volume = fail_pause = fail_end_session = fail_mode = paused = false;
     hardware_volume = 40;
     rtc_fini_result = 0;
@@ -246,6 +269,7 @@ static void reset(void) {
     assert(mybot_state_model_begin_services(&runtime.state_model));
     assert(mybot_state_model_services_ready(&runtime.state_model));
     assert(mybot_state_model_set_device_state(&runtime.state_model, MYBOT_DEVICE_STATE_RUNTIME));
+    runtime.lifecycle.state = MYBOT_DEVICE_STATE_RUNTIME;
     strcpy(runtime.lifecycle.source_language, "zh-CN");
     strcpy(runtime.lifecycle.target_language, "en-US");
 }
@@ -267,6 +291,7 @@ static mybot_ui_command_t languages(const char *source, const char *target) {
 static void active(void) {
     assert(mybot_state_model_set_device_state(&runtime.state_model,
                                               MYBOT_DEVICE_STATE_IN_CONVERSATION));
+    runtime.lifecycle.state = MYBOT_DEVICE_STATE_IN_CONVERSATION;
     runtime.media.rtc_connected = 1;
 }
 static void test_validation_and_language_table(void) {
@@ -494,6 +519,60 @@ static void test_idle_capture_fault_blocks_start_until_recovered(void) {
     assert(session_ends == 2 && conversation_starts == 1 && !runtime.media.capture_fault);
     assert(!runtime.media_recovery_required && !runtime.media_cancel_requested);
     tests++;
+}
+
+static void complete_requested_start(void) {
+    if (!runtime.lifecycle.conversation_requested)
+        return;
+    mybot_device_conversation_t conversation = {
+        .mode = runtime.lifecycle.mode,
+        .route_count = runtime.lifecycle.mode == MYBOT_TRANSLATION_LISTEN ? 1 : 2,
+    };
+    for (unsigned route = 0; route < conversation.route_count; ++route)
+        snprintf(conversation.routes[route].rtc_agent_uid,
+                 sizeof(conversation.routes[route].rtc_agent_uid), "test-agent-%u", route);
+    active();
+    dev_on_conversation_start(&conversation, &runtime);
+}
+
+static void test_late_physical_fault_blocks_start_until_recovered(void) {
+    static const struct {
+        mybot_translation_mode_t mode;
+        mybot_audio_source_t source;
+    } scenes[] = {
+        {MYBOT_TRANSLATION_LISTEN, MYBOT_AUDIO_SOURCE_CODEC},
+        {MYBOT_TRANSLATION_LISTEN_SPEAK, MYBOT_AUDIO_SOURCE_CODEC},
+        {MYBOT_TRANSLATION_LISTEN_SPEAK, MYBOT_AUDIO_SOURCE_USB},
+    };
+    for (unsigned scene = 0; scene < sizeof(scenes) / sizeof(scenes[0]); ++scene) {
+        for (unsigned fault = LATE_FAULT_CAPTURE; fault <= LATE_FAULT_PLAYBACK; ++fault) {
+            reset();
+            runtime.lifecycle.mode = scenes[scene].mode;
+            runtime.lifecycle.audio_source = scenes[scene].source;
+            platform.audio_usb_capture = &usb_ops;
+            platform.audio_usb_playback = &usb_playback_ops;
+            late_audio_fault = fault;
+            control_start_conversation(&runtime);
+            assert(!runtime.lifecycle.stop_request); /* An idle worker error cannot request STOP. */
+            complete_requested_start();
+            assert(late_audio_fault == LATE_FAULT_NONE);
+            assert(!conversation_starts && !rtc_joins && !runtime.lifecycle.conversation_requested);
+            assert(runtime.media_recovery_required && runtime.media_cancel_requested);
+            assert(!strcmp(displayed.error_code, "MEDIA_NOT_READY"));
+            assert(fault == LATE_FAULT_CAPTURE ? runtime.media.capture_fault
+                                               : runtime.media.playback_fault);
+
+            control_start_conversation(&runtime);
+            assert(session_ends == 1 && conversation_starts == 1);
+            assert(!runtime.media.capture_fault && !runtime.media.playback_fault);
+            assert(!runtime.media_recovery_required && !runtime.media_cancel_requested);
+            assert(!runtime.lifecycle.error_code[0]);
+            complete_requested_start();
+            assert(rtc_joins == 1);
+            tests++;
+        }
+    }
+    reset();
 }
 
 static void test_each_session_releases_rtc_before_next_start(void) {
@@ -863,6 +942,7 @@ int main(void) {
     test_media_recovery_before_cloud_start();
     test_idle_playback_fault_blocks_start_until_recovered();
     test_idle_capture_fault_blocks_start_until_recovered();
+    test_late_physical_fault_blocks_start_until_recovered();
     test_each_session_releases_rtc_before_next_start();
     test_rtc_cleanup_failure_blocks_cloud_start();
     test_rtc_cleanup_failure_preserves_real_error();

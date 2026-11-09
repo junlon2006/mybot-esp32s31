@@ -1168,3 +1168,27 @@ without skips. Tests execute the workflow's trust commands, exercise capture and
 finalize with clean and dirty inputs, preserve missing-repository diagnostics and
 confirm that other repositories remain untrusted. Whitespace checks pass. This
 fix changes CI and provenance tooling; another remote CI run is still required.
+
+## Startup cleanup and late media faults (2026-11-09)
+
+Failed mybot_start attempts now use the same bounded stop retry as normal exits.
+Incomplete cleanup returns from main before provisioning, network shutdown or
+SNTP teardown. The production-main host suite covers seven cleanup/provisioning
+scenarios; the previous startup-failure branch fails its resource-ownership check.
+CI runs the suite and includes its boundary mocks in formatting/SPDX checks.
+
+Translation startup now rechecks sticky capture/playback faults after cancellation
+resets. A late fault rejects the current attempt with MEDIA_NOT_READY, closes the
+media route and retains recovery for the next attempt. Six deterministic
+interleavings cover both faults in media, face-to-face and meeting modes, including
+successful recovery and subsequent RTC join. The previous implementation fails
+the new test; the corrected control suite passes 16 shutdown, 27 UI and nine caption
+cases, plus 15 face-audio cases for each cloud-AEC setting. Media pipeline tests pass 19
+cases for each AEC setting, lifecycle tests pass 36 cases, and all 88 build-tool
+tests pass. These are host results; real fault recovery and timing remain separate
+hardware checks.
+
+Direct Chinese build, size, merge-bin and S31 delivery checks pass in
+build/mosaico-v1.2: application 3,666,864 bytes and minimum OTA free space 461,904
+bytes. The recorded manifest marks that verification build as dirty=true.
+No device was flashed.
