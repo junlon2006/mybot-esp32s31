@@ -51,16 +51,17 @@ the board/language naming below.
 
 ## Delivery files
 
-Each language produces four files under the selected output root, for example:
+Each language produces five files under the selected output root, for example:
 
 ```text
 esp-mosaico-v1.2-zh-CN.bin
 esp-mosaico-v1.2-zh-CN.manifest.json
 esp-mosaico-v1.2-zh-CN.sha256
 esp-mosaico-v1.2-zh-CN.flash.txt
+esp-mosaico-v1.2-zh-CN.licenses.txt
 ```
 
-The manifest records project/IDF versions, build-bound source revision/dirty state, language, actual `aec_mode`, board/target, RTSA package/hash, artifact and merged-image hashes, segment offsets and OTA free space. It records build provenance, not hardware acceptance. Keep all four files together.
+The manifest records project/IDF versions, build-bound source revision/dirty state, language, actual `aec_mode`, board/target, RTSA package/hash, artifact and merged-image hashes, segment offsets and OTA free space. It records build provenance, not hardware acceptance. Keep all five files together. The `.licenses.txt` companion contains the third-party notices, project Apache-2.0 text and retained ESP-SR/ESP-DL/esp_new_jpeg package license texts; include it when distributing the image.
 
 Merged images are flashed at **0x0**. They include padding over NVS and OTA state; provisioning is required afterwards. For daily development use `idf.py --preview -B build/mosaico-v1.2 -p PORT flash` to preserve NVS. The runtime CDC port differs from its ROM download port; select the current port before running `idf.py --preview -B build/mosaico-v1.2 -p RUNTIME_PORT monitor`.
 
@@ -71,7 +72,7 @@ Chinese Local AEC, English Local AEC and Chinese Cloud AEC. Each calls
 `scripts/build_all.py --language LANGUAGE --aec-mode MODE` using the bundled pinned
 RTSA input, with isolated temporary build/configuration and output roots. Generated
 roots are cleaned only after an ownership-marker check; an unowned nonempty directory
-is rejected. Each job uploads the four delivery files in an artifact whose name includes
+is rejected. Each job uploads the five delivery files in an artifact whose name includes
 its AEC mode. The workflow uploads no original tgz, sdkconfig, link map or NVS data and creates no GitHub
 Release automatically.
 

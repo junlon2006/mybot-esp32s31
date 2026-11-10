@@ -46,16 +46,17 @@ python3 scripts/check_s31_build.py --build-dir build/mosaico-v1.2 \
 
 ## 交付文件
 
-每种语言在所选输出目录中对应四个文件，例如：
+每种语言在所选输出目录中对应五个文件，例如：
 
 ```text
 esp-mosaico-v1.2-zh-CN.bin
 esp-mosaico-v1.2-zh-CN.manifest.json
 esp-mosaico-v1.2-zh-CN.sha256
 esp-mosaico-v1.2-zh-CN.flash.txt
+esp-mosaico-v1.2-zh-CN.licenses.txt
 ```
 
-manifest 记录项目／IDF 版本、绑定构建的源码版本及 dirty 状态、语言、实际 `aec_mode`、板型／target、RTSA 包／hash、构建与合并镜像 hash、段偏移和 OTA 余量。它表示构建来源，不代表真机验收。交付时保留四个文件。
+manifest 记录项目／IDF 版本、绑定构建的源码版本及 dirty 状态、语言、实际 `aec_mode`、板型／target、RTSA 包／hash、构建与合并镜像 hash、段偏移和 OTA 余量。它表示构建来源，不代表真机验收。交付时保留五个文件。`.licenses.txt` 包含第三方声明、项目 Apache-2.0 全文及保留的 ESP-SR／ESP-DL／esp_new_jpeg 包许可证原文；分发固件时同时提供该文件。
 
 合并镜像烧录地址为 **0x0**，padding 覆盖 NVS／OTA 状态，需要重新配网。日常用 `idf.py --preview -B build/mosaico-v1.2 -p PORT flash` 保留 NVS。运行时 CDC 与 ROM 下载端口不同；随后选择当前端口执行 `idf.py --preview -B build/mosaico-v1.2 -p RUNTIME_PORT monitor`。
 
@@ -64,7 +65,7 @@ manifest 记录项目／IDF 版本、绑定构建的源码版本及 dirty 状态
 push/PR 执行源码检查、host 测试，并构建三个固件组合：中文 Local AEC、英文 Local AEC、
 中文 Cloud AEC。各 job 通过 `scripts/build_all.py --language LANGUAGE --aec-mode MODE`
 使用随工程的固定 RTSA，并使用临时独立构建／配置和输出根目录。生成目录只有在所有权
-标记校验通过后才会清理，非空且无标记的目录会被拒绝。各 job 上传上述四项交付文件，
+标记校验通过后才会清理，非空且无标记的目录会被拒绝。各 job 上传上述五项交付文件，
 artifact 名称包含 AEC 模式。不上传原 tgz、sdkconfig、link map 或 NVS，不自动创建 GitHub Release。
 
 本地验证与远端执行分开记录。远端 CI 需实际运行后才可标为通过，当前状态见[验证记录](s31-validation.md)。

@@ -7,6 +7,7 @@ components/lvgl/** -text -whitespace
 components/esp-wifi-connect/** -text -whitespace
 components/mybot_platform/boards/esp32-s31-korvo-1/reference/** -text -whitespace
 components/mybot_stack/agora_rtc/** -text -whitespace
+licenses/*.LICENSE -text -whitespace
 
 *.a binary
 *.bin binary

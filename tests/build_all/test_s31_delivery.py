@@ -511,7 +511,45 @@ class S31DeliveryTests(unittest.TestCase):
         self.assertEqual({p.name for p in self.root.iterdir()}, {
             "build", self.merged.name, self.merged.with_suffix(".manifest.json").name,
             self.merged.with_suffix(".sha256").name, self.merged.with_suffix(".flash.txt").name,
+            self.merged.with_suffix(".licenses.txt").name,
         })
+
+    def test_delivery_keeps_complete_original_license_and_notice_bytes(self) -> None:
+        checker.package(self.build, self.merged, "zh-CN")
+        payload = self.merged.with_suffix(".licenses.txt").read_bytes()
+        for name in ("THIRD_PARTY_NOTICES.md", "LICENSE", "licenses/esp-sr-2.6.0.LICENSE",
+                     "licenses/esp-dl-3.3.15.LICENSE", "licenses/esp_new_jpeg-1.0.2.LICENSE"):
+            with self.subTest(name=name):
+                original = (ROOT / name).read_bytes()
+                self.assertIn(name.encode(), payload)
+                self.assertIn(original, payload)
+        self.assertIn(b"Permission is hereby granted for use on all ESPRESSIF SYSTEMS products", payload)
+        self.assertIn(b"Apache License", payload)
+        self.assertIn(b"Copyright (c) 2021 Espressif Systems", payload)
+
+    def test_license_output_symlink_is_rejected_without_writing_sidecars(self) -> None:
+        target = self.root / "preserve.txt"
+        target.write_bytes(b"preserve")
+        self.merged.with_suffix(".licenses.txt").symlink_to(target)
+        with self.assertRaisesRegex(RuntimeError, "symlink output"):
+            checker.package(self.build, self.merged, "zh-CN")
+        self.assertEqual(target.read_bytes(), b"preserve")
+        for suffix in (".manifest.json", ".sha256", ".flash.txt"):
+            self.assertFalse(self.merged.with_suffix(suffix).exists())
+
+    def test_missing_license_fails_before_writing_delivery_sidecars(self) -> None:
+        read_bytes = Path.read_bytes
+
+        def missing_license(path):
+            if path == ROOT / "licenses/esp-sr-2.6.0.LICENSE":
+                raise FileNotFoundError(path)
+            return read_bytes(path)
+
+        with mock.patch.object(Path, "read_bytes", missing_license):
+            with self.assertRaises(FileNotFoundError):
+                checker.package(self.build, self.merged, "zh-CN")
+        for suffix in (".manifest.json", ".sha256", ".flash.txt", ".licenses.txt"):
+            self.assertFalse(self.merged.with_suffix(suffix).exists())
 
     def test_packaging_uses_frozen_build_source_without_querying_checkout(self) -> None:
         # Packaging may happen after a checkout change. Only the completed
@@ -834,7 +872,7 @@ class WorkflowDeliveryTests(unittest.TestCase):
         self.assertNotIn("scripts/check_s31_build.py --build-dir", build_job)
         self.assertIn("python3 scripts/build_all.py", build_job)
         upload = workflow.split("      - name: Upload firmware", 1)[1]
-        for suffix in (".bin", ".manifest.json", ".sha256", ".flash.txt"):
+        for suffix in (".bin", ".manifest.json", ".sha256", ".flash.txt", ".licenses.txt"):
             self.assertIn(
                 'releases/esp-mosaico-v1.2-${{ matrix.language }}' + suffix,
                 upload,

@@ -1444,3 +1444,28 @@ space 672,752 bytes. Local has the required helper and S31 ESP-SR implementation
 application 4,042,480 bytes, minimum OTA free space 610,576 bytes. The final saved
 configuration and merged firmware are English Local AEC; the generated manifest
 records local mode and the pinned S31 ESP-SR archive. No device was flashed.
+
+## Local AEC provenance and maintenance contract (2026-11-10)
+
+The actual managed packages and manifests were inspected: ESP-SR 2.6.0, ESP-DL
+3.3.15, dl_fft 0.8.0 and esp_new_jpeg 1.0.2. Source provenance now records upstream
+commits and both live ESP-SR S31 archive hashes, with resolved registry content
+hashes remaining in dependencies.lock. The live map selects ESP-SR's S31 audio
+processor and support archive plus source-built dl_fft. ESP-DL/fbs_model and
+esp_new_jpeg have no nonzero live code sections in the validated Local image;
+their managed presence does not enable a video/JPEG runtime.
+
+The ESP-SR and esp_new_jpeg package licenses are ESPRESSIF MIT with an Espressif
+product-use condition; ESP-DL supplies ordinary MIT. dl_fft's manifest declares MIT,
+but its package omits a root LICENSE and retains explicit Apache-2.0 FFT source
+notices. Three package LICENSE files are retained byte for byte, and delivery now
+includes a .licenses.txt companion with third-party notices and the retained full
+license texts. Documentation distinguishes default cleaned mono Local AEC from
+optional interleaved Cloud AEC, and synchronous capture-owner resets from deferred
+read processing. These documentation/build results add no acoustic hardware claim.
+
+All 103 builder/delivery/provenance tests pass without skips, including exact
+license-text preservation, missing-license failure before sidecar writes and
+symlink rejection. The CI upload contract includes the license companion. License
+copies match the generated packages byte for byte; their original whitespace and
+line endings are preserved. Documentation links and whitespace checks pass.

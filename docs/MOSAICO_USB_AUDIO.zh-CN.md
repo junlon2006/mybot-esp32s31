@@ -47,7 +47,8 @@ Mosaico V1.2 固件采用固定的 USB 2.0 总线供电策略：FS/HS 配置描�
 
 ## 音频与资源边界
 
-- USB 保持 48 kHz stereo S16，SDK、Codec 和 RTSA 保持 16 kHz mono S16、60 ms。
+- USB 保持 48 kHz stereo S16，SDK 的平台 PCM 契约保持 16 kHz mono S16，RTSA 保持
+  60 ms 节奏；ES8311 总线仍为 16 kHz、两个 16-bit 时隙。
   电脑输入经过低通滤波和 3:1 降采样；返回电脑的译音经过插值滤波和 1:3 升采样。
 - 物理音频管线负责麦克风采集和 LISTEN 译音播放。默认端侧 AEC 使用 ES8311 同采样时钟
   返回的麦克风/DAC 参考，消除板载扬声器译音回采；USB 管线负责电脑输入和 SPEAK 译音

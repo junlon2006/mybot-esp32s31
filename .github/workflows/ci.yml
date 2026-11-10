@@ -128,7 +128,7 @@ jobs:
           cat >> "$GITHUB_STEP_SUMMARY" <<'SUMMARY'
           Source formatting, SPDX and host lifecycle tests run on every push and pull request.
           Chinese and English Local AEC firmware and Chinese Cloud AEC firmware build using the pinned bundled RTSA library.
-          Artifacts identify their AEC mode and contain the merged image, checksums, manifest and flash instructions. These checks do not run on hardware.
+          Artifacts identify their AEC mode and contain the merged image, checksums, manifest, flash instructions and dependency license texts. These checks do not run on hardware.
           SUMMARY
 
   idf-build:
@@ -183,3 +183,4 @@ jobs:
             releases/esp-mosaico-v1.2-${{ matrix.language }}.manifest.json
             releases/esp-mosaico-v1.2-${{ matrix.language }}.sha256
             releases/esp-mosaico-v1.2-${{ matrix.language }}.flash.txt
+            releases/esp-mosaico-v1.2-${{ matrix.language }}.licenses.txt

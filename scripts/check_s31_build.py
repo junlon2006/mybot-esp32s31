@@ -454,9 +454,16 @@ def package(build_dir: Path, merged: Path, language: str, aec_mode: str = "local
     manifest = merged.with_suffix(".manifest.json")
     checksum = merged.with_suffix(".sha256")
     instructions = merged.with_suffix(".flash.txt")
-    for destination in (manifest, checksum, instructions):
+    licenses = merged.with_suffix(".licenses.txt")
+    for destination in (manifest, checksum, instructions, licenses):
         if destination.is_symlink():
             raise RuntimeError(f"refusing symlink output: {destination}")
+    project_root = Path(__file__).resolve().parent.parent
+    license_text = b"".join(
+        f"===== {name} =====\n".encode("utf-8") + (project_root / name).read_bytes() + b"\n"
+        for name in ("THIRD_PARTY_NOTICES.md", "LICENSE", "licenses/esp-sr-2.6.0.LICENSE",
+                     "licenses/esp-dl-3.3.15.LICENSE", "licenses/esp_new_jpeg-1.0.2.LICENSE")
+    )
     manifest.write_text(
         json.dumps(metadata, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
@@ -470,6 +477,7 @@ def package(build_dir: Path, merged: Path, language: str, aec_mode: str = "local
         'Full-image flashing may reset stored Wi-Fi, pairing and volume settings.\n'
         'Individual source offsets and hashes are recorded in the manifest.\n', encoding="utf-8",
     )
+    licenses.write_bytes(license_text)
     return metadata
 
 
