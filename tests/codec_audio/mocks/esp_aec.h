@@ -36,8 +36,7 @@ typedef struct {
 } aec_handle_t;
 
 aec_handle_t *aec_create_from_config(aec_config_t *config);
-void aec_process(const aec_handle_t *handle, int16_t *indata, int16_t *refdata,
-                 int16_t *outdata);
+void aec_process(const aec_handle_t *handle, int16_t *indata, int16_t *refdata, int16_t *outdata);
 aec_nlp_level_t aec_set_nlp_level(const aec_handle_t *handle, aec_nlp_level_t level);
 int aec_get_chunksize(const aec_handle_t *handle);
 char *aec_get_mode_string(aec_mode_t mode);
