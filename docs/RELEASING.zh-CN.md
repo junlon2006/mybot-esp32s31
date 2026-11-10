@@ -56,7 +56,7 @@ esp-mosaico-v1.2-zh-CN.flash.txt
 esp-mosaico-v1.2-zh-CN.licenses.txt
 ```
 
-manifest 记录项目／IDF 版本、绑定构建的源码版本及 dirty 状态、语言、实际 `aec_mode`、板型／target、RTSA 包／hash、构建与合并镜像 hash、段偏移和 OTA 余量。它表示构建来源，不代表真机验收。交付时保留五个文件。`.licenses.txt` 包含第三方声明、项目 Apache-2.0 全文及保留的 ESP-SR／ESP-DL／esp_new_jpeg 包许可证原文；分发固件时同时提供该文件。
+manifest 记录项目／IDF 版本、绑定构建的源码版本及 dirty 状态、语言、实际 `aec_mode`、板型／target、RTSA 包／hash、构建与合并镜像 hash、段偏移和 OTA 余量。它表示构建来源，不代表真机验收。交付时保留五个文件。`.licenses.txt` 包含第三方声明、项目 Apache-2.0 全文、保留的 ESP-SR／ESP-DL／esp_new_jpeg 包许可证原文及字体的完整 SIL OFL 1.1；分发固件时同时提供该文件。
 
 合并镜像烧录地址为 **0x0**，padding 覆盖 NVS／OTA 状态，需要重新配网。日常用 `idf.py --preview -B build/mosaico-v1.2 -p PORT flash` 保留 NVS。运行时 CDC 与 ROM 下载端口不同；随后选择当前端口执行 `idf.py --preview -B build/mosaico-v1.2 -p RUNTIME_PORT monitor`。
 

@@ -1469,3 +1469,62 @@ license-text preservation, missing-license failure before sidecar writes and
 symlink rejection. The CI upload contract includes the license companion. License
 copies match the generated packages byte for byte; their original whitespace and
 line endings are preserved. Documentation links and whitespace checks pass.
+
+## Korean captions and illustrated user guides (2026-11-10)
+
+The pinned Noto Sans SC input already contains modern Korean glyphs; no new font
+input or license is imported. A separate 20 px fallback adds all 11,172 modern
+Hangul syllables plus Jamo, compatibility Jamo and assigned halfwidth Hangul
+(11,574 glyphs). The existing 28 px Latin font falls back through the original
+20 px Chinese/Japanese font to Korean. Each bitmap stays below the compact
+1 MiB index limit. Total bitmaps/descriptors/maps are 1,823,385 bytes within the
+new 2 MiB caption budget. Original Chinese/Japanese/English bitmaps, metrics,
+unicode maps and rendered pixels remain unchanged.
+
+All 22,771 glyphs pass native LVGL decoding with A8 stride 1/8, four-level alpha,
+output guards and generation-time pixel SHA-256 comparison. Public LVGL fallback
+lookups resolve Korean through both 20 px and 28 px entry points. Bilingual UI
+navigation and font checks pass. These host results do not establish real-device
+Korean display acceptance.
+
+OTA slots expand from 0x470000 to 0x500000 bytes each, the minimum 64 KiB-aligned
+increase for this font while retaining the 300 KiB delivery reserve. ota_0 stays
+at 0x20000, ota_1 moves to 0x520000, and the unused assets partition occupies
+0xa20000 through 0x1000000 (0x5e0000 bytes). NVS, OTA-state and PHY offsets/sizes
+remain unchanged. Install using idf.py flash with the new partition table and OTA
+initialization; an application-only update cannot change the partition layout.
+
+The Chinese and English PDF guides now have six pages, including an exterior
+illustration based on the user's confirmed device orientation: the orange AI
+button at the top right and the white POWER button to the right of bottom USB-C
+when facing the display. No PCB/schematic image is used. A separate table explains
+3-second Wi-Fi setup and 10-second factory reset. As clarified by the user,
+factory reset clears the local pairing credentials and removes device binding;
+Wi-Fi setup and web pairing are required again, while firmware is retained.
+Both guides state that caption fonts
+currently support only Chinese, Japanese, Korean and English. UI figures are
+rendered from the production LVGL view with demonstration state, not photographed
+hardware acceptance results.
+
+The generated bitmap arrays use explicit-length binary byte strings and compact
+six-field LVGL descriptor initializers to reduce formatting/compile token count.
+S31 GCC 15 in gnu23 mode requires the supported nonstring attribute when a binary
+array deliberately omits a text terminator; the generator now applies it through
+__has_attribute without disabling warnings or adding bytes. A direct compile
+with the production S31 command passes, as do the unchanged bitmap/pixel checks.
+Delivery also includes the fonts' full SIL OFL 1.1 in the license companion.
+
+Direct ESP-IDF v6.1 builds, RISC-V/link/AEC/partition checks and merged delivery
+checks pass for both languages in build/mosaico-v1.2. Chinese application:
+4,809,152 bytes, minimum OTA reserve 433,728 bytes. English application:
+4,890,080 bytes, minimum OTA reserve 352,800 bytes; both exceed 300 KiB. The saved
+configuration and active application are English Local AEC. The map includes the
+Korean fallback and each delivery includes the font's full OFL text. These are
+uncommitted-source builds identified as dirty in their manifests; no device was
+flashed. A production-LVGL headless view also displays the Korean sample sentence
+without missing-glyph boxes; actual panel acceptance remains for device testing.
+
+The final exterior illustration has seven evenly spaced upper openings and seven
+lower openings centered on USB-C, as requested by the user. PDFKit parses and
+renders both six-page manuals; text extraction checks the explicit button times,
+four-language coverage and the corrected factory-reset unbinding instructions.

@@ -36,6 +36,8 @@ and current limitations.
 - A shared bounded PCM playback buffer with independent capture/playback and reference-counted codec ownership.
 - ES8311 standard I2S stereo with MCLK256; the Mosaico adapter converts to/from SDK mono PCM.
 - A native 480×480 LVGL layout for the CO5300 QSPI display and CST9220 touch.
+- Caption fonts cover Chinese, Japanese, Korean and English. Other selectable translation
+  languages do not imply complete subtitle glyph support.
 - Native media and face-to-face controls for languages, start/stop, local pause and actual volume.
   Touch is the only translation start/stop input. Face-to-face shares one parent session, two RTC connections
   and one RTM channel subscription. Mosaico meetings translate PC English to the device speaker in Chinese while translating the device microphone to English on the PC USB input.
@@ -134,6 +136,7 @@ quality, panel behavior, power sequencing, Wi-Fi recovery, or long-duration resu
 
 ## Documentation
 
+- Device user guide (PDF): [English](docs/MOSAICO_USER_GUIDE.en-US.pdf) | [简体中文](docs/MOSAICO_USER_GUIDE.zh-CN.pdf)
 - [Board guide](docs/esp-mosaico-v1.2.zh-CN.md)
 - [Translation and flashing](docs/LISTEN_TRANSLATION.zh-CN.md)
 - [Validation record](docs/s31-validation.md)

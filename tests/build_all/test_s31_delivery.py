@@ -518,7 +518,8 @@ class S31DeliveryTests(unittest.TestCase):
         checker.package(self.build, self.merged, "zh-CN")
         payload = self.merged.with_suffix(".licenses.txt").read_bytes()
         for name in ("THIRD_PARTY_NOTICES.md", "LICENSE", "licenses/esp-sr-2.6.0.LICENSE",
-                     "licenses/esp-dl-3.3.15.LICENSE", "licenses/esp_new_jpeg-1.0.2.LICENSE"):
+                     "licenses/esp-dl-3.3.15.LICENSE", "licenses/esp_new_jpeg-1.0.2.LICENSE",
+                     "components/mybot_platform/src/drivers/display/assets/licenses/LVGL_VIEW_FONT_LICENSE.txt"):
             with self.subTest(name=name):
                 original = (ROOT / name).read_bytes()
                 self.assertIn(name.encode(), payload)
@@ -526,6 +527,7 @@ class S31DeliveryTests(unittest.TestCase):
         self.assertIn(b"Permission is hereby granted for use on all ESPRESSIF SYSTEMS products", payload)
         self.assertIn(b"Apache License", payload)
         self.assertIn(b"Copyright (c) 2021 Espressif Systems", payload)
+        self.assertIn(b"SIL OPEN FONT LICENSE Version 1.1", payload)
 
     def test_license_output_symlink_is_rejected_without_writing_sidecars(self) -> None:
         target = self.root / "preserve.txt"

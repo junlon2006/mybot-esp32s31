@@ -32,6 +32,7 @@ Mosaico 会议互译将电脑原声的译音送往设备喇叭，并通过 USB �
 - 共享有界 PCM 播放缓冲；采集/播放独立挂载，共享引用计数的 codec/I2S 资源。
 - Mosaico 使用 ES8311 标准 I2S stereo 和 MCLK256；板级完成 SDK mono PCM 转换。
 - 480×480 CO5300 QSPI 屏和 CST9220 触摸使用方屏 LVGL 布局。
+- 字幕字库目前仅支持中文、日语、韩语和英语；其他可选翻译语种不代表具备完整字幕字形。
 - 原生媒体与面对面界面支持语言选择、启停、本地暂停和实际音量；翻译启停只使用触摸屏。
   面对面共用一个父会话、两个 RTC 连接和一个 RTM 频道订阅；Mosaico 会议场景支持电脑英语译中文到设备喇叭，同时将设备麦克风中文译英文回传电脑。
 - 提供中英文配对码与 Wi-Fi 配网提示，并在配网页面显示实际热点名称。
@@ -117,6 +118,7 @@ Wi-Fi 恢复或长稳表现。
 
 ## 文档
 
+- 设备操作手册（PDF）：[简体中文](docs/MOSAICO_USER_GUIDE.zh-CN.pdf) | [English](docs/MOSAICO_USER_GUIDE.en-US.pdf)
 - [板卡说明](docs/esp-mosaico-v1.2.zh-CN.md)
 - [独立听译与烧录](docs/LISTEN_TRANSLATION.zh-CN.md)
 - [验证记录](docs/s31-validation.md)
