@@ -47,6 +47,8 @@ class S31DeliveryTests(unittest.TestCase):
             '# CONFIG_CODEC_ES8389_SUPPORT is not set\n'
             'CONFIG_MYBOT_LVGL_UI=y\nCONFIG_MYBOT_AUDIO_PTIME_60=y\nCONFIG_MYBOT_AUDIO_PTIME_MS=60\n'
             'CONFIG_MYBOT_LANGUAGE_TAG="zh-CN"\n# CONFIG_MYBOT_ENABLE_VIDEO is not set\n'
+            'CONFIG_MYBOT_LOCAL_AEC=y\n# CONFIG_MYBOT_CLOUD_AEC is not set\n'
+            '# CONFIG_MYBOT_AEC_DISABLED is not set\n'
         )
         (self.build / "sdkconfig").write_text(self.config)
         header = bytearray(52)
@@ -56,7 +58,19 @@ class S31DeliveryTests(unittest.TestCase):
         self.map_text = 'libagora-rtc-sdk.a(rtm.c.obj)\n' + ''.join(
             f'{symbol}  esp-idf/aosl/libaosl.a(port.c.obj)\n' for symbol in checker.AOSL_SYMBOLS
         )
+        self.local_aec_live = "".join(
+            f" .text.{symbol}\n                0x{0x40010000 + index * 0x100:08x}       0x40 {owner}\n"
+            f"                0x{0x40010000 + index * 0x100:08x}                {symbol}\n"
+            for index, (symbol, owner) in enumerate((
+                ("mosaico_local_aec_create", "esp-idf/mybot_platform/libmybot_platform.a(mosaico_local_aec.c.obj)"),
+                ("mosaico_local_aec_feed", "esp-idf/mybot_platform/libmybot_platform.a(mosaico_local_aec.c.obj)"),
+                ("aec_create_from_config", "/project/managed_components/espressif__esp-sr/lib/esp32s31/libesp_audio_processor.a(esp_aec.c.obj)"),
+                ("aec_process", "/project/managed_components/espressif__esp-sr/lib/esp32s31/libesp_audio_processor.a(esp_aec.c.obj)"),
+            ))
+        )
+        self.map_text += "Linker script and memory map\n" + self.local_aec_live
         (self.build / "mybot_esp32s31.map").write_text(self.map_text)
+        self.write_aec_commands("local")
         (self.build / "bootloader").mkdir()
         (self.build / "bootloader/bootloader.bin").write_bytes(b"bootloader-data")
         (self.build / "partition_table").mkdir()
@@ -87,6 +101,32 @@ class S31DeliveryTests(unittest.TestCase):
 
     def write_description(self) -> None:
         (self.build / "project_description.json").write_text(json.dumps(self.description))
+
+    def write_aec_commands(self, mode: str) -> None:
+        self.aec_commands = []
+        sources = [f"components/mybot_platform/src/drivers/audio/{name}" for name in
+                   ("codec_audio.c", "mosaico_codec_audio.c", "mosaico_local_aec.c")]
+        sources += [f"components/mybot_stack/mybot_sdk/mybot/src/{source}" for source in
+                    ("media/mybot_media_pipeline.c", "core/mybot_app.c", "service/mybot_device_client.c",
+                     "rtc/mybot_agora_rtc.c")]
+        for source in sources:
+            name = Path(source).name
+            macros = f"-DMYBOT_CLOUD_AEC={int(mode == 'cloud')}"
+            if not name.startswith("mybot_"):
+                macros += f" -DMYBOT_LOCAL_AEC={int(mode == 'local')}"
+            self.aec_commands.append({"file": f"/project/{source}", "command": f"cc {macros} -c {source}"})
+        (self.build / "compile_commands.json").write_text(json.dumps(self.aec_commands))
+
+    def select_aec_mode(self, mode: str) -> None:
+        text = re.sub(r"^(?:CONFIG_MYBOT_(?:LOCAL_AEC|CLOUD_AEC|AEC_DISABLED)=.*|"
+                      r"# CONFIG_MYBOT_(?:LOCAL_AEC|CLOUD_AEC|AEC_DISABLED) is not set)\n", "",
+                      self.config, flags=re.MULTILINE)
+        symbol = {"local": "LOCAL_AEC", "cloud": "CLOUD_AEC", "disabled": "AEC_DISABLED"}[mode]
+        (self.build / "sdkconfig").write_text(text + f"CONFIG_MYBOT_{symbol}=y\n")
+        self.write_aec_commands(mode)
+        (self.build / "mybot_esp32s31.map").write_text(
+            self.map_text if mode == "local" else self.map_text.replace(self.local_aec_live, ""))
+        self.refresh_provenance()
 
     def write_flash(self) -> None:
         (self.build / "flasher_args.json").write_text(json.dumps(self.flash))
@@ -161,7 +201,6 @@ class S31DeliveryTests(unittest.TestCase):
         (self.build / "sdkconfig").write_text(
             self.config + "CONFIG_USB_DEVICE_UAC_AS_PART=y\n"
         )
-        (self.build / "compile_commands.json").write_text("[]")
         self.usb_link_flags = (
             "-Wl,--gc-sections,--wrap=dcd_edpt_xfer,--wrap=dcd_event_handler"
             ",--wrap=usbd_edpt_xfer_fifo"
@@ -198,8 +237,8 @@ class S31DeliveryTests(unittest.TestCase):
             "  TARGET_FILE = application.elf\n\n"
         )
         (self.build / "mybot_esp32s31.map").write_text(
-            self.map_text + self.usb_discarded + "Linker script and memory map\n" +
-            live + self.usb_cross_reference
+            self.map_text.split("Linker script and memory map\n", 1)[0] + self.usb_discarded +
+            "Linker script and memory map\n" + self.local_aec_live + live + self.usb_cross_reference
         )
 
     def test_mosaico_uac_requires_link_flags_and_live_wrappers(self) -> None:
@@ -209,7 +248,7 @@ class S31DeliveryTests(unittest.TestCase):
 
     def test_mosaico_uac_rejects_compiling_vendor_runtime(self) -> None:
         self.enable_mosaico_uac()
-        (self.build / "compile_commands.json").write_text(json.dumps([
+        (self.build / "compile_commands.json").write_text(json.dumps(self.aec_commands + [
             {"file": "/project/managed_components/espressif__usb_device_uac/usb_device_uac.c",
              "command": "cc -c usb_device_uac.c"},
         ]))
@@ -233,7 +272,7 @@ class S31DeliveryTests(unittest.TestCase):
 
     def test_mosaico_uac_allows_header_component_and_discarded_vendor_records(self) -> None:
         self.enable_mosaico_uac()
-        (self.build / "compile_commands.json").write_text(json.dumps([
+        (self.build / "compile_commands.json").write_text(json.dumps(self.aec_commands + [
             {"file": "/project/components/mybot_platform/src/drivers/usb/mosaico_usb_audio.c",
              "command": "cc -I/project/managed_components/espressif__usb_device_uac/include -c source.c"},
         ]))
@@ -299,6 +338,150 @@ class S31DeliveryTests(unittest.TestCase):
                                             "--language", "zh-CN"]), contextlib.redirect_stdout(output):
             self.assertEqual(checker.main(), 0)
         self.assertIn("Validated esp-mosaico-v1.2 zh-CN", output.getvalue())
+
+    def test_aec_modes_match_config_compile_link_and_manifest(self) -> None:
+        for mode in ("local", "cloud", "disabled"):
+            with self.subTest(mode=mode):
+                self.select_aec_mode(mode)
+                metadata = checker.package(self.build, self.merged, "zh-CN", mode)
+                self.assertEqual(metadata["aec_mode"], mode)
+                self.assertIn(f"AEC: {mode}", self.merged.with_suffix(".flash.txt").read_text())
+                if mode == "local":
+                    self.assertEqual(metadata["local_aec"], {
+                        "component": "espressif/esp-sr", "version": "2.6.0",
+                        "archive": "lib/esp32s31/libesp_audio_processor.a",
+                    })
+                else:
+                    self.assertNotIn("local_aec", metadata)
+
+    def test_aec_choice_requires_one_enabled_mode_and_matches_request(self) -> None:
+        for text in (self.config.replace("CONFIG_MYBOT_LOCAL_AEC=y", "# CONFIG_MYBOT_LOCAL_AEC is not set"),
+                     self.config + "CONFIG_MYBOT_CLOUD_AEC=y\n",
+                     self.config + "CONFIG_MYBOT_AEC_DISABLED=y\n"):
+            with self.subTest(config=text):
+                (self.build / "sdkconfig").write_text(text)
+                with self.assertRaisesRegex(RuntimeError, "exactly one AEC mode"):
+                    checker.verify_build(self.build, "zh-CN")
+        self.select_aec_mode("cloud")
+        with self.assertRaisesRegex(RuntimeError, "expected local.*got cloud"):
+            checker.verify_build(self.build, "zh-CN")
+
+    def test_aec_compiler_macros_reject_missing_wrong_conflicting_and_undefined_values(self) -> None:
+        for source in range(len(self.aec_commands)):
+            original = self.aec_commands[source]["command"]
+            for old, replacement in (("-DMYBOT_CLOUD_AEC=0", ""),
+                                     ("-DMYBOT_CLOUD_AEC=0", "-DMYBOT_CLOUD_AEC=1"),
+                                     ("-DMYBOT_CLOUD_AEC=0", "-DMYBOT_CLOUD_AEC=2"),
+                                     ("-DMYBOT_CLOUD_AEC=0", "-DMYBOT_CLOUD_AEC=0 -DMYBOT_CLOUD_AEC=1"),
+                                     ("-DMYBOT_CLOUD_AEC=0", "-DMYBOT_CLOUD_AEC=0 -UMYBOT_CLOUD_AEC")):
+                with self.subTest(source=source, replacement=replacement):
+                    self.aec_commands[source]["command"] = original.replace(old, replacement)
+                    (self.build / "compile_commands.json").write_text(json.dumps(self.aec_commands))
+                    with self.assertRaisesRegex(RuntimeError, "MYBOT_CLOUD_AEC"):
+                        checker.verify_build(self.build, "zh-CN")
+            self.aec_commands[source]["command"] = original
+        original = self.aec_commands[0]["command"]
+        for replacement in ("", "-DMYBOT_LOCAL_AEC=0", "-DMYBOT_LOCAL_AEC=true"):
+            self.aec_commands[0]["command"] = original.replace("-DMYBOT_LOCAL_AEC=1", replacement)
+            (self.build / "compile_commands.json").write_text(json.dumps(self.aec_commands))
+            with self.assertRaisesRegex(RuntimeError, "MYBOT_LOCAL_AEC"):
+                checker.verify_build(self.build, "zh-CN")
+
+    def test_aec_compile_arguments_take_precedence_and_allow_split_defines(self) -> None:
+        for command in self.aec_commands:
+            command["arguments"] = shlex.split(command["command"].replace("-D", "-D "))
+        (self.build / "compile_commands.json").write_text(json.dumps(self.aec_commands))
+        checker.verify_build(self.build, "zh-CN")
+        self.aec_commands[0]["arguments"].append("-UMYBOT_LOCAL_AEC")
+        (self.build / "compile_commands.json").write_text(json.dumps(self.aec_commands))
+        with self.assertRaisesRegex(RuntimeError, "MYBOT_LOCAL_AEC"):
+            checker.verify_build(self.build, "zh-CN")
+
+    def test_aec_compile_sources_must_include_actual_platform_and_sdk_units(self) -> None:
+        for index in range(len(self.aec_commands)):
+            with self.subTest(index=index):
+                commands = self.aec_commands[:index] + self.aec_commands[index + 1:]
+                commands.append({"file": "/other/" + Path(self.aec_commands[index]["file"]).name,
+                                 "command": self.aec_commands[index]["command"]})
+                (self.build / "compile_commands.json").write_text(json.dumps(commands))
+                with self.assertRaisesRegex(RuntimeError, "missing AEC compile command"):
+                    checker.verify_build(self.build, "zh-CN")
+
+    def test_local_aec_requires_live_nonzero_owned_functions(self) -> None:
+        live_symbol = "                0x40010300                aec_process\n"
+        variants = (
+            self.map_text.replace(live_symbol, ""),
+            self.map_text.replace(live_symbol, live_symbol.replace("0x40010300", "0x00000000")),
+            self.map_text.replace("0x40010300       0x40", "0x40010300       0x0"),
+            self.map_text.replace(live_symbol, live_symbol.replace("0x40010300", "0x40010400")),
+            self.map_text.replace("lib/esp32s31/", "lib/esp32s3/"),
+            self.map_text.replace("lib/esp32s31/", "lib/esp32p4/"),
+            self.map_text.replace("libmybot_platform.a(mosaico_local_aec.c.obj)", "other.a(fake.obj)"),
+        )
+        for text in variants:
+            with self.subTest(map=text[-250:]):
+                (self.build / "mybot_esp32s31.map").write_text(text)
+                with self.assertRaisesRegex(RuntimeError, "local AEC.*live|local AEC.*origin"):
+                    checker.verify_build(self.build, "zh-CN")
+        for symbol in ("mosaico_local_aec_create", "mosaico_local_aec_feed", "aec_create_from_config", "aec_process"):
+            with self.subTest(missing=symbol):
+                text = re.sub(rf"^[ \t]+0x[0-9a-fA-F]+[ \t]+{symbol}\n", "", self.map_text, flags=re.MULTILINE)
+                (self.build / "mybot_esp32s31.map").write_text(text)
+                with self.assertRaisesRegex(RuntimeError, "local AEC.*live"):
+                    checker.verify_build(self.build, "zh-CN")
+
+    def test_local_aec_load_discarded_and_cross_reference_records_are_not_live(self) -> None:
+        prefix = self.map_text.split("Linker script and memory map\n", 1)[0]
+        for text in (
+            prefix + "Discarded input sections\n" + self.local_aec_live + "Linker script and memory map\n",
+            prefix + "Linker script and memory map\nCross Reference Table\n" + self.local_aec_live,
+            prefix + "Linker script and memory map\nLOAD /project/managed_components/espressif__esp-sr/"
+            "lib/esp32s31/libesp_audio_processor.a\n",
+        ):
+            with self.subTest(map=text[-100:]):
+                (self.build / "mybot_esp32s31.map").write_text(text)
+                with self.assertRaisesRegex(RuntimeError, "local AEC.*live"):
+                    checker.verify_build(self.build, "zh-CN")
+
+    def test_other_aec_modes_reject_live_local_symbols_but_allow_discarded_and_load(self) -> None:
+        for mode in ("cloud", "disabled"):
+            self.select_aec_mode(mode)
+            base = self.map_text.replace(self.local_aec_live, "")
+            discarded = (base.split("Linker script and memory map\n", 1)[0] +
+                         "Discarded input sections\n" + self.local_aec_live +
+                         "Linker script and memory map\nLOAD /project/managed_components/espressif__esp-sr/"
+                         "lib/esp32s31/libesp_audio_processor.a\nCross Reference Table\n" + self.local_aec_live)
+            (self.build / "mybot_esp32s31.map").write_text(discarded)
+            checker.verify_build(self.build, "zh-CN", mode)
+            for symbol in ("mosaico_local_aec_feed", "aec_process", "aec_destroy"):
+                with self.subTest(mode=mode, symbol=symbol):
+                    (self.build / "mybot_esp32s31.map").write_text(
+                        base + f"                0x40012340                {symbol}\n")
+                    with self.assertRaisesRegex(RuntimeError, "must not link live local AEC"):
+                        checker.verify_build(self.build, "zh-CN", mode)
+            for owner in ("libmybot_platform.a(mosaico_local_aec.c.obj)",
+                          "libesp_audio_processor.a(esp_aec.c.obj)"):
+                with self.subTest(mode=mode, owner=owner):
+                    (self.build / "mybot_esp32s31.map").write_text(
+                        base + f" .text.internal_function 0x40012340 0x40 {owner}\n")
+                    with self.assertRaisesRegex(RuntimeError, "must not link live local AEC object"):
+                        checker.verify_build(self.build, "zh-CN", mode)
+
+    def test_vendor_only_rejects_aec_mode_argument(self) -> None:
+        with mock.patch.object(sys, "argv", ["check_s31_build.py", "--vendor-only", "--aec-mode", "cloud"]), \
+                contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit) as caught:
+                checker.main()
+        self.assertEqual(caught.exception.code, 2)
+
+    def test_aec_cli_rejects_stale_mode_and_accepts_explicit_cloud(self) -> None:
+        self.select_aec_mode("cloud")
+        args = ["check_s31_build.py", "--build-dir", str(self.build), "--language", "zh-CN"]
+        with mock.patch.object(sys, "argv", args):
+            with self.assertRaisesRegex(RuntimeError, "expected local.*got cloud"):
+                checker.main()
+        with mock.patch.object(sys, "argv", args + ["--aec-mode", "cloud"]), contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(checker.main(), 0)
 
     def test_delivery_has_exact_offsets_hashes_versions_and_no_vendor_inputs(self) -> None:
         metadata = checker.package(self.build, self.merged, "zh-CN")
@@ -619,16 +802,18 @@ class WorkflowDeliveryTests(unittest.TestCase):
         workflow = (ROOT / ".github/workflows/ci.yml").read_text()
         build_job = workflow.split("  idf-build:", 1)[1]
         matrix = build_job.split("      matrix:\n", 1)[1].split("    steps:\n", 1)[0]
-        self.assertIn("language: [zh-CN, en-US]", matrix)
+        self.assertEqual(re.findall(r"- language: (\S+)\s+aec_mode: (\S+)", matrix),
+                         [("zh-CN", "local"), ("en-US", "local"), ("zh-CN", "cloud")])
         self.assertNotIn("-DMYBOT_BOARD", build_job)
         self.assertIn(
             'python3 scripts/build_all.py --language "${{ matrix.language }}"',
             build_job,
         )
+        self.assertIn('--aec-mode "${{ matrix.aec_mode }}"', build_job)
         self.assertIn('--build-root "$RUNNER_TEMP/mybot-build"', build_job)
         self.assertIn('--output-root "$GITHUB_WORKSPACE/releases"', build_job)
         self.assertIn(
-            'mybot-esp-mosaico-v1.2-${{ matrix.language }}-ptime60-no-video-',
+            'mybot-esp-mosaico-v1.2-${{ matrix.language }}-aec-${{ matrix.aec_mode }}-ptime60-no-video-',
             build_job,
         )
         descriptor_step = build_job.split(

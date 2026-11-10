@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Local AEC mode: clean the physical microphone with the ES8311 DAC reference.
+CONFIG_MYBOT_LOCAL_AEC=y
+# CONFIG_MYBOT_CLOUD_AEC is not set
+# CONFIG_MYBOT_AEC_DISABLED is not set

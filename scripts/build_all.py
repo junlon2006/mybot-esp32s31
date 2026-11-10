@@ -206,13 +206,14 @@ def build_variant(
     build_root: Path,
     output_root: Path,
     dry_run: bool,
+    aec_mode: str = "local",
 ) -> Path:
     started_at = time.perf_counter()
     name = f"{DEFAULT_BOARD}-{language}"
     build_dir = build_root / f"build-{name}"
     sdkconfig = build_dir / "sdkconfig"
     output_path = output_root / f"{name}.bin"
-    defaults = ["sdkconfig.defaults", "ci/ptime60.defaults"]
+    defaults = ["sdkconfig.defaults", "ci/ptime60.defaults", f"ci/{aec_mode}-aec.defaults"]
     if language == "en-US":
         defaults.append("ci/en-us.defaults")
     defaults_value = ";".join(defaults)
@@ -223,7 +224,7 @@ def build_variant(
         f"-DSDKCONFIG={sdkconfig}",
         f"-DSDKCONFIG_DEFAULTS={defaults_value}",
     ]
-    print(f"\nBuilding {name} (60 ms audio)")
+    print(f"\nBuilding {name} (60 ms audio, {aec_mode} AEC)")
     try:
         run(idf, [*base_args, "reconfigure"], dry_run)
         run(idf, [*base_args, "build"], dry_run)
@@ -233,6 +234,7 @@ def build_variant(
         command = [
             sys.executable, str(PROJECT_ROOT / "scripts/check_s31_build.py"),
             "--build-dir", str(build_dir), "--language", language,
+            "--aec-mode", aec_mode,
             "--merged", str(output_path),
         ]
         print(">>>", shlex.join(command))
@@ -248,6 +250,10 @@ def build_variant(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--aec-mode", choices=("local", "cloud", "disabled"), default="local",
+        help="firmware AEC mode (default: local)",
+    )
     parser.add_argument(
         "--language",
         choices=("zh-CN", "en-US", "both"),
@@ -288,7 +294,7 @@ def main() -> int:
     batch_started_at = time.perf_counter()
     try:
         for language in languages:
-            outputs.append(build_variant(idf, language, build_root, output_root, args.dry_run))
+            outputs.append(build_variant(idf, language, build_root, output_root, args.dry_run, args.aec_mode))
     finally:
         print(f"\nTotal elapsed: {format_elapsed(time.perf_counter() - batch_started_at)}")
 

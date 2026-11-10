@@ -59,14 +59,7 @@ Mosaico 会议互译将电脑原声的译音送往设备喇叭，并通过 USB �
 test "$(idf.py --preview --version)" = "ESP-IDF v6.1"
 ```
 
-使用与 CI 相同的入口生成中英文交付固件：
-
-```sh
-python3 scripts/build_all.py --build-root build/delivery --output-root releases/delivery
-```
-
-CI 按语言调用同一脚本，并使用临时独立构建／交付根目录。脚本统一执行 reconfigure、build、
-size、merge-bin、构建来源和交付校验。单板日常增量开发继续使用 `build/mosaico-v1.2`：
+所有本地固件构建均使用 `build/mosaico-v1.2` 及其中的 `sdkconfig`：
 
 ```sh
 idf.py --preview -B build/mosaico-v1.2 \
@@ -75,7 +68,14 @@ idf.py --preview -B build/mosaico-v1.2 \
   -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;ci/ptime60.defaults" build
 ```
 
-[交付文档](docs/RELEASING.zh-CN.md)说明脚本的独立根目录、构建来源和交付文件。
+新配置默认 Local AEC；已有 `sdkconfig` 会保留原选择，新的 defaults 不会把旧 Cloud AEC
+配置切到 Local。更换模式前，先执行 `idf.py --preview -B build/mosaico-v1.2 menuconfig`，
+在 `mybot` 的 Echo cancellation 中选择，再重新编译。
+
+CI 使用 `scripts/build_all.py --language LANGUAGE --aec-mode MODE`，配合临时独立构建／
+交付根目录。AEC 模式支持 `local`（默认）、`cloud` 及诊断用 `disabled`。脚本统一执行
+reconfigure、build、size、merge-bin、构建来源和交付校验。[交付文档](docs/RELEASING.zh-CN.md)
+说明如何从固定本地目录打包，并在 manifest 中记录实际 `aec_mode`。
 直接烧录命令和板级硬件信息见
 [板卡说明](docs/esp-mosaico-v1.2.zh-CN.md)。
 
@@ -111,7 +111,7 @@ Mosaico 翻译固件通过 Type-C 提供 UAC2 声卡与 CDC 日志串口。会�
 ## 验证
 
 构建覆盖、已记录的真机结果和未支持能力统一维护在[验证记录](docs/s31-validation.md)。
-本地开发构建中文固件；CI 覆盖中英文并验证链接和交付元数据。记录分别列出本地构建、
+本地开发构建中文固件；CI 构建中英文 Local AEC 及中文 Cloud AEC，并验证链接和交付元数据。记录分别列出本地构建、
 远端 CI 和真机结果。CI 构建和宿主测试不能证明音质、屏幕行为、上电时序、
 Wi-Fi 恢复或长稳表现。
 

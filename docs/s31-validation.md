@@ -1417,3 +1417,30 @@ build/mosaico-v1.2 context while retaining the user's English UI. Direct en-US
 build and source/link/OTA checks pass: application 4,042,480 bytes and minimum
 OTA free space 610,576 bytes. Compile commands confirm Local=1/Cloud=0; live
 aec_create_from_config and aec_process symbols come from the ESP32-S31 archive.
+
+## AEC delivery-mode verification (2026-11-10)
+
+The builder and delivery checker accept an explicit local/cloud/disabled AEC mode,
+defaulting to local. Validation requires exactly one Kconfig choice, matching
+Local/Cloud macros in the seven relevant production compile commands and live
+local AEC code only in local mode. Local symbols must occupy nonempty sections
+at nonzero addresses inside the platform helper or S31 ESP-SR archive. LOAD,
+discarded sections and cross references do not establish active code. The
+manifest and flash instructions record the validated AEC mode; local metadata
+identifies the pinned ESP-SR 2.6.0 archive.
+
+All 100 builder/delivery/provenance host tests pass with Python 3.11 and Apple Git
+2.50.1, without skips. Negative cases cover absent/multiple choices, wrong modes,
+missing/conflicting/undefined macros, invalid symbol ranges, wrong target/archive
+origins and active local code in nonlocal builds. CI now has three jobs: Chinese
+Local, English Local and Chinese Cloud, with mode-specific artifact names.
+Workflow/defaults/shell checks and whitespace checks pass. Remote CI execution
+still requires its own result; no device was flashed.
+
+Direct English Cloud and Local builds and delivery checks pass sequentially in
+build/mosaico-v1.2, using the ESP-IDF configuration server to switch modes.
+Cloud has no live local AEC code: application 3,980,304 bytes, minimum OTA free
+space 672,752 bytes. Local has the required helper and S31 ESP-SR implementations:
+application 4,042,480 bytes, minimum OTA free space 610,576 bytes. The final saved
+configuration and merged firmware are English Local AEC; the generated manifest
+records local mode and the pinned S31 ESP-SR archive. No device was flashed.

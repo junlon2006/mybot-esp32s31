@@ -45,6 +45,15 @@ AOSL_SYMBOLS = ("aosl_malloc_impl", "aosl_mpq_create", "aosl_hal_thread_create",
 USB_WRAPPED_SYMBOLS = ("dcd_edpt_xfer", "dcd_event_handler", "usbd_edpt_xfer_fifo")
 FLASH_SIZE_BYTES = 16 * 1024 * 1024
 MIN_OTA_FREE_BYTES = 300 * 1024
+AEC_CONFIGS = {"local": "CONFIG_MYBOT_LOCAL_AEC", "cloud": "CONFIG_MYBOT_CLOUD_AEC",
+               "disabled": "CONFIG_MYBOT_AEC_DISABLED"}
+AEC_PLATFORM_SOURCES = tuple(f"components/mybot_platform/src/drivers/audio/{name}" for name in
+                             ("codec_audio.c", "mosaico_codec_audio.c", "mosaico_local_aec.c"))
+AEC_SDK_SOURCES = tuple(f"components/mybot_stack/mybot_sdk/mybot/src/{name}" for name in
+                        ("core/mybot_app.c", "media/mybot_media_pipeline.c",
+                         "rtc/mybot_agora_rtc.c", "service/mybot_device_client.c"))
+LOCAL_AEC_METADATA = {"component": "espressif/esp-sr", "version": "2.6.0",
+                      "archive": "lib/esp32s31/libesp_audio_processor.a"}
 
 
 def parse_partition_table(data: bytes, table_offset: int) -> list[dict]:
@@ -225,7 +234,93 @@ def verify_usb_wrappers(build_dir: Path, app_elf: str, map_text: str) -> None:
             raise RuntimeError(f"Mosaico UAC wrapper __wrap_{symbol} must have a nonzero live map symbol")
 
 
-def verify_build(build_dir: Path, language: str) -> dict:
+def verify_aec(build_dir: Path, config: dict, map_text: str, expected_mode: str) -> str:
+    enabled = [mode for mode, symbol in AEC_CONFIGS.items() if config.get(symbol) == "y"]
+    if len(enabled) != 1:
+        raise RuntimeError("firmware must select exactly one AEC mode")
+    mode = enabled[0]
+    if mode != expected_mode:
+        raise RuntimeError(f"AEC mode mismatch: expected {expected_mode}, got {mode}")
+
+    commands = json.loads(build_file(build_dir, "compile_commands.json").read_text())
+    if not isinstance(commands, list):
+        raise RuntimeError("invalid AEC compile commands")
+    found = set()
+    for command in commands:
+        if not isinstance(command, dict) or not isinstance(command.get("file"), str):
+            raise RuntimeError("invalid AEC compile command")
+        source = next((source for source in AEC_PLATFORM_SOURCES + AEC_SDK_SOURCES
+                       if command["file"] == source or command["file"].endswith("/" + source)), None)
+        if source is None:
+            continue
+        found.add(source)
+        arguments = command.get("arguments")
+        if arguments is None:
+            arguments = shlex.split(command.get("command", ""))
+        if not isinstance(arguments, list) or any(not isinstance(arg, str) for arg in arguments):
+            raise RuntimeError(f"invalid AEC compile arguments: {source}")
+        flags = []
+        index = 0
+        while index < len(arguments):
+            arg = arguments[index]
+            if arg in ("-D", "-U") and index + 1 < len(arguments):
+                index += 1
+                arg += arguments[index]
+            flags.append(arg)
+            index += 1
+        macros = {"MYBOT_CLOUD_AEC": int(mode == "cloud")}
+        if source in AEC_PLATFORM_SOURCES:
+            macros["MYBOT_LOCAL_AEC"] = int(mode == "local")
+        for macro, value in macros.items():
+            definitions = [flag for flag in flags if
+                           re.fullmatch(rf"-[DU]{macro}(?:=.*)?", flag)]
+            if not definitions or any(flag != f"-D{macro}={value}" for flag in definitions):
+                raise RuntimeError(f"{source} must compile with {macro}={value} without overrides")
+    for source in AEC_PLATFORM_SOURCES + AEC_SDK_SOURCES:
+        if source not in found:
+            raise RuntimeError(f"missing AEC compile command: {source}")
+
+    live_map = live_memory_map(map_text)
+    if mode != "local":
+        for match in re.finditer(r"^[ \t]+0x([0-9a-fA-F]+)[ \t]+"
+                                 r"((?:mosaico_local_aec_|aec_)\w+)[ \t]*$", live_map, re.MULTILINE):
+            if int(match[1], 16):
+                raise RuntimeError(f"{mode} AEC must not link live local AEC symbol {match[2]}")
+        for match in re.finditer(r"^[ \t]+\.text(?:\.[^\s]+)?[ \t]*(?:\n[ \t]+)?"
+                                 r"0x([0-9a-fA-F]+)[ \t]+0x([0-9a-fA-F]+)[ \t]+"
+                                 r"[^\n]*\((mosaico_local_aec|esp_aec)\.c\.obj\)[ \t]*$",
+                                 live_map, re.MULTILINE):
+            if int(match[1], 16) and int(match[2], 16):
+                raise RuntimeError(f"{mode} AEC must not link live local AEC object {match[3]}")
+        return mode
+
+    owners = {
+        "mosaico_local_aec_create": "esp-idf/mybot_platform/libmybot_platform.a(mosaico_local_aec.c.obj)",
+        "mosaico_local_aec_feed": "esp-idf/mybot_platform/libmybot_platform.a(mosaico_local_aec.c.obj)",
+        "aec_create_from_config": "managed_components/espressif__esp-sr/" +
+                                  LOCAL_AEC_METADATA["archive"] + "(esp_aec.c.obj)",
+        "aec_process": "managed_components/espressif__esp-sr/" +
+                       LOCAL_AEC_METADATA["archive"] + "(esp_aec.c.obj)",
+    }
+    for symbol, expected_owner in owners.items():
+        # LOAD, discarded sections and cross references do not prove live code.
+        # Require a real input section and a symbol inside its nonempty range.
+        section = re.search(rf"^[ \t]+\.text\.{symbol}[ \t]*(?:\n[ \t]+)?"
+                            r"0x([0-9a-fA-F]+)[ \t]+0x([0-9a-fA-F]+)[ \t]+([^\n]+)$",
+                            live_map, re.MULTILINE)
+        addresses = re.findall(rf"^[ \t]+0x([0-9a-fA-F]+)[ \t]+{symbol}[ \t]*$",
+                               live_map, re.MULTILINE)
+        if (not section or not int(section[1], 16) or not int(section[2], 16) or
+                not any(int(section[1], 16) <= int(address, 16) <
+                        int(section[1], 16) + int(section[2], 16) for address in addresses)):
+            raise RuntimeError(f"local AEC requires nonzero live code for {symbol}")
+        owner = section[3].strip()
+        if owner != expected_owner and not owner.endswith("/" + expected_owner):
+            raise RuntimeError(f"local AEC has incorrect archive origin for {symbol}")
+    return mode
+
+
+def verify_build(build_dir: Path, language: str, aec_mode: str = "local") -> dict:
     build_dir = build_dir.resolve()
     description = json.loads(build_file(build_dir, "project_description.json").read_text())
     if description.get("target") != "esp32s31" or description.get("git_revision") != "v6.1":
@@ -274,6 +369,7 @@ def verify_build(build_dir: Path, language: str) -> dict:
     if config.get("CONFIG_USB_DEVICE_UAC_AS_PART") == "y":
         verify_project_uac_runtime(build_dir, map_text)
         verify_usb_wrappers(build_dir, description["app_elf"], map_text)
+    actual_aec_mode = verify_aec(build_dir, config, map_text, aec_mode)
     flash = json.loads(build_file(build_dir, "flasher_args.json").read_text())
     if flash.get("extra_esptool_args", {}).get("chip") != "esp32s31":
         raise RuntimeError("flash configuration must target esp32s31")
@@ -307,6 +403,8 @@ def verify_build(build_dir: Path, language: str) -> dict:
         "project_version": description["project_version"],
         "idf_version": "v6.1",
         "audio_ptime_ms": 60,
+        "aec_mode": actual_aec_mode,
+        **({"local_aec": dict(LOCAL_AEC_METADATA)} if actual_aec_mode == "local" else {}),
         "video_enabled": False,
         "rtsa": {
             "version": "1.10.1", "build": "1366494", "archive_sha256": RTSA_SHA256,
@@ -322,8 +420,8 @@ def verify_build(build_dir: Path, language: str) -> dict:
     }
 
 
-def package(build_dir: Path, merged: Path, language: str) -> dict:
-    metadata = verify_build(build_dir, language)
+def package(build_dir: Path, merged: Path, language: str, aec_mode: str = "local") -> dict:
+    metadata = verify_build(build_dir, language, aec_mode)
     if merged.is_symlink() or not merged.is_file() or any(parent.is_symlink() for parent in merged.parents):
         raise RuntimeError("merged image must be a regular file without symlink ancestors")
     merged = merged.resolve()
@@ -364,7 +462,7 @@ def package(build_dir: Path, merged: Path, language: str) -> dict:
     )
     checksum.write_text(f'{metadata["image"]["sha256"]}  {merged.name}\n', encoding="utf-8")
     instructions.write_text(
-        f'Board: {metadata["board"]}\nLanguage: {language}\nESP-IDF: v6.1\n'
+        f'Board: {metadata["board"]}\nLanguage: {language}\nAEC: {metadata["aec_mode"]}\nESP-IDF: v6.1\n'
         'Verify: ' + shlex.join(["shasum", "-a", "256", "-c", checksum.name]) + '\n'
         'Flash from this directory (replace PORT):\n'
         + shlex.join(flash_command) + '\n'
@@ -379,6 +477,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--build-dir", type=Path)
     parser.add_argument("--language", choices=("zh-CN", "en-US"))
+    parser.add_argument("--aec-mode", choices=tuple(AEC_CONFIGS), default=None,
+                        help="expected firmware AEC mode (default: local)")
     parser.add_argument(
         "--vendor-only", action="store_true", help="verify the bundled RTSA inputs without a build"
     )
@@ -386,17 +486,18 @@ def main() -> int:
     args = parser.parse_args()
     verify_bundled_rtsa(Path(__file__).resolve().parent.parent)
     if args.vendor_only:
-        if args.build_dir or args.language or args.merged:
+        if args.build_dir or args.language or args.merged or args.aec_mode:
             parser.error("--vendor-only does not accept build or image arguments")
         print("Verified bundled ESP32-S31 RTSA v1.10.1 build 1366494 fingerprints")
         return 0
     if not args.build_dir or not args.language:
         parser.error("--build-dir and --language are required unless --vendor-only is used")
     metadata = (
-        package(args.build_dir, args.merged, args.language) if args.merged
-        else verify_build(args.build_dir, args.language)
+        package(args.build_dir, args.merged, args.language, args.aec_mode or "local") if args.merged
+        else verify_build(args.build_dir, args.language, args.aec_mode or "local")
     )
-    print(f'Validated {metadata["board"]} {args.language}: RISC-V, local AOSL, video off, '
+    print(f'Validated {metadata["board"]} {args.language}: AEC={metadata["aec_mode"]}, '
+          f'RISC-V, local AOSL, video off, '
           f'{len(metadata["segments"])} flash segments; '
           f'OTA free min={metadata["ota_capacity"]["minimum_free_bytes"]} bytes '
           f'(required={MIN_OTA_FREE_BYTES})')

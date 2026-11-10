@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Diagnostic mode: upload microphone PCM without local or cloud AEC.
+# CONFIG_MYBOT_LOCAL_AEC is not set
+# CONFIG_MYBOT_CLOUD_AEC is not set
+CONFIG_MYBOT_AEC_DISABLED=y

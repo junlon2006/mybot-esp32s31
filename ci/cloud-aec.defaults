@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
 # Alternative AEC mode: retain the legacy interleaved MIC/reference cloud path.
 # CONFIG_MYBOT_LOCAL_AEC is not set
 CONFIG_MYBOT_CLOUD_AEC=y
+# CONFIG_MYBOT_AEC_DISABLED is not set
