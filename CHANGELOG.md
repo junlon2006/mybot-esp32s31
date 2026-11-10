@@ -2,6 +2,12 @@
 
 ## Unreleased — standalone S31 translation
 
+- Add all modern Hangul syllables and Korean Jamo in a separate 20 px caption fallback,
+  preserving existing Chinese/Japanese/English glyphs. Expand OTA slots to 5 MiB while
+  retaining NVS and at least 300 KiB delivery headroom.
+- Add illustrated Chinese and English PDF user guides with exterior button positions,
+  explicit 3-second Wi-Fi setup / 10-second factory reset and four-language font coverage.
+
 - Reset Local AEC partial input, queued output and filter history synchronously at capture fences for pause, direction, session and RTC readiness changes; failed resets require capture recovery before media resumes.
 
 - Validate and identify Local/Cloud/Disabled AEC in delivery configuration, compiled flags, live links and manifests. CI builds Chinese/English Local AEC plus a Chinese Cloud AEC comparison.

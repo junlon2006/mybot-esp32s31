@@ -13,11 +13,16 @@
 
 LV_FONT_DECLARE(mybot_caption_font_20);
 LV_FONT_DECLARE(mybot_caption_font_28);
+LV_FONT_DECLARE(mybot_caption_font_ko_20);
 
 lv_global_t lv_global;
 static unsigned stride_alignment = 1;
 static size_t temporary_bytes, peak_temporary_bytes;
 static unsigned cache_flushes;
+
+void lv_memset(void *destination, uint8_t value, size_t size) {
+    memset(destination, value, size);
+}
 
 /* Keep LVGL's font and RLE code real; replace only its host allocation/draw
  * environment. No display or board is needed to decode an A8 glyph. */
@@ -109,9 +114,24 @@ static unsigned decode_font(const lv_font_t *font, const char *output_path) {
 }
 
 int main(int argc, char **argv) {
-    assert(argc == 3);
+    assert(argc == 4);
+    assert(sizeof(lv_font_fmt_txt_glyph_dsc_t) == 8);
     unsigned glyphs = decode_font(&mybot_caption_font_20, argv[1]);
     glyphs += decode_font(&mybot_caption_font_28, argv[2]);
+    glyphs += decode_font(&mybot_caption_font_ko_20, argv[3]);
+    /* Exercise LVGL's actual public fallback lookup used by both caption sizes,
+     * including the first/last modern syllables and standalone Jamo. */
+    const uint32_t korean[] = {0xac00, 0xd7a3, 0xd55c, 0xad6d, 0xc5b4, 0x1100,
+                               0x1161, 0x11a8, 0x3131, 0x314f, 0xffa1, 0xffc2};
+    const lv_font_t *fonts[] = {&mybot_caption_font_20, &mybot_caption_font_28};
+    for (unsigned index = 0; index < sizeof(fonts) / sizeof(fonts[0]); ++index) {
+        for (unsigned letter = 0; letter < sizeof(korean) / sizeof(korean[0]); ++letter) {
+            lv_font_glyph_dsc_t glyph;
+            assert(lv_font_get_glyph_dsc(fonts[index], &glyph, korean[letter], 0));
+            assert(glyph.resolved_font == &mybot_caption_font_ko_20 && !glyph.is_placeholder);
+            assert(glyph.box_w && glyph.box_h && glyph.adv_w);
+        }
+    }
     assert(!temporary_bytes);
     printf("PASS native LVGL caption decoder: %u glyphs, A8 stride 1/8, guards, "
            "peak temporary bytes=%zu\n",

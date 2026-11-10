@@ -462,7 +462,8 @@ def package(build_dir: Path, merged: Path, language: str, aec_mode: str = "local
     license_text = b"".join(
         f"===== {name} =====\n".encode("utf-8") + (project_root / name).read_bytes() + b"\n"
         for name in ("THIRD_PARTY_NOTICES.md", "LICENSE", "licenses/esp-sr-2.6.0.LICENSE",
-                     "licenses/esp-dl-3.3.15.LICENSE", "licenses/esp_new_jpeg-1.0.2.LICENSE")
+                     "licenses/esp-dl-3.3.15.LICENSE", "licenses/esp_new_jpeg-1.0.2.LICENSE",
+                     "components/mybot_platform/src/drivers/display/assets/licenses/LVGL_VIEW_FONT_LICENSE.txt")
     )
     manifest.write_text(
         json.dumps(metadata, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8"

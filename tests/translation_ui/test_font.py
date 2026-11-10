@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT
-"""Check static UI coverage and bounded Chinese/English/Japanese caption fonts."""
+"""Check static UI coverage and bounded Chinese/Japanese/Korean/English caption fonts."""
 from pathlib import Path
 import re
 
@@ -24,7 +24,7 @@ print("PASS translation UI fonts: %d glyphs available at 20/28/40 px" % len(need
 
 
 def array_body(text, name):
-    match = re.search(r"\b" + name + r"\[\]\s*=\s*\{(.*?)\n\};", text, re.S)
+    match = re.search(r"\b" + name + r"\[\d*\]\s*(?:MYBOT_CAPTION_BINARY\s*)?=\s*\{(.*?)\n\};", text, re.S)
     assert match, "missing array " + name
     return match.group(1)
 
@@ -35,14 +35,17 @@ assert set(caption_sections[1::2]) == {"20", "28"}
 caption_available = {}
 estimated_size = 0
 for pixels, body in zip(caption_sections[1::2], caption_sections[2::2]):
+    font_id = re.search(r"Font ID: (\w+)", body).group(1)
     bitmap = bytes(int(value, 16) for value in re.findall(
-        r"0x([0-9a-f]{2})", array_body(body, "caption_bitmap_" + pixels)))
+        r"\\x([0-9a-f]{2})", array_body(body, "caption_bitmap_" + font_id)))
+    assert int(re.search(r"caption_bitmap_" + font_id + r"\[(\d+)\]", body).group(1)) == len(bitmap)
     assert len(bitmap) < (1 << 20), "font bitmap exceeds compact descriptor indices"
     glyphs = re.findall(r"/\* U\+([0-9A-F]{4,6}) \*/\s*\{([^}]+)\}", body)
     available = {int(codepoint, 16) for codepoint, _ in glyphs}
-    caption_available[pixels] = available
+    assert font_id not in caption_available
+    caption_available[font_id] = available
     unicode_list = [int(value, 16) + 0x20 for value in re.findall(
-        r"0x([0-9a-f]{4})", array_body(body, "caption_unicode_list_" + pixels))]
+        r"0x([0-9a-f]{4})", array_body(body, "caption_unicode_list_" + font_id))]
     assert unicode_list == sorted(available), "character map and descriptors disagree"
     assert unicode_list == [int(codepoint, 16) for codepoint, _ in glyphs], (
         "sparse character-map glyph IDs do not follow descriptor order")
@@ -55,15 +58,16 @@ for pixels, body in zip(caption_sections[1::2], caption_sections[2::2]):
     assert "LV_FONT_FMT_TXT_CMAP_SPARSE_TINY" in body
     offset = 0
     for index, (codepoint, descriptor) in enumerate(glyphs):
-        metrics = {key: int(value) for key, value in re.findall(
-            r"\.(\w+)\s*=\s*(-?\d+)", descriptor)}
+        values = [int(value) for value in re.findall(r"-?\d+", descriptor)]
+        assert len(values) == 6
+        metrics = dict(zip(("bitmap_index", "adv_w", "box_w", "box_h", "ofs_x", "ofs_y"), values))
         start = metrics["bitmap_index"]
         assert start == offset, "incorrect glyph bitmap index"
         assert 0 <= metrics["adv_w"] < 4096
         assert 0 <= metrics["box_w"] < 256 and 0 <= metrics["box_h"] < 256
         assert -128 <= metrics["ofs_x"] < 128 and -128 <= metrics["ofs_y"] < 128
         count = metrics["box_w"] * metrics["box_h"]
-        next_offset = (int(re.search(r"\.bitmap_index\s*=\s*(\d+)", glyphs[index + 1][1]).group(1))
+        next_offset = (int(re.search(r"\d+", glyphs[index + 1][1]).group(0))
                        if index + 1 < len(glyphs) else len(bitmap))
         assert start <= next_offset <= len(bitmap)
         if count:
@@ -73,10 +77,11 @@ for pixels, body in zip(caption_sections[1::2], caption_sections[2::2]):
             assert next_offset == start
         offset = next_offset
     assert re.search(r"\.bpp\s*=\s*2\b", body)
-    assert "mybot_caption_font_" + pixels in body
+    assert "mybot_caption_font_" + font_id in body
     assert ".bitmap_format = LV_FONT_FMT_TXT_COMPRESSED" in body
     assert re.search(r"Pixels SHA256: [0-9a-f]{64}", body)
     estimated_size += len(bitmap) + (len(glyphs) + 1) * 8 + len(glyphs) * 2
+assert set(caption_available) == {"20", "28", "ko_20"}
 
 han = set()
 for lead in range(0xB0, 0xF8):
@@ -91,6 +96,7 @@ assert latin <= caption_available["20"] and latin <= caption_available["28"]
 assert {ord(c) for c in "‐‑–—‘’“”•…−□�"} <= caption_available["28"]
 assert {ord(c) for c in "、。，！？：；（）【】《》〈〉「」『』〔〕［］｛｝％＋－＝＠＃＆＊～／＼｜＿　￥"} <= caption_available["20"]
 assert re.search(r"\.fallback\s*=\s*&mybot_caption_font_20\b", caption_text)
+assert re.search(r"\.fallback\s*=\s*&mybot_caption_font_ko_20\b", caption_text)
 assert {ord(c) for c in "CAFÉ naïve – “字幕”"} <= (
     caption_available["28"] | caption_available["20"])
 japanese = set(range(0x3041, 0x3097)) | set(range(0x3099, 0x3100))
@@ -114,10 +120,20 @@ for sample in ("日本語の翻訳を開始します。", "ガイド・ヴォイ
     assert {ord(c) for c in sample} <= caption_available["20"], sample
 for codepoint in ("3099", "309A"):
     descriptor = re.search(r"/\* U\+" + codepoint + r" \*/\s*\{([^}]+)\}", caption_text).group(1)
-    assert re.search(r"\.adv_w\s*=\s*0\b", descriptor)
-    assert int(re.search(r"\.ofs_x\s*=\s*(-?\d+)", descriptor).group(1)) < 0
-assert estimated_size < 1024 * 1024, "caption fonts exceed the 1 MiB flash budget"
+    values = [int(value) for value in re.findall(r"-?\d+", descriptor)]
+    assert values[1] == 0 and values[4] < 0
+korean = set(range(0xAC00, 0xD7A4)) | set(range(0x1100, 0x1200))
+korean |= set(range(0x3131, 0x318F)) | set(range(0xFFA0, 0xFFBF))
+korean |= set(range(0xFFC2, 0xFFC8)) | set(range(0xFFCA, 0xFFD0))
+korean |= set(range(0xFFD2, 0xFFD8)) | set(range(0xFFDA, 0xFFDD))
+assert len(set(range(0xAC00, 0xD7A4))) == 11172
+assert korean <= caption_available["ko_20"], "Korean font coverage is incomplete"
+for sample in ("한국어 번역을 시작합니다.", "안녕하세요! 회의 자막이 정상적으로 표시됩니다.",
+               "가각힣", "한글", "ㄱㄲㄳㅏㅐㅑ", "ﾡￂ"):
+    assert {ord(c) for c in sample} <= (caption_available["20"] | caption_available["ko_20"]), sample
+assert estimated_size < 2 * 1024 * 1024, "caption fonts exceed the 2 MiB flash budget"
 assert "Noto Sans SC" in caption_text
 assert "#define LV_USE_FONT_COMPRESSED 1" in (root / "components/lvgl/lv_conf.h").read_text()
-print("PASS caption fonts: GB2312, JIS X 0208/CP932, kana, Latin-1, punctuation, fallback; "
+print("PASS caption fonts: GB2312, JIS X 0208/CP932, kana, full modern Hangul/Jamo, "
+      "Latin-1, punctuation, fallback; "
       "%d bytes including packed bitmaps and maps" % estimated_size)

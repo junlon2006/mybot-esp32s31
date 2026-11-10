@@ -61,7 +61,7 @@ esp-mosaico-v1.2-zh-CN.flash.txt
 esp-mosaico-v1.2-zh-CN.licenses.txt
 ```
 
-The manifest records project/IDF versions, build-bound source revision/dirty state, language, actual `aec_mode`, board/target, RTSA package/hash, artifact and merged-image hashes, segment offsets and OTA free space. It records build provenance, not hardware acceptance. Keep all five files together. The `.licenses.txt` companion contains the third-party notices, project Apache-2.0 text and retained ESP-SR/ESP-DL/esp_new_jpeg package license texts; include it when distributing the image.
+The manifest records project/IDF versions, build-bound source revision/dirty state, language, actual `aec_mode`, board/target, RTSA package/hash, artifact and merged-image hashes, segment offsets and OTA free space. It records build provenance, not hardware acceptance. Keep all five files together. The `.licenses.txt` companion contains the third-party notices, project Apache-2.0 text, retained ESP-SR/ESP-DL/esp_new_jpeg package license texts and the fonts' full SIL OFL 1.1; include it when distributing the image.
 
 Merged images are flashed at **0x0**. They include padding over NVS and OTA state; provisioning is required afterwards. For daily development use `idf.py --preview -B build/mosaico-v1.2 -p PORT flash` to preserve NVS. The runtime CDC port differs from its ROM download port; select the current port before running `idf.py --preview -B build/mosaico-v1.2 -p RUNTIME_PORT monitor`.
 
