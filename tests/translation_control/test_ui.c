@@ -19,7 +19,9 @@ static notification_t notifications[32];
 static unsigned notification_count, language_sets, volume_sets, pause_sets, renders, tests;
 static unsigned conversation_starts, session_ends, rtc_finalizations, rtc_joins, mode_sets;
 static unsigned conversation_stops;
+static unsigned recovery_confirmations;
 static bool fail_queue, fail_volume, fail_pause, fail_end_session, fail_mode, paused;
+static bool fail_recovery;
 static int hardware_volume, rtc_fini_result;
 static mybot_lcd_content_t displayed;
 static mybot_platform_descriptor_t platform;
@@ -160,6 +162,17 @@ int mybot_device_lifecycle_set_selection(mybot_device_lifecycle_t *lifecycle,
     }
     return 0;
 }
+int mybot_device_lifecycle_confirm_start_recovery(mybot_device_lifecycle_t *lifecycle) {
+    assert(lifecycle == &runtime.lifecycle);
+    recovery_confirmations++;
+    if (fail_recovery || lifecycle->state != MYBOT_DEVICE_STATE_START_UNKNOWN)
+        return -1;
+    lifecycle->pending_unknown = lifecycle->journal_present = lifecycle->cleanup_needed = false;
+    lifecycle->error_code[0] = '\0';
+    lifecycle->state = MYBOT_DEVICE_STATE_RUNTIME;
+    assert(mybot_state_model_set_device_state(&runtime.state_model, MYBOT_DEVICE_STATE_RUNTIME));
+    return 0;
+}
 int mybot_media_pipeline_get_volume(mybot_media_pipeline_t *pipeline, int *volume) {
     assert(pipeline == &runtime.media);
     *volume = hardware_volume;
@@ -258,6 +271,8 @@ static void reset(void) {
     conversation_starts = conversation_stops = session_ends = rtc_finalizations = rtc_joins =
         mode_sets = 0;
     fail_queue = fail_volume = fail_pause = fail_end_session = fail_mode = paused = false;
+    fail_recovery = false;
+    recovery_confirmations = 0;
     hardware_volume = 40;
     rtc_fini_result = 0;
     s_lifecycle_gate = s_exit_generation = s_run_exit_generation = 0;
@@ -294,6 +309,14 @@ static void active(void) {
     runtime.lifecycle.state = MYBOT_DEVICE_STATE_IN_CONVERSATION;
     runtime.media.rtc_connected = 1;
 }
+static void unknown_start(void) {
+    runtime.lifecycle.state = MYBOT_DEVICE_STATE_START_UNKNOWN;
+    runtime.lifecycle.pending_unknown = runtime.lifecycle.journal_present = true;
+    runtime.lifecycle.cleanup_needed = true;
+    strcpy(runtime.lifecycle.error_code, "START_UNKNOWN");
+    assert(
+        mybot_state_model_set_device_state(&runtime.state_model, MYBOT_DEVICE_STATE_START_UNKNOWN));
+}
 static void test_validation_and_language_table(void) {
     reset();
     size_t count = 0;
@@ -322,6 +345,11 @@ static void test_validation_and_language_table(void) {
     assert(mybot_ui_submit(&command) == -1);
     command.value = 3;
     assert(mybot_ui_submit(&command) == -1);
+    command.type = MYBOT_UI_CONFIRM_START_RECOVERY;
+    command.value = 0;
+    assert(mybot_ui_submit(&command) == -1);
+    command.value = 2;
+    assert(mybot_ui_submit(&command) == -1);
     command.type = (mybot_ui_command_type_t)99;
     assert(mybot_ui_submit(&command) == -1);
     command = languages("zh-CN", "zh-CN");
@@ -331,6 +359,80 @@ static void test_validation_and_language_table(void) {
     memset(command.source_language, 'a', sizeof(command.source_language));
     assert(mybot_ui_submit(&command) == -1);
     assert(notification_count == 0 && runtime.ui_count == 0);
+    tests++;
+}
+
+static void test_unknown_recovery_is_explicit_async_and_acknowledged(void) {
+    reset();
+    unknown_start();
+    runtime.media.running = true; /* Ordinary background MIC/AEC capture is allowed. */
+    platform.audio_usb_capture = &usb_ops;
+    platform.audio_usb_playback = &usb_playback_ops;
+    runtime.usb_media = calloc(1, sizeof(*runtime.usb_media));
+    assert(runtime.usb_media);
+    runtime.usb_media->initialized = true; /* Idle USB resources are also harmless. */
+    mybot_ui_command_t command = {.type = MYBOT_UI_CONFIRM_START_RECOVERY, .value = 1};
+    assert(mybot_ui_submit(&command) == 0);
+    command.value = 0;
+    assert(!recovery_confirmations && runtime.lifecycle.pending_unknown);
+    dispatch(0);
+    assert(recovery_confirmations == 1 && !runtime.lifecycle.pending_unknown);
+    assert(runtime_get_state(&runtime) == MYBOT_STATE_READY);
+    assert(!strcmp(runtime.lifecycle.source_language, "zh-CN") && hardware_volume == 40);
+    assert(!conversation_starts && runtime.presenter.selection_revision == 1);
+    command.value = 1;
+    assert(mybot_ui_submit(&command) == 0);
+    dispatch(1); /* A duplicate confirmation is rejected after the first recovered. */
+    assert(recovery_confirmations == 2 && runtime.presenter.selection_revision == 2);
+    assert(!conversation_starts && runtime_get_state(&runtime) == MYBOT_STATE_READY);
+    tests++;
+}
+
+static void test_unknown_recovery_rejects_active_local_routes(void) {
+    for (unsigned blocked = 0; blocked < 5; ++blocked) {
+        reset();
+        unknown_start();
+        if (blocked == 0)
+            runtime.media.rtc_connected = true;
+        else if (blocked == 1)
+            runtime.meeting_active = true;
+        else if (blocked == 2)
+            runtime.rtc_media_state = 3;
+        else {
+            runtime.usb_media = calloc(1, sizeof(*runtime.usb_media));
+            assert(runtime.usb_media);
+            if (blocked == 3)
+                runtime.usb_media->running = true;
+            else
+                runtime.usb_media->rtc_connected = true;
+        }
+        mybot_ui_command_t command = {.type = MYBOT_UI_CONFIRM_START_RECOVERY, .value = 1};
+        assert(mybot_ui_submit(&command) == 0);
+        dispatch(0);
+        assert(!recovery_confirmations && runtime.lifecycle.pending_unknown);
+        assert(!strcmp(runtime.lifecycle.error_code, "START_UNKNOWN"));
+        assert(runtime.presenter.selection_revision == 1);
+    }
+    tests++;
+}
+
+static void test_unknown_recovery_rechecks_state_and_acknowledges_failure(void) {
+    reset();
+    unknown_start();
+    mybot_ui_command_t command = {.type = MYBOT_UI_CONFIRM_START_RECOVERY, .value = 1};
+    assert(mybot_ui_submit(&command) == 0);
+    runtime.lifecycle.state = MYBOT_DEVICE_STATE_STARTING;
+    dispatch(0);
+    assert(recovery_confirmations == 1 && runtime.lifecycle.pending_unknown);
+    assert(runtime.presenter.selection_revision == 1);
+    unknown_start();
+    fail_recovery = true;
+    runtime.presenter.selection_revision = UINT32_MAX;
+    assert(mybot_ui_submit(&command) == 0);
+    dispatch(1);
+    assert(recovery_confirmations == 2 && runtime.lifecycle.pending_unknown);
+    assert(runtime.presenter.selection_revision == 1);
+    assert(!strcmp(runtime.lifecycle.error_code, "START_UNKNOWN"));
     tests++;
 }
 static void test_copy_async_and_actual_volume(void) {
@@ -928,6 +1030,9 @@ static void test_stop_during_start_still_stops_active_session(void) {
 }
 
 int main(void) {
+    test_unknown_recovery_is_explicit_async_and_acknowledged();
+    test_unknown_recovery_rejects_active_local_routes();
+    test_unknown_recovery_rechecks_state_and_acknowledges_failure();
     test_key_queue_lifetime_and_valid_stop();
     test_stale_key_stop_cannot_stop_next_session();
     test_key_runtime_generation_and_exit();

@@ -72,7 +72,7 @@ typedef struct {
 typedef struct {
     mybot_device_lifecycle_t lifecycle;
     mybot_kv_store_t store;
-    slot_t slots[4];
+    slot_t slots[6];
     char fail_set[20];
     char fail_get[20];
     char fail_erase[20];
@@ -463,6 +463,208 @@ static void unknown_crash_before_response(void) {
     assert(fixture.lifecycle.state == MYBOT_DEVICE_STATE_START_UNKNOWN);
     dispose(&fixture);
 }
+
+static void unknown_session(fixture_t *fixture) {
+    bound(fixture);
+    mybot_device_service_request_t *request = starting(fixture);
+    request->result = -1;
+    request->payload.start.response.start_unknown = true;
+    deliver(fixture, request);
+    assert(fixture->lifecycle.state == MYBOT_DEVICE_STATE_START_UNKNOWN);
+    assert(stored(fixture, "tr_session"));
+}
+
+static void confirmed_unknown_recovery_preserves_settings(void) {
+    fixture_t fixture;
+    bound(&fixture);
+    assert(mybot_device_lifecycle_set_languages(&fixture.lifecycle, "ja-JP", "ko-KR") == 0);
+    const char wifi[] = "synthetic-wifi-settings", volume[] = "47";
+    assert(mybot_kv_store_set(&fixture.store, "wifi_settings", wifi, sizeof(wifi)) == 0);
+    assert(mybot_kv_store_set(&fixture.store, "volume", volume, sizeof(volume)) == 0);
+    mybot_device_service_request_t *request = starting(&fixture);
+    request->result = -1;
+    request->payload.start.response.start_unknown = true;
+    deliver(&fixture, request);
+    initialize(&fixture, true, SERVER, DEVICE); /* A reboot cannot resolve the unknown start. */
+    slot_t saved[ARRAY_COUNT(fixture.slots)];
+    memcpy(saved, fixture.slots, sizeof(saved));
+    mybot_device_lifecycle_set_network_available(&fixture.lifecycle, false);
+    assert(mybot_device_lifecycle_confirm_start_recovery(&fixture.lifecycle) == 0);
+    assert_completed_stop(&fixture, "");
+    assert(!fixture.queued_count && !fixture.starts); /* Confirmation issues no cloud request. */
+    for (size_t i = 0; i < ARRAY_COUNT(saved); ++i)
+        if (strcmp(saved[i].key, "tr_session") != 0)
+            assert(memcmp(&saved[i], &fixture.slots[i], sizeof(saved[i])) == 0);
+    assert(strcmp(fixture.lifecycle.device_token, "original-test-credential") == 0);
+    assert(strcmp(fixture.lifecycle.source_language, "ja-JP") == 0);
+    assert(strcmp(fixture.lifecycle.target_language, "ko-KR") == 0);
+    assert(mybot_device_lifecycle_confirm_start_recovery(&fixture.lifecycle) < 0);
+    initialize(&fixture, true, SERVER, DEVICE);
+    assert_completed_stop(&fixture, "");
+    assert(stored(&fixture, "device_auth") && stored(&fixture, "tr_languages"));
+    assert(strcmp(fixture.lifecycle.device_token, "original-test-credential") == 0);
+    request = starting(&fixture); /* A new start still requires its own user action. */
+    assert(strcmp(request->payload.start.source_language, "ja-JP") == 0);
+    assert(strcmp(request->payload.start.target_language, "ko-KR") == 0);
+    request->result = 409;
+    strcpy(request->payload.start.response.error_code, "TEST_REJECTION");
+    deliver(&fixture, request);
+    dispose(&fixture);
+}
+
+static void confirmed_unknown_recovery_erase_failure(void) {
+    fixture_t fixture;
+    unknown_session(&fixture);
+    slot_t saved = *slot(&fixture, "tr_session", false);
+    strcpy(fixture.fail_erase, "tr_session");
+    assert(mybot_device_lifecycle_confirm_start_recovery(&fixture.lifecycle) < 0);
+    assert(fixture.lifecycle.storage_fault && fixture.lifecycle.pending_unknown);
+    assert(fixture.lifecycle.journal_present && fixture.lifecycle.cleanup_needed);
+    assert(fixture.lifecycle.state == MYBOT_DEVICE_STATE_ERROR);
+    assert(strcmp(fixture.lifecycle.error_code, "STORAGE_ERROR") == 0);
+    assert(fixture.published_state == MYBOT_DEVICE_STATE_ERROR);
+    assert(strcmp(fixture.published_error, "STORAGE_ERROR") == 0);
+    assert(memcmp(&saved, slot(&fixture, "tr_session", false), sizeof(saved)) == 0);
+    fixture.fail_erase[0] = '\0';
+    assert(mybot_device_lifecycle_confirm_start_recovery(&fixture.lifecycle) < 0);
+    mybot_device_lifecycle_request_start(&fixture.lifecycle);
+    ticks(&fixture, 1000);
+    assert(!fixture.queued_count && stored(&fixture, "tr_session"));
+    initialize(&fixture, true, SERVER, DEVICE);
+    assert(fixture.lifecycle.state == MYBOT_DEVICE_STATE_START_UNKNOWN);
+    assert(mybot_device_lifecycle_confirm_start_recovery(&fixture.lifecycle) == 0);
+    initialize(&fixture, true, SERVER, DEVICE);
+    assert_completed_stop(&fixture, "");
+    dispose(&fixture);
+}
+
+static void confirmed_unknown_recovery_rejects_busy_and_stale_state(void) {
+    fixture_t fixture;
+    unknown_session(&fixture);
+    slot_t saved = *slot(&fixture, "tr_session", false);
+    assert(mybot_device_lifecycle_confirm_start_recovery(NULL) < 0);
+    bool *busy[] = {&fixture.lifecycle.start_pending, &fixture.lifecycle.stop_pending,
+                    &fixture.lifecycle.local_media_active,
+                    &fixture.lifecycle.conversation_requested, &fixture.lifecycle.storage_fault};
+    for (size_t i = 0; i < ARRAY_COUNT(busy); ++i) {
+        *busy[i] = true;
+        assert(mybot_device_lifecycle_confirm_start_recovery(&fixture.lifecycle) < 0);
+        *busy[i] = false;
+    }
+    bool *required[] = {&fixture.lifecycle.pending_unknown, &fixture.lifecycle.journal_present,
+                        &fixture.lifecycle.cleanup_needed};
+    for (size_t i = 0; i < ARRAY_COUNT(required); ++i) {
+        *required[i] = false;
+        assert(mybot_device_lifecycle_confirm_start_recovery(&fixture.lifecycle) < 0);
+        *required[i] = true;
+    }
+    strcpy(fixture.lifecycle.conversation_id, "known-parent");
+    assert(mybot_device_lifecycle_confirm_start_recovery(&fixture.lifecycle) < 0);
+    fixture.lifecycle.conversation_id[0] = '\0';
+    fixture.lifecycle.shutting_down = true;
+    assert(mybot_device_lifecycle_confirm_start_recovery(&fixture.lifecycle) < 0);
+    fixture.lifecycle.shutting_down = false;
+    fixture.lifecycle.stop_request = 1;
+    assert(mybot_device_lifecycle_confirm_start_recovery(&fixture.lifecycle) < 0);
+    fixture.lifecycle.stop_request = 0;
+    const mybot_device_state_t states[] = {
+        MYBOT_DEVICE_STATE_RUNTIME,         MYBOT_DEVICE_STATE_STARTING,
+        MYBOT_DEVICE_STATE_STOPPING,        MYBOT_DEVICE_STATE_IN_CONVERSATION,
+        MYBOT_DEVICE_STATE_CLEANUP_PENDING, MYBOT_DEVICE_STATE_ERROR};
+    for (size_t i = 0; i < ARRAY_COUNT(states); ++i) {
+        fixture.lifecycle.state = states[i];
+        assert(mybot_device_lifecycle_confirm_start_recovery(&fixture.lifecycle) < 0);
+    }
+    assert(memcmp(&saved, slot(&fixture, "tr_session", false), sizeof(saved)) == 0);
+    dispose(&fixture);
+    active(&fixture);
+    assert(mybot_device_lifecycle_confirm_start_recovery(&fixture.lifecycle) < 0);
+    mybot_device_service_request_t *request = stopping(&fixture);
+    assert(mybot_device_lifecycle_confirm_start_recovery(&fixture.lifecycle) < 0);
+    request->result = 503;
+    deliver(&fixture, request);
+    assert(mybot_device_lifecycle_confirm_start_recovery(&fixture.lifecycle) < 0);
+    assert(stored_text(&fixture, "tr_session", "parent-1"));
+    dispose(&fixture);
+}
+
+static void unknown_binding_poll_preserves_recovery_lock(void) {
+    const int results[] = {0, 0, 401};
+    const char *statuses[] = {"bound", "unbound", ""};
+    for (size_t i = 0; i < ARRAY_COUNT(results); ++i) {
+        fixture_t fixture;
+        unknown_session(&fixture);
+        slot_t saved = *slot(&fixture, "tr_session", false);
+        fixture.lifecycle.runtime_tick_counter = fixture.lifecycle.runtime_poll_interval * 10 - 1;
+        ticks(&fixture, 1);
+        mybot_device_service_request_t *request = take(&fixture, MYBOT_DEVICE_SERVICE_DEVICE_POLL);
+        assert(request && strcmp(request->credential, "original-test-credential") == 0);
+        request->result = results[i];
+        strcpy(request->payload.binding.status, statuses[i]);
+        request->payload.binding.poll_after_seconds = 3;
+        deliver(&fixture, request);
+        assert(fixture.lifecycle.state == MYBOT_DEVICE_STATE_START_UNKNOWN);
+        assert(fixture.lifecycle.pending_unknown && fixture.lifecycle.journal_present);
+        assert(strcmp(fixture.lifecycle.error_code, "START_UNKNOWN") == 0);
+        assert(memcmp(&saved, slot(&fixture, "tr_session", false), sizeof(saved)) == 0);
+        mybot_device_lifecycle_request_start(&fixture.lifecycle);
+        assert(!fixture.lifecycle.conversation_requested);
+        if (i == 0) {
+            assert(fixture.lifecycle.runtime_poll_interval == 3);
+            ticks(&fixture, 30);
+            request = take(&fixture, MYBOT_DEVICE_SERVICE_DEVICE_POLL);
+            assert(request && stored(&fixture, "device_auth"));
+            request->result = 503;
+            deliver(&fixture, request);
+        } else {
+            assert(!fixture.lifecycle.device_token[0] && !stored(&fixture, "device_auth"));
+            assert(strcmp(fixture.lifecycle.pending_credential, "original-test-credential") == 0);
+            ticks(&fixture, 1000);
+            assert(!fixture.queued_count); /* Re-pair also waits for explicit reconciliation. */
+        }
+        assert(mybot_device_lifecycle_confirm_start_recovery(&fixture.lifecycle) == 0);
+        assert(!stored(&fixture, "tr_session"));
+        assert(fixture.lifecycle.state ==
+               (i ? MYBOT_DEVICE_STATE_UNPROVISIONED : MYBOT_DEVICE_STATE_RUNTIME));
+        dispose(&fixture);
+    }
+}
+
+static void unknown_binding_poll_is_bounded_and_rejects_stale_results(void) {
+    fixture_t fixture;
+    unknown_session(&fixture);
+    fixture.lifecycle.runtime_poll_interval = 3;
+    fixture.lifecycle.runtime_tick_counter = 0;
+    ticks(&fixture, 29);
+    assert(!fixture.queued_count);
+    ticks(&fixture, 1);
+    assert(fixture.queued_count == 1 && fixture.lifecycle.poll_pending);
+    ticks(&fixture, 300);
+    assert(fixture.queued_count == 1);
+    mybot_device_service_request_t *request = take(&fixture, MYBOT_DEVICE_SERVICE_DEVICE_POLL);
+    mybot_device_lifecycle_set_network_available(&fixture.lifecycle, false);
+    mybot_device_lifecycle_set_network_available(&fixture.lifecycle, true);
+    request->result = 401;
+    deliver(&fixture, request);
+    assert(stored(&fixture, "device_auth") && fixture.lifecycle.device_token[0]);
+    assert(stored(&fixture, "tr_session") && !fixture.lifecycle.poll_pending);
+    mybot_device_lifecycle_set_network_available(&fixture.lifecycle, false);
+    ticks(&fixture, 1000);
+    assert(!fixture.queued_count);
+    dispose(&fixture);
+    bound(&fixture);
+    request = starting(&fixture);
+    ticks(&fixture, 1000);
+    assert(!fixture.queued_count); /* No binding request competes with an in-flight start. */
+    success_response(request, 91);
+    deliver(&fixture, request);
+    request = stopping(&fixture);
+    ticks(&fixture, 1000);
+    assert(!fixture.queued_count); /* Known-parent cleanup uses only STOP. */
+    deliver(&fixture, request);
+    dispose(&fixture);
+}
+
 static void restart_uses_original_identity(void) {
     fixture_t fixture;
     active(&fixture);
@@ -1241,6 +1443,11 @@ int main(void) {
     disconnected_late_start();
     unknown_start_persists();
     unknown_crash_before_response();
+    confirmed_unknown_recovery_preserves_settings();
+    confirmed_unknown_recovery_erase_failure();
+    confirmed_unknown_recovery_rejects_busy_and_stale_state();
+    unknown_binding_poll_preserves_recovery_lock();
+    unknown_binding_poll_is_bounded_and_rejects_stale_results();
     restart_uses_original_identity();
     failed_stop_backoff();
     failed_start_with_cleanup();
@@ -1268,6 +1475,6 @@ int main(void) {
     unsynchronized_start_allows_retry_after_sync();
     shutdown_confirmed_stop_does_not_duplicate();
     invalid_initial_configuration();
-    puts("translation lifecycle: 36 fault/lifecycle scenarios passed (UBSan)");
+    puts("translation lifecycle: 41 fault/lifecycle scenarios passed (UBSan)");
     return 0;
 }

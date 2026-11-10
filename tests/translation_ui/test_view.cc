@@ -847,6 +847,121 @@ static void test_meeting_flow() {
         "PASS meeting UI: USB capability, acknowledged source selection, language mapping, "
         "pending locks, both caption routes, simultaneous pause and preserved scene languages");
 }
+static void test_start_recovery_flow() {
+    lv_display_t display;
+    display.width = display.root.width = 480;
+    display.root.height = 480;
+    commands.clear();
+    events.clear();
+    captions.clear();
+    accept_ui_commands = true;
+    CHECK(mybot_lvgl_view_create(&display) == 0);
+    mybot_lcd_content_t content{};
+    content.screen = MYBOT_LCD_SCREEN_START_UNKNOWN;
+    content.volume = 37;
+    content.selection_revision = 17;
+    content.translation_mode = MYBOT_TRANSLATION_LISTEN_SPEAK;
+    content.audio_source = MYBOT_AUDIO_SOURCE_USB;
+    content.usb_audio_available = true;
+    std::strcpy(content.source_language, "zh-CN");
+    std::strcpy(content.target_language, "en-US");
+    std::strcpy(content.error_code, "START_UNKNOWN");
+    update(display, content);
+    const char *entry = tr("控制台已结束，恢复设备", "Console sessions ended");
+    const char *confirm = tr("确认恢复", "Confirm recovery");
+    const char *back = tr("返回", "Back");
+    const char *pending = tr("正在恢复...", "Recovering...");
+    CHECK(find(&display.root, entry));
+    CHECK(!find(&display.root, tr("请稍候", "Please wait")));
+    CHECK(!find(&display.root, tr("重试结束", "Retry stop")));
+    CHECK(!find(&display.root, home_action()));
+    click(find(&display.root, entry));
+    CHECK(find(
+        &display.root,
+        tr("请先在网页控制台结束这台设备的全部会话，再确认恢复设备。",
+           "End every session for this device in the web console before confirming recovery.")));
+    CHECK(commands.empty() && events.empty());
+    click(find(&display.root, back));
+    CHECK(find(&display.root, entry) && commands.empty() && events.empty());
+    click(find(&display.root, entry));
+    accept_ui_commands = false;
+    click(find(&display.root, confirm));
+    CHECK(commands.empty() && events.empty());
+    CHECK(find(&display.root,
+               tr("暂时无法恢复，请稍后重试", "Could not submit recovery. Please retry.")));
+    CHECK(!lv_obj_has_state(find(&display.root, confirm)->parent, LV_STATE_DISABLED));
+    accept_ui_commands = true;
+    click(find(&display.root, confirm));
+    CHECK(commands.size() == 1 && commands.back().type == MYBOT_UI_CONFIRM_START_RECOVERY &&
+          commands.back().value == 1);
+    CHECK(lv_obj_has_state(find(&display.root, pending)->parent, LV_STATE_DISABLED));
+    CHECK(lv_obj_has_state(find(&display.root, back)->parent, LV_STATE_DISABLED));
+    click(find(&display.root, pending));
+    ticks += 5000;
+    timer->callback(timer);
+    ++content.volume;
+    update(display,
+           content); // Neither the retry timer nor an unrelated snapshot acknowledges recovery.
+    CHECK(lv_obj_has_state(find(&display.root, pending)->parent, LV_STATE_DISABLED));
+    click(find(&display.root, pending));
+    click(find(&display.root, back));
+    CHECK(commands.size() == 1 && events.empty());
+    ++content.selection_revision;
+    update(display, content); // A consumed rejection can retain the same unknown state and error.
+    CHECK(find(&display.root, tr("恢复未完成，请重试或重启设备",
+                                 "Recovery incomplete. Retry or restart the device.")));
+    CHECK(!lv_obj_has_state(find(&display.root, confirm)->parent, LV_STATE_DISABLED));
+    click(find(&display.root, confirm));
+    CHECK(commands.size() == 2);
+    ++content.selection_revision;
+    update(display, content); // Repeated same-code rejection is still a real acknowledgement.
+    CHECK(find(&display.root, confirm));
+    click(find(&display.root, confirm));
+    CHECK(commands.size() == 3 && events.empty());
+    content.screen = MYBOT_LCD_SCREEN_READY;
+    content.error_code[0] = 0;
+    ++content.selection_revision;
+    update(display, content);
+    CHECK(find(&display.root, home_action()));
+    CHECK(find(&display.root, tr("输出音量 38%", "Output volume 38%")));
+    CHECK(!find(&display.root, tr("翻译已结束", "Translation ended")));
+    CHECK(events.empty()); // Recovery never resubmits start.
+    content.screen = MYBOT_LCD_SCREEN_START_UNKNOWN;
+    std::strcpy(content.error_code, "START_UNKNOWN");
+    update(display, content);
+    click(find(&display.root, entry));
+    click(find(&display.root, confirm));
+    CHECK(commands.size() == 4);
+    content.screen = MYBOT_LCD_SCREEN_TRANSLATION_ERROR;
+    std::strcpy(content.error_code, "STORAGE_ERROR");
+    ++content.selection_revision;
+    update(display, content);
+    CHECK(find(&display.root, tr("恢复失败", "Recovery failed")));
+    CHECK(find(&display.root, "STORAGE_ERROR"));
+    CHECK(find(&display.root, tr("请重启后重试", "Restart the device to retry")));
+    CHECK(lv_obj_has_state(find(&display.root, confirm)->parent, LV_STATE_DISABLED));
+    click(find(&display.root, confirm));
+    CHECK(commands.size() == 4 && events.empty());
+    click(find(&display.root, back));
+    CHECK(find(&display.root, "STORAGE_ERROR") && !find(&display.root, entry));
+    content.screen = MYBOT_LCD_SCREEN_START_UNKNOWN; // Reboot reloads the retained unknown record.
+    std::strcpy(content.error_code, "START_UNKNOWN");
+    update(display, content);
+    click(find(&display.root, entry));
+    CHECK(commands.size() == 4);
+    click(find(&display.root, confirm));
+    content.screen = MYBOT_LCD_SCREEN_PAIRING; // Revoked authentication returns through pairing.
+    content.error_code[0] = 0;
+    ++content.selection_revision;
+    update(display, content);
+    CHECK(find(&display.root, tr("等待配对", "Pairing")));
+    CHECK(!find(&display.root, confirm) && !find(&display.root, home_action()));
+    CHECK(commands.size() == 5 && events.empty());
+    mybot_lvgl_view_destroy();
+    CHECK(!live && !timer && display.root.children.empty());
+    std::puts("PASS unknown-start recovery UI: explicit confirmation, real acknowledgements, "
+              "rejections, retained storage failures and no automatic start");
+}
 int main() {
     lv_display_t display;
     display.root.width = 480;
@@ -981,7 +1096,8 @@ int main() {
     CHECK(find(&display.root, tr("启动结果未知", "Start outcome unknown")));
     CHECK(!find(&display.root, tr("开始翻译  >", "Start translation  >")));
     const auto locked_events = events.size();
-    click(find(&display.root, tr("请稍候", "Please wait")));
+    click(find(&display.root, tr("控制台已结束，恢复设备", "Console sessions ended")));
+    click(find(&display.root, tr("返回", "Back")));
     CHECK(events.size() == locked_events);
     content.screen = MYBOT_LCD_SCREEN_CLEANUP_PENDING;
     std::strcpy(content.error_code, "cloud_stop_failed");
@@ -1326,6 +1442,7 @@ int main() {
     CHECK(!live && !timer && display.root.children.empty());
     test_face_flow();
     test_meeting_flow();
+    test_start_recovery_flow();
     std::puts("PASS native simulator UI: USB availability, direct language selection, real volume, "
               "pause, streamed captions/history, lifecycle gates and allocation cleanup");
 }

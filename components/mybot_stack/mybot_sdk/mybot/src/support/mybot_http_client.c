@@ -300,12 +300,14 @@ static aosl_fd_t tcp_connect(const char *host, int port, uint64_t deadline) {
  * Send all bytes (retry on short send).
  * Returns 0 on success, -1 on error.
  */
-static int send_all(http_stream_t *stream, const char *data, size_t len, uint64_t deadline) {
+static int send_all(http_stream_t *stream, const char *data, size_t len, uint64_t deadline,
+                    bool *request_may_have_been_sent) {
     while (len > 0) {
         if (deadline_remaining_ms(deadline) <= 0) {
             return -1;
         }
 
+        *request_may_have_been_sent = true;
         int n = stream_send(stream, data, len, deadline);
 
         if (!stream->use_tls && n == AOSL_HAL_RET_EINTR) {
@@ -545,8 +547,8 @@ static int parse_content_length(const char *value, const char *end, size_t *out_
  */
 static int parse_response(const char *raw, size_t raw_len, int stream_closed,
                           mybot_http_client_response_t *resp) {
-    memset(resp, 0, sizeof(*resp));
-
+    /* Public entry points initialize the result before connecting. Preserve its
+     * transport-write evidence even if status/body parsing fails. */
     const char *p = raw;
     const char *end = raw + raw_len;
 
@@ -733,7 +735,7 @@ static int http_request(const char *method, const char *url, const char *content
     }
 
     /* Send the request. */
-    int ret = send_all(&stream, req, (size_t)req_len, deadline);
+    int ret = send_all(&stream, req, (size_t)req_len, deadline, &resp->request_may_have_been_sent);
     aosl_hal_free(req);
     if (ret < 0) {
         stream_close(&stream);
@@ -763,7 +765,11 @@ static int http_request(const char *method, const char *url, const char *content
 
 int mybot_http_client_get_ex(const char *url, const char *extra_headers,
                              mybot_http_client_response_t *resp) {
-    if (!url || !resp) {
+    if (!resp) {
+        return -1;
+    }
+    memset(resp, 0, sizeof(*resp));
+    if (!url) {
         return -1;
     }
     return http_request("GET", url, NULL, NULL, extra_headers, HTTP_TIMEOUT_MS, resp);
@@ -778,7 +784,11 @@ int mybot_http_client_post_ex(const char *url, const char *content_type, const c
 int mybot_http_client_post_timeout_ex(const char *url, const char *content_type, const char *body,
                                       const char *extra_headers, int timeout_ms,
                                       mybot_http_client_response_t *resp) {
-    if (!url || !resp || timeout_ms <= 0) {
+    if (!resp) {
+        return -1;
+    }
+    memset(resp, 0, sizeof(*resp));
+    if (!url || timeout_ms <= 0) {
         return -1;
     }
     return http_request("POST", url, content_type, body, extra_headers, timeout_ms, resp);
@@ -792,5 +802,6 @@ void mybot_http_client_response_free(mybot_http_client_response_t *resp) {
         }
         resp->body_len = 0;
         resp->status_code = 0;
+        resp->request_may_have_been_sent = false;
     }
 }

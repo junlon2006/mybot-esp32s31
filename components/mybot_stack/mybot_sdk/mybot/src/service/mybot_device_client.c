@@ -63,10 +63,9 @@ static int build_authorization_header(const char *scheme, const char *credential
 
 /* Own only the temporary header; URL/body are borrowed and raw belongs to the caller. */
 static int post_device_json(const char *url, const char *device_token, const char *body,
-                            int timeout_ms, mybot_http_client_response_t *raw,
-                            bool *request_attempted) {
-    if (request_attempted) {
-        *request_attempted = false;
+                            int timeout_ms, mybot_http_client_response_t *raw, bool *http_called) {
+    if (http_called) {
+        *http_called = false;
     }
     size_t header_size = MYBOT_DEVICE_CLIENT_MAX_TOKEN + 32U;
     char *headers = (char *)aosl_hal_malloc(header_size);
@@ -75,8 +74,8 @@ static int post_device_json(const char *url, const char *device_token, const cha
     }
     int ret = build_authorization_header("Device ", device_token, headers, header_size);
     if (ret == 0) {
-        if (request_attempted) {
-            *request_attempted = true;
+        if (http_called) {
+            *http_called = true;
         }
         ret = timeout_ms > 0
                   ? mybot_http_client_post_timeout_ex(url, "application/json", body, headers,
@@ -616,9 +615,9 @@ int mybot_device_client_start_conversation(const char *base_url, const char *dev
     mybot_http_client_response_t raw = {0};
     mybot_json_t *root = NULL;
     int result = -1;
-    bool request_attempted = false;
+    bool http_called = false;
     /* Provisioning the translation agent can outlast the normal 5 s HTTP budget. */
-    int ret = post_device_json(url, device_token, body, 30000, &raw, &request_attempted);
+    int ret = post_device_json(url, device_token, body, 30000, &raw, &http_called);
     mybot_json_free_string(body);
     root = raw.body ? mybot_json_parse(raw.body) : NULL;
     mybot_json_t *data = mybot_json_get_object_item(root, "data");
@@ -638,9 +637,10 @@ int mybot_device_client_start_conversation(const char *base_url, const char *dev
     bool cleanup_not_required = cleanup && cleanup->type == MYBOT_JSON_FALSE;
     if (ret < 0) {
         bool rejected = (raw.status_code >= 400 && raw.status_code < 500) || cleanup_not_required;
-        resp->start_unknown = request_attempted && !resp->conversation_id[0] && !rejected;
+        resp->start_unknown =
+            raw.request_may_have_been_sent && !resp->conversation_id[0] && !rejected;
         if (!resp->error_code[0]) {
-            set_start_error(resp, !request_attempted    ? "OUT_OF_MEMORY"
+            set_start_error(resp, !http_called          ? "OUT_OF_MEMORY"
                                   : resp->start_unknown ? "START_RESULT_UNKNOWN"
                                                         : "CONVERSATION_START_FAILED");
         }
@@ -679,9 +679,9 @@ int mybot_device_client_start_conversation(const char *base_url, const char *dev
 done:
     if (result != 0) {
         AOSL_LOG_ERR("translation start failed: transport=%d http=%d code=%s cleanup_required=%d "
-                     "start_unknown=%d response_bytes=%zu",
+                     "start_unknown=%d request_may_have_been_sent=%d response_bytes=%zu",
                      ret, raw.status_code, resp->error_code, resp->cleanup_required,
-                     resp->start_unknown, raw.body_len);
+                     resp->start_unknown, raw.request_may_have_been_sent, raw.body_len);
     }
     mybot_json_delete(root);
     mybot_http_client_response_free(&raw);

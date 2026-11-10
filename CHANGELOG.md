@@ -2,6 +2,11 @@
 
 ## Unreleased — standalone S31 translation
 
+- Add an explicit, confirmed recovery action for unknown starts after cloud sessions
+  are ended in the console; preserve Wi-Fi, binding and preferences, and keep binding polling active.
+- Distinguish HTTP failures before the first transport write from ambiguous starts,
+  preventing unsent requests from leaving a permanent unknown-start journal.
+
 - Add all modern Hangul syllables and Korean Jamo in a separate 20 px caption fallback,
   preserving existing Chinese/Japanese/English glyphs. Expand OTA slots to 5 MiB while
   retaining NVS and at least 300 KiB delivery headroom.

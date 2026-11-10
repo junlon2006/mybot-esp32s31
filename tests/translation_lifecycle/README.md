@@ -4,7 +4,7 @@ Run `./tests/translation_lifecycle/run.sh` from any directory. The runner compil
 lifecycle implementation with a deterministic KV store, HTTP completion queue, allocator and UTC
 clock, enables UBSan, and enforces a 30-second execution deadline.
 
-The 36 scenarios exercise cancellation before dispatch and after HTTP start, late start results
+The 41 scenarios exercise cancellation before dispatch and after HTTP start, late start results
 across disconnect/reconnect and shutdown, durable unknown outcomes, partial starts carrying cleanup
 IDs, exact original server/device/credential cleanup after endpoint changes or re-pair requests,
 1/2/4/8/16/30-second stop retry intervals, revoked credentials, expiry without renewal, stale and
@@ -20,6 +20,14 @@ while the original start failure or latched storage failure remains available to
 This test controls callback ordering and atomic mailboxes rather than creating real RTC/network
 threads. It does not establish network behavior, acoustic echo cancellation, speaker timing, audio
 quality, or long-duration hardware stability.
+
+Unknown-start recovery requires explicit user confirmation that every device session ended in the
+web console. Tests cover reboot persistence, erasing only the journal while preserving binding,
+languages, Wi-Fi and volume records, erase failure retention, and rejecting known parents, active
+work or stale states. Periodic binding polls continue while an unknown start is idle; bound,
+unbound and revoked-auth responses never clear that journal. Invalid binding clears only the auth
+record, retaining the original pending identity until confirmation permits re-pairing. In-flight
+start/stop, offline and stale-network cases do not admit conflicting binding work.
 
 Mode selection is volatile and starts at listen after reboot. Mode/language changes are
 rejected as soon as a start is requested, during an active session or while cleanup remains.

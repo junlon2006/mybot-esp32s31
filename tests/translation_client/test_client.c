@@ -89,6 +89,7 @@ static time_t wall_time = 1793664000; /* 2026-11-03 00:00:00 UTC */
 static bool change_time_on_post;
 static time_t post_wall_time;
 static bool fail_header_allocation;
+static bool response_may_have_been_sent;
 static int allocation_calls, fail_allocation_at;
 static unsigned checks;
 static char diagnostic_log[2048];
@@ -154,6 +155,7 @@ static int respond_to_post(const char *url, const char *content_type, const char
     assert(strlen(body) < sizeof(request_body));
     strcpy(request_body, body);
     response->status_code = response_status;
+    response->request_may_have_been_sent = response_may_have_been_sent;
     if (response_body) {
         response->body_len = strlen(response_body);
         response->body = malloc(response->body_len + 1);
@@ -192,6 +194,7 @@ static void respond(int status, int result, const char *body) {
     response_status = status;
     response_result = result;
     response_body = body;
+    response_may_have_been_sent = true;
     http_calls = 0;
     request_timeout = -1;
     allocation_calls = 0;
@@ -512,6 +515,30 @@ static void test_local_failures(void) {
     fail_header_allocation = false;
 }
 
+static void test_unsent_start_failures_allow_retry(void) {
+    for (unsigned face = 0; face < 2; ++face) {
+        respond(0, -1, NULL);
+        response_may_have_been_sent = false;
+        mybot_device_conversation_t session;
+        assert((face ? start_face(&session) : start(&session)) < 0);
+        assert(http_calls == 1 && !session.start_unknown && !session.cleanup_required);
+        assert(!session.conversation_id[0]);
+        assert(!strcmp(session.error_code, "CONVERSATION_START_FAILED"));
+
+        respond(0, -1, NULL);
+        assert((face ? start_face(&session) : start(&session)) < 0);
+        assert(http_calls == 1 && session.start_unknown && !session.cleanup_required);
+
+        /* A returned parent remains authoritative even if transport evidence is
+         * inconsistent: never discard its required cleanup identity. */
+        respond(201, -1, valid_response);
+        response_may_have_been_sent = false;
+        assert((face ? start_face(&session) : start(&session)) < 0);
+        assert(session.cleanup_required && !session.start_unknown);
+        assert(!strcmp(session.conversation_id, "parent-1"));
+    }
+}
+
 static void test_stop(void) {
     static const struct {
         int status, transport;
@@ -683,6 +710,7 @@ int main(void) {
     test_start_failures();
     test_gateway_start_results();
     test_local_failures();
+    test_unsent_start_failures_allow_retry();
     test_allocation_failures();
     test_stop();
     printf("translation client: %u protocol/fault cases passed with real JSON parsing\n", checks);

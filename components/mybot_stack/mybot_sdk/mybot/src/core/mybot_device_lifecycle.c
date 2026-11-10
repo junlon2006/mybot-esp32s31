@@ -76,6 +76,16 @@ static mybot_device_state_t state(const mybot_device_lifecycle_t *lifecycle) {
     return (mybot_device_state_t)aosl_atomic_read(&lifecycle->state);
 }
 
+static bool unknown_start_idle(const mybot_device_lifecycle_t *lifecycle) {
+    return lifecycle && state(lifecycle) == MYBOT_DEVICE_STATE_START_UNKNOWN &&
+           lifecycle->pending_unknown && lifecycle->journal_present && lifecycle->cleanup_needed &&
+           !lifecycle->conversation_id[0] && !lifecycle->start_pending &&
+           !lifecycle->stop_pending && !lifecycle->local_media_active &&
+           !lifecycle->conversation_requested && !lifecycle->storage_fault &&
+           !aosl_atomic_read(&lifecycle->shutting_down) &&
+           aosl_atomic_read(&lifecycle->stop_request) == STOP_NONE;
+}
+
 static void set_state(mybot_device_lifecycle_t *lifecycle, mybot_device_state_t next) {
     if (state(lifecycle) == next)
         return;
@@ -744,8 +754,16 @@ void mybot_device_lifecycle_service_result(mybot_device_lifecycle_t *lifecycle,
         state(lifecycle) == MYBOT_DEVICE_STATE_AWAITING_CLAIM)
         apply_pair_binding(lifecycle, request);
     else if (request->type == MYBOT_DEVICE_SERVICE_DEVICE_POLL &&
-             (state(lifecycle) == MYBOT_DEVICE_STATE_RUNTIME || lifecycle->local_media_active))
+             (state(lifecycle) == MYBOT_DEVICE_STATE_RUNTIME || lifecycle->local_media_active ||
+              unknown_start_idle(lifecycle)))
         apply_runtime_binding(lifecycle, request);
+}
+
+static void tick_runtime_binding(mybot_device_lifecycle_t *lifecycle) {
+    if (++lifecycle->runtime_tick_counter >= lifecycle->runtime_poll_interval * 10) {
+        lifecycle->runtime_tick_counter = 0;
+        poll_binding(lifecycle, MYBOT_DEVICE_SERVICE_DEVICE_POLL);
+    }
 }
 
 void mybot_device_lifecycle_tick(mybot_device_lifecycle_t *lifecycle) {
@@ -772,6 +790,11 @@ void mybot_device_lifecycle_tick(mybot_device_lifecycle_t *lifecycle) {
     if (lifecycle->cleanup_needed ||
         (lifecycle->journal_present && !lifecycle->local_media_active &&
          !lifecycle->start_pending)) {
+        /* Binding status never proves a cloud conversation ended. Keep the
+         * unknown journal while allowing the ordinary binding/auth refresh. */
+        if (unknown_start_idle(lifecycle) && !lifecycle->pairing_requested &&
+            lifecycle->device_token[0] && aosl_atomic_read(&lifecycle->network_available))
+            tick_runtime_binding(lifecycle);
         if (lifecycle->start_pending || lifecycle->pending_unknown ||
             !lifecycle->conversation_id[0])
             return;
@@ -817,10 +840,7 @@ void mybot_device_lifecycle_tick(mybot_device_lifecycle_t *lifecycle) {
         }
         /* fall through */
     case MYBOT_DEVICE_STATE_IN_CONVERSATION:
-        if (++lifecycle->runtime_tick_counter >= lifecycle->runtime_poll_interval * 10) {
-            lifecycle->runtime_tick_counter = 0;
-            poll_binding(lifecycle, MYBOT_DEVICE_SERVICE_DEVICE_POLL);
-        }
+        tick_runtime_binding(lifecycle);
         break;
     default:
         break;
@@ -896,6 +916,17 @@ void mybot_device_lifecycle_request_stop(mybot_device_lifecycle_t *lifecycle) {
         lifecycle->start_cancelled = true;
     if (lifecycle->start_pending || lifecycle->local_media_active)
         aosl_atomic_set(&lifecycle->stop_request, STOP_HANGUP);
+}
+
+int mybot_device_lifecycle_confirm_start_recovery(mybot_device_lifecycle_t *lifecycle) {
+    if (!unknown_start_idle(lifecycle))
+        return -1;
+    if (clear_pending(lifecycle) < 0)
+        return -1;
+    lifecycle->error_code[0] = '\0';
+    AOSL_LOG_NTC("unknown translation start reconciled by explicit user confirmation");
+    publish_idle(lifecycle);
+    return 0;
 }
 
 void mybot_device_lifecycle_notify_conversation_ended(mybot_device_lifecycle_t *lifecycle) {

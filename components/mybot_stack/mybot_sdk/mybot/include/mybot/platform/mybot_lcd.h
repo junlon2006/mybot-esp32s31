@@ -121,7 +121,7 @@ typedef struct {
     bool usb_audio_available;
     /** Face-to-face microphone selection; NONE until explicitly selected. */
     mybot_translation_direction_t input_direction;
-    /** Advances after each mode/direction command is applied or rejected. */
+    /** Advances after each mode/direction/start-recovery command is applied or rejected. */
     uint32_t selection_revision;
     /** Copied caption metadata; text is read through mybot_ui_copy_caption(). */
     uint32_t caption_generation;

@@ -405,6 +405,64 @@ int main(int argc, char **argv) {
         CHECK(commands.size() == 5);
         CHECK(submit() == 0);
         CHECK(commands.size() == 6 && commands.back().value == 20);
+    } else if (scenario == "start_recovery") {
+        touch_sample(true, false);
+        mybot_ui_command_t command{};
+        command.type = MYBOT_UI_CONFIRM_START_RECOVERY;
+        command.value = 1;
+        auto submit = [&]() -> int {
+            touch_sample(true, true);
+            touch_sample(true, false);
+            return mybot_ui_input_command(&command);
+        };
+        CHECK(mybot_ui_input_command(&command) < 0); // Confirmation needs a fresh touch.
+        const mybot_state_t blocked[] = {
+            MYBOT_STATE_READY,
+            MYBOT_STATE_TRANSLATION_ERROR,
+            MYBOT_STATE_IN_CONVERSATION,
+            MYBOT_STATE_TRANSLATION_STARTING,
+            MYBOT_STATE_TRANSLATION_STOPPING,
+            MYBOT_STATE_CLEANUP_PENDING,
+            MYBOT_STATE_PAIRING,
+        };
+        for (auto blocked_state : blocked) {
+            state = blocked_state;
+            CHECK(submit() < 0);
+        }
+        CHECK(commands.empty());
+        state = MYBOT_STATE_START_UNKNOWN;
+        command.value = 0;
+        CHECK(submit() < 0); // A default-initialized command cannot confirm recovery.
+        command.value = 1;
+        CHECK(submit() == 0);
+        CHECK(commands.size() == 1 && commands.back().type == MYBOT_UI_CONFIRM_START_RECOVERY);
+        CHECK(mybot_ui_input_command(&command) < 0); // One gesture admits one command.
+
+        state = MYBOT_STATE_READY;
+        touch_sample(true, true);
+        touch_sample(true, false);
+        state = MYBOT_STATE_START_UNKNOWN;
+        CHECK(mybot_ui_input_command(&command) < 0); // An older page cannot confirm a new lock.
+        CHECK(commands.size() == 1);
+        touch_sample(true, true);
+        touch_sample(true, false);
+        state = MYBOT_STATE_READY;
+        CHECK(mybot_ui_input_command(&command) < 0);
+        CHECK(commands.size() == 1);
+
+        state = MYBOT_STATE_START_UNKNOWN;
+        failure = "ui_command";
+        CHECK(submit() < 0);
+        CHECK(submit() == 0); // A rejected mailbox remains retryable with a fresh touch.
+        CHECK(commands.size() == 2);
+        touch_sample(true, true);
+        ops->destroy(ctx);
+        CHECK(ops->init(&ctx, emit, &events) == 0);
+        touch_sample(true, false);
+        CHECK(mybot_ui_input_command(&command) < 0);
+        CHECK(commands.size() == 2);
+        CHECK(submit() == 0);
+        CHECK(commands.size() == 3);
     } else if (scenario == "ui_controls") {
         touch_sample(true, false);
         touch_sample(true, true);
