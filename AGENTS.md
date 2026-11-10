@@ -5,11 +5,17 @@ The former multi-board selector has been removed. Use `idf.py --preview`.
 User instructions take precedence. Preserve unrelated changes; do not commit or push unless asked.
 
 The MyBot SDK under `components/mybot_stack/mybot_sdk/mybot/` is a project-maintained
-translation fork. Keep its cloud-AEC MIC/reference PCM contract and 60 ms cadence.
+translation fork. Keep 16 kHz mono S16 at the platform PCM boundary and the 60 ms
+RTSA cadence. Local ESP-SR AEC is the Mosaico default: the physical microphone and
+synchronized ES8311 digital DAC reference produce cleaned mono PCM. Cloud AEC is
+an alternative and retains its interleaved MIC/reference transport; never combine
+local and cloud AEC. Disabled AEC is diagnostic raw mono capture.
 Media uses `v2vt/listen`; face-to-face uses `listen_speak` with two RTC connections
 and one RTM login/channel subscription. Mosaico meetings also use listen_speak:
-USB capture feeds LISTEN with zero AEC reference; physical MIC feeds SPEAK with the
-physical speaker reference. LISTEN plays on the codec; SPEAK returns through USB IN. There is no
+USB capture feeds LISTEN without acoustic AEC; the locally cleaned physical MIC
+feeds SPEAK. When Cloud AEC is selected, LISTEN pairs USB PCM with zero reference
+and SPEAK pairs physical MIC with the SDK playback reference. LISTEN plays on the
+codec; SPEAK returns through USB IN. There is no
 assistant compatibility runtime. Keep the supplied RTSA library unchanged.
 
 The separate CMake option `MYBOT_MOSAICO_UAC_TEST` builds only the V1.2 diagnostic
@@ -33,8 +39,10 @@ live directly under `components/mybot_stack`; register only one implementation e
 Only local source-built AOSL uses WHOLE_ARCHIVE. Keep RTSA a normal archive and
 inspect the final map to reject host AOSL objects. Include MyBot only via public headers.
 
-The first firmware intentionally has no video. Do not enable camera/JPEG dependencies
-without an explicit new request. Display boards use the shared LVGL view automatically.
+The firmware intentionally has no camera, video or software-JPEG runtime. Do not
+enable those paths without an explicit new request. ESP-SR's managed ESP-DL
+dependency brings esp_new_jpeg transitively; leave that dependency unmodified and
+do not enable an application JPEG path. Display boards use the shared LVGL view automatically.
 Shared I2C0 belongs to the board; codec/touch adapters must not delete it.
 
 Mosaico uses ES8311, 16 kHz standard Philips I2S, two 16-bit slots and MCLK256.
@@ -46,6 +54,12 @@ register values or claim physical slot/quality validation from host tests.
 Capture/playback must remain independent, with shared codec references and bounded
 stop. Void destroy transfers ownership; failed teardown stays driver-owned for
 later reclamation, never requiring callers to retry an invalid pointer.
+Capture DSP reset runs synchronously on the capture owner, serialized with read,
+at PCM fences for pause/resume, direction changes, session boundaries and RTC
+readiness/reconnect. Clear partial input, pending output and filter history before
+acknowledgement; do not defer reset to the next read. A failure blocks readiness
+until capture stop/start recovery succeeds. Stop must wait for in-flight read/reset
+before releasing DSP resources.
 
 Large application buffers/stacks use PSRAM as appropriate; keep ISR/kernel state,
 required descriptors and flash-writing stacks in internal memory. Respect S31 DMA
@@ -78,5 +92,5 @@ bidirectional meeting tests passing after the PSRAM task-stack revision (e279926
 Mosaico media/face-to-face support is implemented. Later review fixes
 have host/build results only until another hardware result is recorded.
 Translation quality, AEC, reconnect/endurance, USB current and VCC ramp behavior require their own results.
-Translation route subscription, language controls, cloud AEC and recovery require
+Translation route subscription, language controls, Local/Cloud AEC and recovery require
 their own hardware results. The development service is https://mybot.sh3t.agoralab.co/api.

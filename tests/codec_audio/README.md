@@ -1,3 +1,4 @@
+<!-- SPDX-License-Identifier: Apache-2.0 -->
 # Mosaico codec audio host checks
 
 Run `sh tests/codec_audio/run.sh` to compile the actual platform driver with UBSan,
@@ -9,7 +10,17 @@ Coverage includes initialization and allocation failures, failure during start, 
 cleanup and retries, rejection of a new stream during incomplete cleanup, independent
 capture/playback ownership, repeated starts/stops, codec-open reference lifetime,
 blocked capture and bounded stop, playback stop failure, volume persistence, native
-TDM configuration, PCM slot conversion and partial progress on timeout.
+stereo I2S configuration, PCM slot conversion and partial progress on timeout.
+
+Both Local AEC and legacy capture builds run. Local-AEC cases use the real helper
+with a deterministic algorithm mock: five chunk sizes (64/160/256/512/960), full
+and partial I2S reads, varied caller frame counts and more than 70,000 consecutive
+MIC/reference samples per combination. DSP buffers must remain aligned PSRAM.
+The capture-owner reset is synchronous: chunk-256 output carry and partial input
+are discarded before return, create/NLP failures propagate without retained old
+PCM, and retries recover. A reset blocked in algorithm creation keeps its context
+and buffers alive when concurrent stop times out; cleanup succeeds after the owner
+exits. Allocation and invalid-chunk failures reclaim every helper resource.
 
 Public `destroy()` transfers ownership even when cleanup times out. The driver
 retains the context in its deferred list and retries once during a subsequent

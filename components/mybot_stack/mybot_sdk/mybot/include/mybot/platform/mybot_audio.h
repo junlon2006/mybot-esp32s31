@@ -87,6 +87,20 @@ typedef struct {
      * @param ctx device context from init()
      */
     void (*destroy)(void *ctx);
+
+    /**
+     * Optional: discard capture DSP/filter history when PCM is fenced.
+     *
+     * The SDK calls this on the capture worker, serialized with read(), while
+     * capture is running. Complete the reset before returning; do not defer it
+     * to another read. Keep the call bounded and retain device/stream ownership.
+     * Playback remains independent. NULL when no reset is required.
+     *
+     * @param ctx device context from init()
+     * @return 0 after DSP carry is cleared, -1 when capture must recover through
+     *         stop()/start() before media readiness can be restored.
+     */
+    int (*reset)(void *ctx);
 } mybot_audio_capture_ops_t;
 
 /**

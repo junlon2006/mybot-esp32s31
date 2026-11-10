@@ -30,8 +30,9 @@ and current limitations.
 - HTTPS with `esp-tls`, the system CA bundle, SNI, and hostname verification.
 - 16 kHz mono signed-16 PCM capture and playback with 60 ms packets for the bundled RTSA
   package; other packet durations require a matching RTSA build.
-- Agora RTSA microphone/reference uplink with Cloud AEC and optional AI QoS (disabled by default),
-  RTM channel subscription, and subscription to the returned translated-audio publisher.
+- ESP-SR full-duplex local AEC by default, using the ES8311 microphone and synchronized DAC
+  reference; Cloud AEC remains selectable. Agora RTSA also provides optional AI QoS (disabled
+  by default), RTM channel subscription and subscription to the translated-audio publisher.
 - A shared bounded PCM playback buffer with independent capture/playback and reference-counted codec ownership.
 - ES8311 standard I2S stereo with MCLK256; the Mosaico adapter converts to/from SDK mono PCM.
 - A native 480×480 LVGL layout for the CO5300 QSPI display and CST9220 touch.
@@ -51,7 +52,7 @@ The user confirmed basic bidirectional USB meeting translation after the PSRAM-s
 and normal captions with 40-row partial buffers; touch/start requests have device logs.
 The standalone UAC microphone/speaker test is a separate passed baseline. Subsequent review fixes
 have host-test and Chinese-build results; they have not received a new hardware acceptance.
-Audio quality, Cloud AEC, reconnect/endurance, USB current and the revised VCC ramp need separate results.
+Local/Cloud AEC quality, reconnect/endurance, USB current and the revised VCC ramp need separate results.
 See the [board guide](docs/esp-mosaico-v1.2.zh-CN.md) and [validation record](docs/s31-validation.md).
 
 ## Build
@@ -65,15 +66,7 @@ install `ffmpeg`, then activate ESP-IDF in the current shell:
 test "$(idf.py --preview --version)" = "ESP-IDF v6.1"
 ```
 
-Build both delivery variants with the same entrypoint used by CI:
-
-```sh
-python3 scripts/build_all.py --build-root build/delivery --output-root releases/delivery
-```
-
-CI invokes the same script per language with isolated temporary build and release roots.
-The script performs reconfigure, build, size, merge, provenance and delivery checks.
-For iterative single-board development, keep using `build/mosaico-v1.2`:
+All local firmware builds use `build/mosaico-v1.2` and its `sdkconfig`:
 
 ```sh
 idf.py --preview -B build/mosaico-v1.2 \
@@ -82,8 +75,16 @@ idf.py --preview -B build/mosaico-v1.2 \
   -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;ci/ptime60.defaults" build
 ```
 
-The [release guide](docs/RELEASING.md) describes the script's isolated roots, build-bound source
-records and delivery files.
+New configurations default to Local AEC. Existing `sdkconfig` choices are preserved;
+new defaults do not switch an older Cloud AEC configuration. Before rebuilding for
+a different mode, run `idf.py --preview -B build/mosaico-v1.2 menuconfig` and choose
+the Echo cancellation mode under `mybot`.
+
+CI uses `scripts/build_all.py --language LANGUAGE --aec-mode MODE` with isolated
+temporary build and release roots. Its AEC modes are `local` (default), `cloud` and
+`disabled` for diagnosis. The script performs reconfigure, build, size, merge, provenance
+and delivery checks. The [release guide](docs/RELEASING.md) describes packaging from
+the fixed local build and the manifest's actual `aec_mode`.
 The direct flash command and board-specific hardware details are in the
 [board guide](docs/esp-mosaico-v1.2.zh-CN.md).
 
@@ -113,7 +114,7 @@ See the [USB integration guide](docs/MOSAICO_USB_AUDIO.zh-CN.md).
 The passed [standalone UAC diagnostic](diagnostics/mosaico_uac/README.zh-CN.md) remains a separate USB audio reference.
 
 Use `idf.py --preview -B build/mosaico-v1.2 menuconfig` under `mybot` to select the product language,
-initial translation languages, Cloud AEC and AI QoS. The product language selects UI text and
+initial translation languages, Local/Cloud AEC mode and AI QoS. The product language selects UI text and
 prompts; both builds use `https://mybot.sh3t.agoralab.co/api`. Runtime language selections take
 precedence over the initial translation languages.
 
@@ -127,7 +128,7 @@ hardware DMA, kernel objects, and the flash-writing main stack retain internal R
 
 Current build coverage, recorded real-device results, and unsupported areas are maintained in
 the [validation record](docs/s31-validation.md). Local development builds Chinese firmware;
-CI covers both languages and verifies link and delivery metadata. The record distinguishes local builds
+CI builds Chinese/English Local AEC and Chinese Cloud AEC, and verifies link and delivery metadata. The record distinguishes local builds
 from remote CI and hardware results. CI builds and host tests do not establish acoustic
 quality, panel behavior, power sequencing, Wi-Fi recovery, or long-duration results.
 

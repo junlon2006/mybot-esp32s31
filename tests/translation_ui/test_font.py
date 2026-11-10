@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT
-"""Check static UI coverage and the bounded, packed live-caption font assets."""
+"""Check static UI coverage and bounded Chinese/English/Japanese caption fonts."""
 from pathlib import Path
 import re
 
@@ -54,25 +54,28 @@ for pixels, body in zip(caption_sections[1::2], caption_sections[2::2]):
     assert re.search(r"\.glyph_id_start\s*=\s*1\b", body)
     assert "LV_FONT_FMT_TXT_CMAP_SPARSE_TINY" in body
     offset = 0
-    for codepoint, descriptor in glyphs:
+    for index, (codepoint, descriptor) in enumerate(glyphs):
         metrics = {key: int(value) for key, value in re.findall(
             r"\.(\w+)\s*=\s*(-?\d+)", descriptor)}
-        assert metrics["bitmap_index"] == offset, "incorrect glyph bitmap index"
+        start = metrics["bitmap_index"]
+        assert start == offset, "incorrect glyph bitmap index"
         assert 0 <= metrics["adv_w"] < 4096
         assert 0 <= metrics["box_w"] < 256 and 0 <= metrics["box_h"] < 256
         assert -128 <= metrics["ofs_x"] < 128 and -128 <= metrics["ofs_y"] < 128
         count = metrics["box_w"] * metrics["box_h"]
-        size = (count + 3) // 4
-        if count % 4:
-            assert bitmap[offset + size - 1] & ((1 << (8 - 2 * (count % 4))) - 1) == 0, (
-                "glyph U+%s has nonzero trailing pixel padding" % codepoint)
-        offset += size
-    assert offset == len(bitmap), "2 bpp bitmap size does not match glyph dimensions"
+        next_offset = (int(re.search(r"\.bitmap_index\s*=\s*(\d+)", glyphs[index + 1][1]).group(1))
+                       if index + 1 < len(glyphs) else len(bitmap))
+        assert start <= next_offset <= len(bitmap)
+        if count:
+            assert next_offset > start and bitmap[next_offset - 1] == 0, (
+                "glyph U+%s lacks safe RLE lookahead" % codepoint)
+        else:
+            assert next_offset == start
+        offset = next_offset
     assert re.search(r"\.bpp\s*=\s*2\b", body)
     assert "mybot_caption_font_" + pixels in body
-    # Both antialiasing levels must survive the 8-bit to 2-bit quantization.
-    levels = {(value >> shift) & 3 for value in bitmap for shift in (0, 2, 4, 6)}
-    assert levels == {0, 1, 2, 3}
+    assert ".bitmap_format = LV_FONT_FMT_TXT_COMPRESSED" in body
+    assert re.search(r"Pixels SHA256: [0-9a-f]{64}", body)
     estimated_size += len(bitmap) + (len(glyphs) + 1) * 8 + len(glyphs) * 2
 
 han = set()
@@ -90,7 +93,31 @@ assert {ord(c) for c in "、。，！？：；（）【】《》〈〉「」『�
 assert re.search(r"\.fallback\s*=\s*&mybot_caption_font_20\b", caption_text)
 assert {ord(c) for c in "CAFÉ naïve – “字幕”"} <= (
     caption_available["28"] | caption_available["20"])
-assert estimated_size < 900 * 1024, "caption fonts exceed the 900 KiB flash budget"
+japanese = set(range(0x3041, 0x3097)) | set(range(0x3099, 0x3100))
+japanese |= set(range(0x31F0, 0x3200)) | set(range(0xFF61, 0xFFA0))
+for encoding, leads, trails in (
+    ("euc_jp", range(0xA1, 0xFF), range(0xA1, 0xFF)),
+    ("cp932", list(range(0x81, 0xA0)) + list(range(0xE0, 0xFD)),
+     list(range(0x40, 0x7F)) + list(range(0x80, 0xFD))),
+):
+    for lead in leads:
+        for trail in trails:
+            try:
+                character = bytes((lead, trail)).decode(encoding)
+            except UnicodeDecodeError:
+                continue
+            if len(character) == 1 and not 0xE000 <= ord(character) <= 0xF8FF:
+                japanese.add(ord(character))
+assert japanese <= caption_available["20"], "Japanese font coverage is incomplete"
+for sample in ("日本語の翻訳を開始します。", "ガイド・ヴォイス、ﾊﾟｰﾃｨｰ。",
+               "か\u3099／は\u309a", "々〆〇ゝゞヽヾ", "髙橋・﨑山"):
+    assert {ord(c) for c in sample} <= caption_available["20"], sample
+for codepoint in ("3099", "309A"):
+    descriptor = re.search(r"/\* U\+" + codepoint + r" \*/\s*\{([^}]+)\}", caption_text).group(1)
+    assert re.search(r"\.adv_w\s*=\s*0\b", descriptor)
+    assert int(re.search(r"\.ofs_x\s*=\s*(-?\d+)", descriptor).group(1)) < 0
+assert estimated_size < 1024 * 1024, "caption fonts exceed the 1 MiB flash budget"
 assert "Noto Sans SC" in caption_text
-print("PASS caption fonts: all 6763 GB2312 Han glyphs, Latin-1, punctuation, fallback; "
+assert "#define LV_USE_FONT_COMPRESSED 1" in (root / "components/lvgl/lv_conf.h").read_text()
+print("PASS caption fonts: GB2312, JIS X 0208/CP932, kana, Latin-1, punctuation, fallback; "
       "%d bytes including packed bitmaps and maps" % estimated_size)

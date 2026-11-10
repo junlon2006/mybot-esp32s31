@@ -2,7 +2,13 @@
 
 ## Unreleased — standalone S31 translation
 
-- Remove the former second S31 board, its drivers/tests/probes and the multi-board selector. ESP-Mosaico CoreBoard V1.2 is now the only supported target, with one 480×480 UI and a two-language CI matrix.
+- Reset Local AEC partial input, queued output and filter history synchronously at capture fences for pause, direction, session and RTC readiness changes; failed resets require capture recovery before media resumes.
+
+- Validate and identify Local/Cloud/Disabled AEC in delivery configuration, compiled flags, live links and manifests. CI builds Chinese/English Local AEC plus a Chinese Cloud AEC comparison.
+
+- Record ESP-SR and transitive dependency versions, binary provenance and actual license terms; include retained license texts with packaged firmware and align maintenance documentation with default Local AEC.
+
+- Remove the former second S31 board, its drivers/tests/probes and the multi-board selector. ESP-Mosaico CoreBoard V1.2 is now the only supported target, with one 480×480 UI.
 
 - Move touch gesture validation, UI command mailboxes, physical-key debounce and maintenance holds into one shared input router, and route LVGL network, caption and command access through a narrow UI port.
 

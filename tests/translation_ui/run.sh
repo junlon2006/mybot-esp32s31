@@ -27,3 +27,4 @@ for language in 0 1; do
         "$test_build_dir/test_view"
 done
 python3 "$repo_root/tests/translation_ui/test_font.py"
+sh "$repo_root/tests/translation_ui/run_caption_font.sh"

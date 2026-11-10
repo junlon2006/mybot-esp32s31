@@ -47,11 +47,13 @@ Mosaico V1.2 固件采用固定的 USB 2.0 总线供电策略：FS/HS 配置描�
 
 ## 音频与资源边界
 
-- USB 保持 48 kHz stereo S16，SDK、Codec 和 RTSA 保持 16 kHz mono S16、60 ms。
+- USB 保持 48 kHz stereo S16，SDK 的平台 PCM 契约保持 16 kHz mono S16，RTSA 保持
+  60 ms 节奏；ES8311 总线仍为 16 kHz、两个 16-bit 时隙。
   电脑输入经过低通滤波和 3:1 降采样；返回电脑的译音经过插值滤波和 1:3 升采样。
-- 物理音频管线负责麦克风采集和 LISTEN 译音播放。SPEAK 上行使用设备扬声器的实际
-  播放参考作为云 AEC 参考。USB 管线负责电脑输入和 SPEAK 译音回传，其 LISTEN 上行
-  的 AEC 参考全零，两路均保留 SDK 现有 MIC/reference 交错协议。
+- 物理音频管线负责麦克风采集和 LISTEN 译音播放。默认端侧 AEC 使用 ES8311 同采样时钟
+  返回的麦克风/DAC 参考，消除板载扬声器译音回采；USB 管线负责电脑输入和 SPEAK 译音
+  回传，不经过声学 AEC。选择 Cloud AEC 时仍保留物理 MIC/播放参考和 USB 零参考的原有
+  交错协议。
 - 会议设置的“我的语言”映射 `local_language`，默认 `zh-CN`；“对方语言”映射
   `remote_language`，默认 `en-US`。请求模式为 `listen_speak`。
 - USB OUT 使用有界队列、20 ms 常态余量和水位反馈；超限时丢弃过期音频以追上当前

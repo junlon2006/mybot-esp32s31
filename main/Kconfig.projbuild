@@ -54,9 +54,30 @@ menu "mybot"
         int
         default 60 if MYBOT_AUDIO_PTIME_60
 
-    config MYBOT_CLOUD_AEC
-        bool "Enable cloud AEC"
-        default y
+    choice MYBOT_AEC_MODE
+        prompt "Echo cancellation"
+        default MYBOT_LOCAL_AEC
+
+        config MYBOT_LOCAL_AEC
+            bool "Local software AEC (ESP-SR)"
+            help
+                Capture the ES8311 microphone and synchronized DAC reference,
+                run ESP-SR full-duplex AEC in the platform audio adapter, and
+                upload the cleaned mono microphone signal. Cloud AEC remains
+                available as an alternative but is not combined with local AEC.
+
+        config MYBOT_CLOUD_AEC
+            bool "Cloud AEC"
+            help
+                Upload the existing interleaved microphone/playback-reference
+                format for server-side echo cancellation.
+
+        config MYBOT_AEC_DISABLED
+            bool "Disable AEC"
+            help
+                Diagnostic mode. Upload raw microphone PCM without local or
+                cloud echo cancellation.
+    endchoice
 
     config MYBOT_AI_QOS
         bool "Enable Agora AI QoS"

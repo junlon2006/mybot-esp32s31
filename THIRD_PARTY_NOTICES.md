@@ -16,6 +16,10 @@ The root Apache-2.0 license applies to project-maintained code unless a file sta
 | Espressif TinyUSB driver 2.4.0 | Apache-2.0 | generated `managed_components/espressif__esp_tinyusb/LICENSE` and file notices |
 | TinyUSB 0.19.0~3 | MIT plus retained file notices | generated `managed_components/espressif__tinyusb/LICENSE` and package file notices |
 | Espressif USB Device UAC 1.3.1 and CMake Utilities 1.3.0 | Apache-2.0 plus retained file notices | UAC headers/configuration in production Mosaico; full runtime and CMake Utilities in the standalone diagnostic. Licenses remain under generated `managed_components/espressif__usb_device_uac/license.txt` and `espressif__cmake_utilities/license.txt` |
+| ESP-SR 2.6.0 | ESPRESSIF MIT (Espressif products); Apache-2.0 file notices | package/binary terms retained verbatim in [licenses/esp-sr-2.6.0.LICENSE](licenses/esp-sr-2.6.0.LICENSE); unmodified package at `managed_components/espressif__esp-sr` |
+| ESP-DL 3.3.15 | MIT plus retained file notices | [licenses/esp-dl-3.3.15.LICENSE](licenses/esp-dl-3.3.15.LICENSE); ESP-SR transitive dependency |
+| dl_fft 0.8.0 | manifest declares MIT; FFT C/assembly files also carry Apache-2.0 | unmodified `managed_components/espressif__dl_fft` source notices; no package-root LICENSE supplied |
+| esp_new_jpeg 1.0.2 | ESPRESSIF MIT (Espressif products) | [licenses/esp_new_jpeg-1.0.2.LICENSE](licenses/esp_new_jpeg-1.0.2.LICENSE); ESP-DL transitive dependency, without live JPEG code in the validated firmware |
 | Pairing prompt and digit recordings | Apache-2.0, SDK asset provenance | `components/mybot_platform/assets/locales/`, `SOURCES.json` and the retained MyBot license |
 | Noto Sans SC UI glyph subset | SIL Open Font License 1.1 | `components/mybot_platform/src/drivers/display/assets/licenses/LVGL_VIEW_FONT_LICENSE.txt` |
 | ESP-IDF v6.1 | Apache-2.0 plus component-specific terms | external development SDK |
@@ -30,11 +34,40 @@ The esp-wifi-connect 3.2.2 manifest declares MIT, but its archive omitted the li
 
 The complete official `esp_codec_dev` 1.5.9 release, LVGL and the inherited LVGL-port display/runtime subset retain their license files and file-level notices. Existing LVGL-port integration corrections remain documented in its `PATCHES.md`; this update preserves that baseline. Local CMake wrappers select the S31 runtime sources; they do not remove licenses from the source snapshots. Managed base-touch and cJSON licenses accompany their generated packages.
 
+## Local AEC dependency terms
+
+ESP-SR's package license is headed **ESPRESSIF MIT License**, copyright (c) 2018
+ESPRESSIF SYSTEMS (SHANGHAI) PTE LTD. Its grant states “Permission is hereby granted
+for use on all ESPRESSIF SYSTEMS products”. This condition applies to the supplied
+ESP32-S31 binary libraries; they are not relicensed by the project's Apache-2.0
+license. `include/esp32s31/esp_aec.h` and other source files retain their own
+Apache-2.0 notices, including Espressif's 2015–2019 copyright.
+
+The same product-use condition appears in esp_new_jpeg's ESPRESSIF MIT license,
+copyright (c) 2024 ESPRESSIF SYSTEMS (SHANGHAI) CO.，LTD. ESP-DL instead supplies the
+ordinary MIT license, copyright (c) 2021 Espressif Systems (Shanghai) Co., Ltd.
+All three package LICENSE files are copied byte for byte into `licenses/`.
+
+dl_fft's manifest declares MIT, but the 0.8.0 package supplies no root LICENSE.
+Retain its per-file terms: the linked `dl_fft2r_fc32_ansi.c` and
+`dl_fft4r_fc32_ansi.c` carry Apache-2.0 and copyright 2018–2019 Espressif Systems
+(Shanghai) PTE LTD; `dl_fft2r_fc32_arp4.S` and `dl_fft4r_fc32_arp4.S` carry
+Apache-2.0 and copyright 2024 Espressif Systems (Shanghai) PTE LTD. The full Apache
+license is retained at the repository root. The manifest's MIT label does not
+replace those explicit source notices.
+
+Local AEC links the unmodified ESP-SR S31 audio processor and support archive with
+source-built dl_fft. ESP-DL and esp_new_jpeg are resolved transitive packages;
+their presence does not enable a camera/video/JPEG runtime. Versions, upstream
+commits and S31 archive fingerprints are recorded in `VENDORED_SOURCES.md` and
+`dependencies.lock`. Packaged firmware includes a `.licenses.txt` companion with
+these notices and the retained license texts; distribute it with the image.
+
 ## Audio and display assets
 
 Pairing prompts and digit recordings derive from MyBot's 16 kHz mono signed-16 PCM assets at `7854c1d5798004485aa1947ff55116bdb7ab0237`, under Apache-2.0. Source/output hashes, encoding commands and provisioning-prompt details are retained in `components/mybot_platform/assets/locales/SOURCES.json`. Build-generated PCM keeps the source asset's terms.
 
-The translation view's UI fonts and live-caption subsets use Noto Sans SC Regular (Adobe copyright 2014, 2015) and retain SIL OFL 1.1 in `LVGL_VIEW_FONT_LICENSE.txt`. The caption fonts add the 6,763 GB2312 Han characters, Latin-1 and common punctuation using the same source font. The pinned source-font hash and embedded license provenance are recorded in `VENDORED_SOURCES.md`; the original TTF is not redistributed. Built-in LVGL Montserrat and Font Awesome terms remain at `components/lvgl/scripts/built_in_font/font_license/Montserrat/OFL.txt` and `FontAwesome5/LICENSE.txt`.
+The translation view's UI fonts and live-caption subsets use Noto Sans SC Regular (Adobe copyright 2014, 2015) and retain SIL OFL 1.1 in `LVGL_VIEW_FONT_LICENSE.txt`. The caption fonts include GB2312 Han, JIS X 0208, non-private-use CP932 extensions, modern and halfwidth kana, Latin-1 and punctuation from the same source font. LVGL's row-XOR RLE compresses the 2 bpp pixels without changing their alpha levels. The pinned source-font hash and embedded license provenance are recorded in `VENDORED_SOURCES.md`; the original TTF is not redistributed. Built-in LVGL Montserrat and Font Awesome terms remain at `components/lvgl/scripts/built_in_font/font_license/Montserrat/OFL.txt` and `FontAwesome5/LICENSE.txt`.
 
 The upstream MyBot baseline's own notices may describe packages used by other targets. Those notices remain part of the snapshot and do not define this S31 firmware's active dependency set. Every retained package license and file-level copyright/SPDX notice remains in force.
 

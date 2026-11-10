@@ -30,6 +30,13 @@ class BuildConfigurationTests(unittest.TestCase):
     def test_builder_has_one_fixed_board(self) -> None:
         self.assertEqual(builder.DEFAULT_BOARD, "esp-mosaico-v1.2")
 
+    def test_aec_cli_defaults_local_and_accepts_each_mode(self) -> None:
+        with mock.patch.object(sys, "argv", [str(SCRIPT)]):
+            self.assertEqual(builder.parse_args().aec_mode, "local")
+        for mode in ("local", "cloud", "disabled"):
+            with mock.patch.object(sys, "argv", [str(SCRIPT), "--aec-mode", mode]):
+                self.assertEqual(builder.parse_args().aec_mode, mode)
+
     def test_board_configuration_has_no_profile_layer(self) -> None:
         project = SCRIPT.parents[1]
         root = (project / "CMakeLists.txt").read_text(encoding="utf-8")
@@ -86,7 +93,8 @@ class S31DryRunTests(unittest.TestCase):
             sentinel = build / "existing-firmware.bin"
             sentinel.write_bytes(b"preserve")
             args = argparse.Namespace(
-                language="both", build_root=build, output_root=output, dry_run=True, no_clean=False,
+                language="both", aec_mode="local", build_root=build, output_root=output,
+                dry_run=True, no_clean=False,
             )
             printed = io.StringIO()
             with (
@@ -106,9 +114,11 @@ class S31DryRunTests(unittest.TestCase):
             self.assertEqual(len(commands), 8)
             self.assertTrue(all(line.startswith(">>> idf.py --preview ") for line in commands))
             self.assertTrue(all("ci/ptime60.defaults" in line for line in commands))
+            self.assertTrue(all("ci/local-aec.defaults" in line for line in commands))
             self.assertEqual(sum("ci/en-us.defaults" in line for line in commands), 4)
             packaging = [line for line in printed.getvalue().splitlines() if "check_s31_build.py" in line]
             self.assertEqual(len(packaging), 2)
+            self.assertTrue(all("--aec-mode local" in line for line in packaging))
             for language in ("zh-CN", "en-US"):
                 variant = f"esp-mosaico-v1.2-{language}"
                 image = str(output / f"{variant}.bin")
@@ -116,6 +126,20 @@ class S31DryRunTests(unittest.TestCase):
                 self.assertEqual(sum(f"-DSDKCONFIG={config} " in line for line in commands), 4)
                 self.assertTrue(any(f"merge-bin -o {image}" in line for line in commands))
                 self.assertTrue(any(f"--merged {image}" in line for line in packaging))
+
+    def test_each_mode_uses_matching_defaults_and_explicit_checker_argument(self) -> None:
+        for mode in ("local", "cloud", "disabled"):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory(prefix="mybot-aec-build-") as temporary:
+                root = Path(temporary).resolve()
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    image = builder.build_variant("idf.py", "zh-CN", root / "build", root / "out", True, mode)
+                lines = output.getvalue().splitlines()
+                commands = [line for line in lines if line.startswith(">>> idf.py")]
+                self.assertEqual(len(commands), 4)
+                self.assertTrue(all(f"ci/{mode}-aec.defaults" in line for line in commands))
+                self.assertTrue(any(f"--aec-mode {mode}" in line for line in lines if "check_s31_build.py" in line))
+                self.assertEqual(image.name, "esp-mosaico-v1.2-zh-CN.bin")
 
 
 class GeneratedRootTests(unittest.TestCase):
@@ -151,6 +175,7 @@ class GeneratedRootTests(unittest.TestCase):
     def args(self, build: Path, output: Path, **changes: object) -> argparse.Namespace:
         values = {
             "language": "en-US",
+            "aec_mode": "local",
             "build_root": build,
             "output_root": output,
             "dry_run": False,

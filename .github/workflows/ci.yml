@@ -127,12 +127,12 @@ jobs:
         run: |
           cat >> "$GITHUB_STEP_SUMMARY" <<'SUMMARY'
           Source formatting, SPDX and host lifecycle tests run on every push and pull request.
-          Both firmware languages build on push, pull request and manual dispatch using the pinned bundled RTSA library.
-          Artifacts contain the merged image, checksums, manifest and flash instructions. These checks do not run on hardware.
+          Chinese and English Local AEC firmware and Chinese Cloud AEC firmware build using the pinned bundled RTSA library.
+          Artifacts identify their AEC mode and contain the merged image, checksums, manifest, flash instructions and dependency license texts. These checks do not run on hardware.
           SUMMARY
 
   idf-build:
-    name: idf-6.1-esp-mosaico-v1.2-${{ matrix.language }}-ptime60-no-video
+    name: idf-6.1-esp-mosaico-v1.2-${{ matrix.language }}-aec-${{ matrix.aec_mode }}-ptime60-no-video
     needs: quality
     runs-on: ubuntu-24.04
     container:
@@ -143,7 +143,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        language: [zh-CN, en-US]
+        include:
+          - language: zh-CN
+            aec_mode: local
+          - language: en-US
+            aec_mode: local
+          - language: zh-CN
+            aec_mode: cloud
     steps:
       - uses: actions/checkout@v4
       - name: Allow Git access to checked-out workspace
@@ -151,7 +157,17 @@ jobs:
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
           git -C "$GITHUB_WORKSPACE" rev-parse --verify HEAD
       - name: Install prompt conversion prerequisite
-        run: apt-get update && apt-get install -y ffmpeg
+        run: |
+          for source in /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
+            if [ -f "$source" ]; then
+              sed -i \
+                -e 's|http://archive\.ubuntu\.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' \
+                -e 's|http://security\.ubuntu\.com/ubuntu|https://security.ubuntu.com/ubuntu|g' "$source"
+            fi
+          done
+          apt_options=(-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30)
+          apt-get "${apt_options[@]}" -o APT::Update::Error-Mode=any update
+          apt-get "${apt_options[@]}" install -y --no-install-recommends ffmpeg
       - name: Verify bundled S31 RTSA fingerprints
         run: python3 scripts/check_s31_build.py --vendor-only
       - name: Verify toolchain
@@ -162,6 +178,7 @@ jobs:
         run: |
           source /opt/esp/idf/export.sh >/dev/null
           python3 scripts/build_all.py --language "${{ matrix.language }}" \
+            --aec-mode "${{ matrix.aec_mode }}" \
             --build-root "$RUNNER_TEMP/mybot-build" \
             --output-root "$GITHUB_WORKSPACE/releases"
       - name: Verify composite descriptors against pinned USB headers
@@ -169,10 +186,11 @@ jobs:
       - name: Upload firmware
         uses: actions/upload-artifact@v4
         with:
-          name: mybot-esp-mosaico-v1.2-${{ matrix.language }}-ptime60-no-video-${{ github.sha }}
+          name: mybot-esp-mosaico-v1.2-${{ matrix.language }}-aec-${{ matrix.aec_mode }}-ptime60-no-video-${{ github.sha }}
           if-no-files-found: error
           path: |
             releases/esp-mosaico-v1.2-${{ matrix.language }}.bin
             releases/esp-mosaico-v1.2-${{ matrix.language }}.manifest.json
             releases/esp-mosaico-v1.2-${{ matrix.language }}.sha256
             releases/esp-mosaico-v1.2-${{ matrix.language }}.flash.txt
+            releases/esp-mosaico-v1.2-${{ matrix.language }}.licenses.txt

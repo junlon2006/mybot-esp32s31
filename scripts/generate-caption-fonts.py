@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT
-"""Generate bounded 2 bpp subtitle fonts from the pinned Noto Sans SC input.
+"""Generate compressed Chinese/English/Japanese 2 bpp subtitle fonts.
 
 Usage: python3 scripts/generate-caption-fonts.py --font path/to/NotoSansSC.ttf
 Requires Pillow 12.3.0 / FreeType 2.14.3 and clang-format 18.1.8 for byte-for-byte
@@ -21,6 +21,7 @@ FONT_SHA256 = "a0af66489baf1f306732ff16da58d86c342e0b3b4b3674079ee2a9b0aee23258"
 LATIN = set(range(0x20, 0x7F)) | set(range(0xA0, 0x100))
 PUNCTUATION = {ord(c) for c in "‐‑–—‘’“”•…−□�"}
 CJK_PUNCTUATION = {ord(c) for c in "、。，！？：；（）【】《》〈〉「」『』〔〕［］｛｝％＋－＝＠＃＆＊～／＼｜＿　￥"}
+FONT_BUDGET = 1024 * 1024
 
 
 def gb2312_han():
@@ -35,6 +36,78 @@ def gb2312_han():
     return codepoints
 
 
+def japanese():
+    """JIS X 0208 plus Windows Japanese extensions, excluding private-use glyphs."""
+    codepoints = set()
+    for encoding, leads, trails in (
+        ("euc_jp", range(0xA1, 0xFF), range(0xA1, 0xFF)),
+        ("cp932", list(range(0x81, 0xA0)) + list(range(0xE0, 0xFD)),
+         list(range(0x40, 0x7F)) + list(range(0x80, 0xFD))),
+    ):
+        for lead in leads:
+            for trail in trails:
+                try:
+                    character = bytes((lead, trail)).decode(encoding)
+                except UnicodeDecodeError:
+                    continue
+                if len(character) == 1 and not 0xE000 <= ord(character) <= 0xF8FF:
+                    codepoints.add(ord(character))
+    return (codepoints | set(range(0x3041, 0x3097)) | set(range(0x3099, 0x30A0))
+            | set(range(0x30A0, 0x3100)) | set(range(0x31F0, 0x3200))
+            | set(range(0xFF61, 0xFFA0)))
+
+
+def compress_2bpp(coverage, width):
+    """Encode LVGL row-XOR RLE, keeping the original four alpha levels."""
+    pixels = list(coverage)
+    for index in range(len(pixels) - 1, width - 1, -1):
+        pixels[index] ^= pixels[index - width]
+    output = bytearray()
+    accumulator = available = 0
+
+    def emit(value, bits):
+        nonlocal accumulator, available
+        accumulator = (accumulator << bits) | value
+        available += bits
+        while available >= 8:
+            available -= 8
+            output.append((accumulator >> available) & 255)
+
+    state = position = previous = count = 0
+    while position < len(pixels):
+        value = pixels[position]
+        if state == 0:
+            emit(value, 2)
+            if position and value == previous:
+                state, count = 1, 0
+            previous = value
+        elif state == 1:
+            if value != previous:
+                emit(0, 1)
+                emit(value, 2)
+                previous, state = value, 0
+            else:
+                emit(1, 1)
+                count += 1
+                if count == 11:
+                    count = 1
+                    while (count < 63 and position + count < len(pixels)
+                           and pixels[position + count] == value):
+                        count += 1
+                    emit(count, 6)
+                    state = 2
+        else:
+            count -= 1
+            if count == 0:
+                emit(value, 2)
+                previous, state = value, 0
+        position += 1
+    if available:
+        output.append((accumulator << (8 - available)) & 255)
+    # LVGL get_bits() reads one extra byte even at an exact-byte boundary.
+    return bytes(output) + b"\0"
+
+
 def rows(values, width=12):
     return "\n".join(
         "    " + ", ".join(values[index : index + width]) + ","
@@ -46,6 +119,7 @@ def render_font(font_path, pixels, codepoints, fallback=None):
     font = ImageFont.truetype(str(font_path), pixels)
     missing = bytes(font.getmask("\u0378"))
     bitmap = []
+    pixels_sha256 = hashlib.sha256()
     descriptors = ["    /* Glyph ID 0 is reserved. */\n    {0},"]
     ascent = descent = 0
     for codepoint in codepoints:
@@ -57,6 +131,18 @@ def render_font(font_path, pixels, codepoints, fallback=None):
         if height == 0:
             width = 0
         advance = round(font.getlength(character) * 16)
+        image = None
+        if width and height:
+            image = Image.new("L", (width, height))
+            ImageDraw.Draw(image).text((-x0, -y0), character, font=font, fill=255, anchor="ls")
+            if codepoint in (0x3099, 0x309A):
+                # Noto SC stores standalone marks in a full-width cell. Overlay
+                # their ink at the preceding kana's upper-right corner instead.
+                ink = image.getbbox()
+                image = image.crop(ink)
+                width, height = image.size
+                x0, y0 = -width, y0 + ink[1]
+                y1, advance = y0 + height, 0
         if not (0 <= advance < 4096 and 0 <= width < 256 and 0 <= height < 256
                 and -128 <= x0 < 128 and -128 <= -y1 < 128):
             raise ValueError(f"Glyph U+{codepoint:04X} exceeds LV_FONT_FMT_TXT_LARGE=0 metrics")
@@ -67,17 +153,9 @@ def render_font(font_path, pixels, codepoints, fallback=None):
             % (codepoint, len(bitmap), advance, width, height, x0, -y1)
         )
         if width and height:
-            image = Image.new("L", (width, height))
-            ImageDraw.Draw(image).text((-x0, -y0), character, font=font, fill=255, anchor="ls")
             coverage = [(pixel * 3 + 127) // 255 for pixel in image.get_flattened_data()]
-            # LVGL's uncompressed stride=0 format packs continuously across rows,
-            # most significant pair first, and pads only the final glyph byte.
-            coverage.extend([0] * (-len(coverage) % 4))
-            bitmap.extend(
-                (coverage[i] << 6) | (coverage[i + 1] << 4)
-                | (coverage[i + 2] << 2) | coverage[i + 3]
-                for i in range(0, len(coverage), 4)
-            )
+            pixels_sha256.update(bytes(value * 85 for value in coverage))
+            bitmap.extend(compress_2bpp(coverage, width))
             ascent = max(ascent, -y0)
             descent = max(descent, y1)
     if len(bitmap) >= 1 << 20:
@@ -89,6 +167,7 @@ def render_font(font_path, pixels, codepoints, fallback=None):
  * Copyright 2014, 2015 Adobe Systems Incorporated (http://www.adobe.com/).
  * See LVGL_VIEW_FONT_LICENSE.txt. Generated by scripts/generate-caption-fonts.py.
  * Input SHA256: {FONT_SHA256}
+ * Pixels SHA256: {pixels_sha256.hexdigest()}
  * Pillow {pillow_version}; FreeType {features.version("freetype2")}; {len(codepoints)} glyphs.
  */
 
@@ -126,6 +205,7 @@ static const lv_font_fmt_txt_dsc_t caption_font_dsc_{pixels} = {{
     .cmaps = caption_cmaps_{pixels},
     .cmap_num = 1,
     .bpp = 2,
+    .bitmap_format = LV_FONT_FMT_TXT_COMPRESSED,
 }};
 
 const lv_font_t mybot_caption_font_{pixels} = {{
@@ -147,12 +227,13 @@ def generate(font_path):
     if hashlib.sha256(font_path.read_bytes()).hexdigest() != FONT_SHA256:
         raise ValueError("Unexpected font revision; verify its provenance and license first")
     fonts = [
-        render_font(font_path, 20, sorted(LATIN | PUNCTUATION | CJK_PUNCTUATION | gb2312_han())),
+        render_font(font_path, 20,
+                    sorted(LATIN | PUNCTUATION | CJK_PUNCTUATION | gb2312_han() | japanese())),
         render_font(font_path, 28, sorted(LATIN | PUNCTUATION), "mybot_caption_font_20"),
     ]
     estimated_size = sum(size for _, _, size in fonts)
-    if estimated_size >= 900 * 1024:
-        raise ValueError(f"Caption fonts exceed the 900 KiB budget: {estimated_size}")
+    if estimated_size >= FONT_BUDGET:
+        raise ValueError(f"Caption fonts exceed the 1 MiB budget: {estimated_size}")
     OUTPUT.write_text("/* SPDX-License-Identifier: OFL-1.1 */\n#include \"lvgl.h\"\n\n"
                       + "\n".join(text for text, _, _ in fonts))
     subprocess.run(["clang-format", "-i", str(OUTPUT)], check=True)

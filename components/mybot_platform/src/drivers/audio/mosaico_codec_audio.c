@@ -10,6 +10,10 @@
 #include "es8311_codec.h"
 #include "esp_log.h"
 
+#ifndef MYBOT_LOCAL_AEC
+#define MYBOT_LOCAL_AEC 0
+#endif
+
 static int initialize_i2s(i2s_chan_handle_t *tx_channel, i2s_chan_handle_t *rx_channel) {
     i2s_chan_config_t channel = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_0, I2S_ROLE_MASTER);
     channel.dma_desc_num = 6;
@@ -57,8 +61,9 @@ static int initialize_codec(const audio_codec_ctrl_if_t **ctrl_if,
         .use_mclk = true,
         .digital_mic = false,
         .hw_gain = {.pa_voltage = 5.0f, .codec_dac_voltage = 3.3f},
-        /* Cloud AEC uses SDK playback PCM; RX slot zero is the physical MIC. */
-        .no_dac_ref = true,
+        /* Local AEC captures the ES8311 DAC reference in RX slot one.
+         * Cloud AEC keeps the legacy slot-zero microphone path. */
+        .no_dac_ref = !MYBOT_LOCAL_AEC,
         .mclk_div = 256,
     };
     *codec_if = es8311_codec_new(&codec);

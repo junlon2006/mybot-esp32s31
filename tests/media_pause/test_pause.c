@@ -58,6 +58,9 @@ static int16_t usb_captured_sample, usb_sent[MYBOT_MEDIA_FRAME_SAMPLES * 2];
 static unsigned usb_sends;
 static unsigned played_frames, sends, capture_reads, playback_writes, pb_stops, cap_stops;
 static unsigned hardware_volume_sets, waited_ms, tests;
+static unsigned capture_resets, capture_dsp_pending_frames;
+static int16_t capture_dsp_pending_sample;
+static bool fail_capture_reset;
 static int capture_frames, write_limit, hardware_volume;
 static bool tick_during_fence;
 static unsigned fence_ticks;
@@ -106,6 +109,7 @@ static int capture_start(void *context) {
     assert(context == &cap_active);
     if (fail_codec_start)
         return -1;
+    capture_dsp_pending_frames = 0;
     cap_active = true;
     return 0;
 }
@@ -116,8 +120,12 @@ static int capture_read(void *context, void *buffer, int frames) {
     capture_reads++;
     if (capture_frames > 0) {
         int16_t *samples = buffer;
+        unsigned pending = capture_dsp_pending_frames < (unsigned)capture_frames
+                               ? capture_dsp_pending_frames
+                               : (unsigned)capture_frames;
         for (int i = 0; i < capture_frames; ++i)
-            samples[i] = captured_sample;
+            samples[i] = (unsigned)i < pending ? capture_dsp_pending_sample : captured_sample;
+        capture_dsp_pending_frames -= pending;
     }
     if (disconnect_during_capture) {
         disconnect_during_capture = false;
@@ -139,6 +147,15 @@ static int capture_stop(void *context) {
 static void capture_destroy(void *context) {
     assert(context == &cap_active && !cap_active);
     codec_destroyed++;
+}
+
+static int capture_reset(void *context) {
+    assert(context == &cap_active && cap_active && current_queue == CAPTURE_QUEUE);
+    capture_resets++;
+    if (fail_capture_reset)
+        return -1;
+    capture_dsp_pending_frames = 0;
+    return 0;
 }
 
 static int playback_init(void **context, int rate, int channels, int bits) {
@@ -219,8 +236,8 @@ static void volume_destroy(void *context) {
     assert(context == &hardware_volume);
 }
 
-static const mybot_audio_capture_ops_t capture_ops = {capture_init, capture_start, capture_read,
-                                                      capture_stop, capture_destroy};
+static const mybot_audio_capture_ops_t capture_ops = {capture_init, capture_start,   capture_read,
+                                                      capture_stop, capture_destroy, capture_reset};
 static int usb_init(void **context, int rate, int channels, int bits) {
     assert(rate == 16000 && channels == 1 && bits == 16);
     *context = &usb_active;
@@ -251,8 +268,8 @@ static void usb_destroy(void *context) {
     assert(context == &usb_active && !usb_active);
     usb_destroyed++;
 }
-static const mybot_audio_capture_ops_t usb_ops = {usb_init, usb_start, usb_read, usb_stop,
-                                                  usb_destroy};
+static const mybot_audio_capture_ops_t usb_ops = {usb_init, usb_start,   usb_read,
+                                                  usb_stop, usb_destroy, NULL};
 static const mybot_audio_playback_ops_t playback_ops = {
     playback_init, playback_start, playback_write, playback_stop, playback_destroy};
 static int usb_playback_init(void **context, int rate, int channels, int bits) {
@@ -491,6 +508,9 @@ static void reset(void) {
     usb_destroyed = codec_destroyed = 0;
     played_frames = sends = capture_reads = playback_writes = pb_stops = cap_stops = 0;
     hardware_volume_sets = waited_ms = fence_ticks = 0;
+    capture_resets = capture_dsp_pending_frames = 0;
+    capture_dsp_pending_sample = 0;
+    fail_capture_reset = false;
     captured_sample = 1234;
     usb_captured_sample = 5678;
     hardware_volume = 45;
@@ -1169,7 +1189,76 @@ static void test_physical_write_interrupted_by_pause_or_stop(void) {
     tests++;
 }
 
+static void seed_capture_dsp(int16_t sample) {
+    capture_dsp_pending_sample = sample;
+    capture_dsp_pending_frames = 64;
+}
+
+static void test_capture_dsp_flush_boundaries(void) {
+    reset();
+    seed_capture_dsp(8888);
+    mybot_media_pipeline_set_rtc_connected(&pipeline, false);
+    assert(mybot_media_pipeline_flush_session(&pipeline) == 0);
+    assert(capture_resets == 1 && !capture_dsp_pending_frames);
+    mybot_media_pipeline_set_rtc_connected(&pipeline, true);
+    tick(CAPTURE_QUEUE);
+    tick(SEND_QUEUE);
+    expect_sent(captured_sample, 0);
+
+    seed_capture_dsp(7777);
+    assert(mybot_media_pipeline_set_paused(&pipeline, true) == 0);
+    assert(capture_resets == 2 && !capture_dsp_pending_frames);
+    seed_capture_dsp(6666); /* Capture continues while paused; resume must flush it too. */
+    assert(mybot_media_pipeline_set_paused(&pipeline, false) == 0);
+    assert(capture_resets == 3 && !capture_dsp_pending_frames);
+    tick(CAPTURE_QUEUE);
+    tick(SEND_QUEUE);
+    expect_sent(captured_sample, 0);
+
+    seed_capture_dsp(5555);
+    assert(mybot_media_pipeline_end_session(&pipeline) == 0);
+    assert(capture_resets == 4 && !capture_dsp_pending_frames); /* Exactly one owner reset. */
+    finish();
+    tests++;
+}
+
+static void test_capture_reset_failure_and_known_fault_recovery(void) {
+    for (unsigned boundary = 0; boundary < 3; ++boundary) {
+        reset();
+        if (boundary == 2)
+            assert(mybot_media_pipeline_set_paused(&pipeline, true) == 0);
+        unsigned previous_resets = capture_resets;
+        seed_capture_dsp(8888);
+        fail_capture_reset = true;
+        if (boundary == 0) {
+            mybot_media_pipeline_set_rtc_connected(&pipeline, false);
+            assert(mybot_media_pipeline_flush_session(&pipeline) < 0);
+        } else {
+            assert(mybot_media_pipeline_set_paused(&pipeline, boundary == 1) < 0);
+            assert(pipeline.paused && pipeline.playback_suspended && !pb_active);
+            assert(mybot_media_pipeline_set_paused(&pipeline, false) < 0);
+        }
+        assert(capture_resets == previous_resets + 1 && capture_dsp_pending_frames == 64);
+        assert(pipeline.capture_fault && audio_errors == 1);
+        /* An already-faulted capture must reach stop/start, rather than retrying
+         * the same failed reset forever. Fresh start owns its DSP initialization. */
+        assert(mybot_media_pipeline_end_session(&pipeline) == 0);
+        assert(!pipeline.capture_fault && cap_active && !capture_dsp_pending_frames);
+        assert(capture_resets == previous_resets + 1 && cap_stops == 1);
+        assert(!pipeline.paused && !pipeline.playback_suspended && pb_active);
+        fail_capture_reset = false;
+        mybot_media_pipeline_set_rtc_connected(&pipeline, true);
+        tick(CAPTURE_QUEUE);
+        tick(SEND_QUEUE);
+        expect_sent(captured_sample, 0);
+        finish();
+        tests++;
+    }
+}
+
 int main(void) {
+    test_capture_dsp_flush_boundaries();
+    test_capture_reset_failure_and_known_fault_recovery();
     test_reconnect_flushes_both_routes_before_ready();
     test_reconnect_flush_failure_keeps_both_routes_closed();
     test_reconnect_flush_preserves_user_pause();

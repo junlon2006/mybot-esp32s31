@@ -24,3 +24,11 @@ stop retaining PCM ownership, then successful quiesce and restoration of idle pl
 Physical playback faults notify control and require a successful device stop/start
 before another session. Fault injection covers retained errors, failed recovery,
 successful later playback, and writes interrupted by intentional pause or stop.
+
+Capture DSP carry is reset synchronously on the capture worker during session
+flush and pause/resume fences. The mock backend retains old cleaned samples until
+reset; tests require those samples to be discarded before uplink resumes, including
+the path used by direction changes and reconnect. Reset failures latch capture_fault,
+notify control, and reject readiness/resume. An already-faulted capture skips reset
+so session cleanup can recover through stop/start without a reset retry loop or
+an extra reset after fresh DSP initialization.

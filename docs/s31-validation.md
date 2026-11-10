@@ -1337,3 +1337,135 @@ unchanged. These are host results; no device was flashed.
 
 Chinese build and source/link/OTA checks pass in build/mosaico-v1.2, with 461,568
 free bytes per OTA slot.
+
+## Japanese caption glyph coverage (2026-11-09)
+
+The user reported unreadable Japanese captions while testing the English image.
+A host case using the production caption store and JSON parser preserves both raw
+UTF-8 and escaped Japanese byte-for-byte. The old 20 px font lacks kana and common
+Japanese Han such as 語, 訳 and 開; adding kana alone would leave missing text.
+
+The same pinned Noto Sans SC input now supplies 10,993 glyphs at 20 px: existing
+GB2312/Latin/punctuation plus JIS X 0208, non-private-use CP932 extensions, modern
+and halfwidth kana. This includes names such as 髙/﨑. Combining kana voicing marks
+have zero advance and overlay the preceding character. The 204-glyph 28 px font
+retains its 20 px fallback. LVGL row-XOR RLE preserves the four alpha levels;
+generated bitmaps/descriptors/maps total 975,868 bytes within a 1 MiB font budget.
+Font input hash, Pillow 12.3.0, FreeType 2.14.3 and clang-format 18.1.8 are recorded.
+
+All 11,197 glyphs pass the real LVGL decoder under fail-fast UBSan: visible pixels
+match generation-time SHA256, A8 stride 1/8 agrees, row/outer guards survive and
+temporary allocations are released after every glyph (peak 58 bytes). Bilingual
+UI/layout/static fonts pass. A host-rendered preview confirms ordinary/halfwidth
+kana, Japanese Han, precomposed/combining voicing marks and existing Chinese/English.
+All 88 build-tool cases pass; the ownership case initially skipped with old Git
+and passed separately with Apple Git 2.50.1. Formatting/SPDX and whitespace checks
+pass. These results do not claim device display acceptance of this revision.
+
+Each OTA slot grows by 512 KiB to 0x470000 bytes, using space from the unmounted
+assets partition (now 7 MiB at 0x900000). NVS offsets/sizes are unchanged; the first
+application still starts at 0x20000. Upgrading requires idf.py flash with the new
+partition table and OTA initialization, not an application-only write. The 300 KiB
+minimum OTA reserve stays enforced.
+
+The user's active English configuration is retained. Direct en-US build and
+source/link/partition checks pass in build/mosaico-v1.2: application 3,980,016 bytes,
+minimum OTA free space 673,040 bytes. No device was flashed.
+
+## Local AEC implementation (2026-11-09)
+
+Mosaico now enables `MYBOT_LOCAL_AEC` by default. ES8311 is configured with
+`no_dac_ref=false`; capture reads synchronized microphone/reference stereo and the
+platform audio adapter feeds ESP-SR 2.6.0 full-duplex AEC at 16 kHz. The cleaned
+mono output keeps the existing MyBot PCM contract and resets its filter/output queue
+at session boundaries. Local and Cloud AEC are mutually exclusive Kconfig choices;
+`ci/cloud-aec.defaults` retains the legacy paired MIC/reference build for comparison.
+
+Host codec tests pass with local AEC enabled and disabled, including the ES8311
+REG44 reference check, create/reset/recovery failures, 960-frame accumulation and
+PCM conversion. Media pause, translation control and route tests pass with Cloud AEC
+enabled and disabled. Targeted cppcheck, clang-format and whitespace checks pass.
+
+Fresh Chinese builds pass for both modes. Local AEC uses `MYBOT_LOCAL_AEC=1`,
+`MYBOT_CLOUD_AEC=0`, links `aec_create_from_config`/`aec_process`, and produces a
+`0x3c7260` application with `0xa8da0` bytes free. Cloud AEC uses the inverse macros,
+does not link the local AEC object, and produces a `0x3b7f00` application with
+`0xb8100` bytes free. No device was flashed; acoustic effectiveness, CPU headroom,
+double-talk quality and long-run stability still require hardware validation.
+
+## Local AEC boundary reset follow-up (2026-11-10)
+
+Capture DSP reset now completes synchronously on the capture owner at session
+flush and pause/direction fences, before media can resume. The driver removes
+its deferred-reset flag and uses the same started/in-flight stop protection as
+capture reads. A failed recreation clears old PCM and releases the partial
+handle. New reset failures set capture_fault and reject readiness; a later end
+can still recover through the existing stop/start path without repeating an
+already-failed reset or resetting a newly created filter twice.
+
+The previous implementation fails new carry/reset assertions. Codec/helper UBSan
+tests cover partial input and unconsumed chunk256 output, synchronous errors,
+reset/stop overlap, allocation cleanup and paired ramp continuity across multiple
+chunk sizes and partial reads. Media tests pass 26 cases for each cloud-AEC
+setting, including capture-owner reset, old-sample rejection and failure recovery.
+Control tests pass 16 shutdown, 27 UI, nine caption and 46 face/meeting cases for
+each AEC setting. Formatting/SPDX and whitespace checks pass. No hardware result
+is claimed and no device was flashed.
+
+The ESP-IDF configuration server selected Local AEC in the existing
+build/mosaico-v1.2 context while retaining the user's English UI. Direct en-US
+build and source/link/OTA checks pass: application 4,042,480 bytes and minimum
+OTA free space 610,576 bytes. Compile commands confirm Local=1/Cloud=0; live
+aec_create_from_config and aec_process symbols come from the ESP32-S31 archive.
+
+## AEC delivery-mode verification (2026-11-10)
+
+The builder and delivery checker accept an explicit local/cloud/disabled AEC mode,
+defaulting to local. Validation requires exactly one Kconfig choice, matching
+Local/Cloud macros in the seven relevant production compile commands and live
+local AEC code only in local mode. Local symbols must occupy nonempty sections
+at nonzero addresses inside the platform helper or S31 ESP-SR archive. LOAD,
+discarded sections and cross references do not establish active code. The
+manifest and flash instructions record the validated AEC mode; local metadata
+identifies the pinned ESP-SR 2.6.0 archive.
+
+All 100 builder/delivery/provenance host tests pass with Python 3.11 and Apple Git
+2.50.1, without skips. Negative cases cover absent/multiple choices, wrong modes,
+missing/conflicting/undefined macros, invalid symbol ranges, wrong target/archive
+origins and active local code in nonlocal builds. CI now has three jobs: Chinese
+Local, English Local and Chinese Cloud, with mode-specific artifact names.
+Workflow/defaults/shell checks and whitespace checks pass. Remote CI execution
+still requires its own result; no device was flashed.
+
+Direct English Cloud and Local builds and delivery checks pass sequentially in
+build/mosaico-v1.2, using the ESP-IDF configuration server to switch modes.
+Cloud has no live local AEC code: application 3,980,304 bytes, minimum OTA free
+space 672,752 bytes. Local has the required helper and S31 ESP-SR implementations:
+application 4,042,480 bytes, minimum OTA free space 610,576 bytes. The final saved
+configuration and merged firmware are English Local AEC; the generated manifest
+records local mode and the pinned S31 ESP-SR archive. No device was flashed.
+
+## Local AEC provenance and maintenance contract (2026-11-10)
+
+The actual managed packages and manifests were inspected: ESP-SR 2.6.0, ESP-DL
+3.3.15, dl_fft 0.8.0 and esp_new_jpeg 1.0.2. Source provenance now records upstream
+commits and both live ESP-SR S31 archive hashes, with resolved registry content
+hashes remaining in dependencies.lock. The live map selects ESP-SR's S31 audio
+processor and support archive plus source-built dl_fft. ESP-DL/fbs_model and
+esp_new_jpeg have no nonzero live code sections in the validated Local image;
+their managed presence does not enable a video/JPEG runtime.
+
+The ESP-SR and esp_new_jpeg package licenses are ESPRESSIF MIT with an Espressif
+product-use condition; ESP-DL supplies ordinary MIT. dl_fft's manifest declares MIT,
+but its package omits a root LICENSE and retains explicit Apache-2.0 FFT source
+notices. Three package LICENSE files are retained byte for byte, and delivery now
+includes a .licenses.txt companion with third-party notices and the retained full
+license texts. Documentation distinguishes default cleaned mono Local AEC from
+optional interleaved Cloud AEC, and synchronous capture-owner resets from deferred
+read processing. These documentation/build results add no acoustic hardware claim.
+
+All 103 builder/delivery/provenance tests pass without skips, including exact
+license-text preservation, missing-license failure before sidecar writes and
+symlink rejection. The CI upload contract includes the license companion. License
+copies match the generated packages byte for byte; their original whitespace and
+line endings are preserved. Documentation links and whitespace checks pass.

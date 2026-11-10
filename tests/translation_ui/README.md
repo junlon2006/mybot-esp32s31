@@ -8,6 +8,14 @@ face-to-face turn selection, simultaneous USB meeting translation, and USB capab
 The single `mybot_lvgl_view_create(display)` entry rejects null displays,
 resolutions other than 480×480, and duplicate creation without replacing the live view.
 
+Font checks cover GB2312, JIS X 0208, non-private-use CP932 extensions, modern and
+halfwidth kana, punctuation and Latin-1, including zero-advance combining kana
+voicing marks. The native font test links the real LVGL RLE decoder and generated
+fonts, checks every glyph with A8 stride 1/8 and buffer guards, and compares its
+visible pixels against generation-time hashes. This validates lossless decoding
+without requiring Pillow or the source TTF on CI; it does not replace device
+caption acceptance.
+
 Media and face-to-face share one stored language pair. The face-to-face UI labels
 that pair as my/other language, starts with microphone direction NONE, and exposes
 two language buttons. Selecting a direction requests the corresponding SDK route;

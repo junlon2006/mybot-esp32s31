@@ -1,6 +1,6 @@
 # Vendored dependency baselines
 
-This ESP32-S31 project derives from MyBot ESP32-S3 source commit `2782cc88f52c8a46419654b72a918a8273cc23bf`. The only supported board is `esp-mosaico-v1.2`; legacy multi-board, S3, platform display and camera/software-JPEG paths have been removed. Complete retained third-party snapshots are intentionally broader than the active firmware source set.
+This ESP32-S31 project derives from MyBot ESP32-S3 source commit `2782cc88f52c8a46419654b72a918a8273cc23bf`. The only supported board is `esp-mosaico-v1.2`; legacy multi-board, S3, platform display and application camera/software-JPEG paths have been removed. ESP-SR's managed dependency graph includes ESP-DL and esp_new_jpeg, as recorded below; the firmware has no camera/video/JPEG runtime. Complete retained third-party snapshots are intentionally broader than the active firmware source set.
 
 License terms are recorded in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Builds require ESP-IDF **v6.1**, the `esp32s31` preview target and ffmpeg. Initial toolchain: GCC 15.2.0 / `esp-15.2.0_20251204`, Newlib.
 
@@ -15,7 +15,7 @@ License terms are recorded in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). 
 | `components/lvgl` | [lvgl/lvgl](https://github.com/lvgl/lvgl) | 9.5.0, `85aa60d18b3d5e5588d7b247abf90198f07c8a63` |
 | `components/esp_lvgl_port` | [espressif/esp-bsp](https://github.com/espressif/esp-bsp), `components/esp_lvgl_port` | 2.8.0~1 runtime/display subset, `d14ff131266bf1392efff88db72cb4638897507c`; inherited integration corrections in `PATCHES.md`, local CMake source selection |
 
-MyBot maintains V2VT media, face-to-face and bidirectional USB meeting translation: device-selected languages, validated per-direction routes, publisher-only subscription, durable session cleanup and a dedicated UI contract. Its cloud-AEC MIC/reference packing, G.722 and 60 ms cadence are retained. See `components/mybot_stack/mybot_sdk/TRANSLATION.md`. Original AOSL, codec and LVGL source snapshots remain unchanged. The inherited LVGL-port runtime/display subset and its existing lifecycle corrections are retained from the imported baseline; its `PATCHES.md` records those corrections. `components/mybot_stack/aosl` builds the portable ESP-IDF HAL from its retained `esp32-s3` source directory; the project wrapper and `s31_port/` supply S31 configuration, OS naming, audited PSRAM stacks and static task reclamation.
+MyBot maintains V2VT media, face-to-face and bidirectional USB meeting translation: device-selected languages, validated per-direction routes, publisher-only subscription, durable session cleanup and a dedicated UI contract. Local AEC defaults to cleaned mono PCM; optional Cloud AEC retains MIC/reference packing. G.722 and the 60 ms cadence remain unchanged. See `components/mybot_stack/mybot_sdk/TRANSLATION.md`. Original AOSL, codec and LVGL source snapshots remain unchanged. The inherited LVGL-port runtime/display subset and its existing lifecycle corrections are retained from the imported baseline; its `PATCHES.md` records those corrections. `components/mybot_stack/aosl` builds the portable ESP-IDF HAL from its retained `esp32-s3` source directory; the project wrapper and `s31_port/` supply S31 configuration, OS naming, audited PSRAM stacks and static task reclamation.
 
 ## Bundled RTSA
 
@@ -42,10 +42,51 @@ The archive contains 126 RISC-V ELF32 objects and 49 x86-64 AOSL/HAL objects. Th
 | `espressif/cjson` | 1.7.19~2 | JSON used by Wi-Fi provisioning |
 | `espressif/esp_tinyusb` | 2.4.0 | Espressif driver/PHY/descriptors for Mosaico UAC/CDC |
 | `espressif/tinyusb` | 0.19.0~3 | S31 USB Device stack, CDC and Mosaico UAC2 classes |
+| `espressif/esp-sr` | 2.6.0 | physical microphone AEC, using the ESP32-S31 prebuilt audio processor |
+| `espressif/esp-dl` | 3.3.15 | ESP-SR transitive dependency |
+| `espressif/dl_fft` | 0.8.0 | ESP-SR/ESP-DL FFT dependency, used by Local AEC |
+| `espressif/esp_new_jpeg` | 1.0.2 | ESP-DL transitive dependency; no live JPEG code in the validated Local build |
 
 Base touch and esp_tinyusb retain Espressif Apache-2.0 licenses and package file
 notices; cJSON and TinyUSB retain MIT with their file notices. The USB versions are
 pinned in the application manifest; generated packages remain unmodified.
+
+### Local AEC dependencies
+
+The application pins ESP-SR 2.6.0; `dependencies.lock` pins the resolved transitive
+packages and their registry content hashes. Their package manifests identify:
+
+| Component | Upstream repository and path | Upstream commit |
+| --- | --- | --- |
+| ESP-SR | [espressif/esp-sr](https://github.com/espressif/esp-sr), repository root | `1a1aee2ba87dc6071dd9b961334249f0cf4256ab` |
+| ESP-DL | [espressif/esp-dl](https://github.com/espressif/esp-dl), `esp-dl` | `512ed0b0dc5f5320f3d9ca5a5aea189803f87f31` |
+| dl_fft | same ESP-DL repository, `tools/dl_fft` | `1ab1e264d4270bfad6a45760ea19273dca0cedfc` |
+| esp_new_jpeg | [espressif/esp-adf-libs](https://github.com/espressif/esp-adf-libs), `esp_new_jpeg` | `daee964980d14d7fcf9da10821827399ef600577` |
+
+The project adapter calls the public `include/esp32s31/esp_aec.h` API and links
+`lib/esp32s31/libesp_audio_processor.a`. AEC also selects support code from the same
+package's S31 `libdl_lib.a` and the source-built dl_fft component. These managed
+inputs are unmodified; no Xtensa archive is used. The default Local mode uses
+`AEC_MODE_FD_LOW_COST`, one MIC/reference pair at 16 kHz and PSRAM allocations.
+The ES8311 reference configuration follows the existing official codec API. DSP
+reset/recreation runs on the capture owner before session, pause/direction and
+reconnect fences release. The project does not enable ESP-SR wake-word, speech
+recognition or TTS functionality.
+
+The two live ESP-SR archive SHA-256 fingerprints are:
+
+- `lib/esp32s31/libesp_audio_processor.a`:
+  `d44e52cb10863aabf7762d27233cc6a72e13a6cb45fa5fe93ee90e83ec75fde4`.
+- `lib/esp32s31/libdl_lib.a`:
+  `6f00352a8055b276ca516d5bd897108b71758c7b54cc87650cbc843d20a6150e`.
+
+ESP-SR and esp_new_jpeg package licenses are **ESPRESSIF MIT**, whose grant is for
+use on Espressif products; individual Apache-2.0 source notices also remain in
+ESP-SR. ESP-DL's package license is ordinary MIT. The dl_fft manifest declares MIT,
+but its package has no root LICENSE and several retained FFT sources carry explicit
+Apache-2.0 notices. The package licenses are retained verbatim in `licenses/`;
+file-level notices remain in the unmodified generated packages. See
+[third-party notices](THIRD_PARTY_NOTICES.md) for the exact license paths and terms.
 
 The separate `diagnostics/mosaico_uac` test has its own generated dependency lock:
 TinyUSB 0.19.0~3, USB Device UAC 1.3.1 and CMake Utilities 1.3.0. UAC is from
@@ -70,7 +111,7 @@ the original file and its MIT notice remain intact, including in the generated c
 | Pairing `prompt.ogg` and `0.ogg`–`9.ogg` under `assets/locales/{en-US,zh-CN}` | [junlon2006/mybot](https://github.com/junlon2006/mybot), `assets/locales` | `7854c1d5798004485aa1947ff55116bdb7ab0237`; PCM-to-Ogg hashes/command in `assets/locales/SOURCES.json` |
 | Locale `wificonfig.ogg` | project-retained provisioning prompts | format, decoded frame counts and hashes in `assets/locales/SOURCES.json` |
 | `src/drivers/display/renderers/lvgl/lvgl_fonts.c` | Noto Sans SC Regular, supplied local `NotoSansSC.ttf` | font name-table version `0.00 July 30, 2017`; SHA-256 `a0af66489baf1f306732ff16da58d86c342e0b3b4b3674079ee2a9b0aee23258`; 20/28/40 px, 4 bpp subsets generated by `scripts/generate-lvgl-font.py`; Adobe 2014/2015 copyright and SIL OFL 1.1 retained |
-| `src/drivers/display/renderers/lvgl/caption_fonts.c` | same pinned Noto Sans SC Regular input above | 20 px, 2 bpp: all 6,763 GB2312 Han characters, Latin-1 and common Chinese/English punctuation; 28 px, 2 bpp: printable ASCII, Latin-1 and typographic punctuation, falling back to the 20 px subset; generated by `scripts/generate-caption-fonts.py`, Pillow 12.3.0 / FreeType 2.14.3 / clang-format 18.1.8; same Adobe copyright and SIL OFL 1.1 |
+| `src/drivers/display/renderers/lvgl/caption_fonts.c` | same pinned Noto Sans SC Regular input above | 20 px, 2 bpp: GB2312 Han, JIS X 0208, non-private-use CP932 extensions, modern/fullwidth/halfwidth kana, Latin-1 and punctuation; 28 px, 2 bpp: printable ASCII, Latin-1 and typographic punctuation, falling back to 20 px; LVGL row-XOR RLE preserves all four alpha levels; zero-advance combining kana marks overlay the preceding character; generated by `scripts/generate-caption-fonts.py`, Pillow 12.3.0 / FreeType 2.14.3 / clang-format 18.1.8; same Adobe copyright and SIL OFL 1.1 |
 
 The Noto Sans SC input is a user-supplied local font; only the generated subset is retained. Its embedded name-table records identify Noto Sans SC Regular, Adobe copyright, the SIL OFL 1.1 grant and `http://www.google.com/get/noto/`. Reproduction requires the exact input hash above; no unrelated application code or assets are imported.
 

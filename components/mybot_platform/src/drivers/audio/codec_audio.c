@@ -2,6 +2,9 @@
 /* Copyright (c) 2025 Project Contributors */
 #include "board_config.h"
 #include "audio/codec_audio.h"
+#if MYBOT_LOCAL_AEC
+#include "audio/mosaico_local_aec.h"
+#endif
 #include "audio/pcm_playback_buffer.h"
 
 #include "driver/gpio.h"
@@ -18,6 +21,18 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
+
+#ifndef MYBOT_LOCAL_AEC
+#define MYBOT_LOCAL_AEC 0
+#endif
+
+#ifndef MYBOT_CLOUD_AEC
+#define MYBOT_CLOUD_AEC 0
+#endif
+
+#if MYBOT_LOCAL_AEC && MYBOT_CLOUD_AEC
+#error "Local and Cloud AEC are mutually exclusive"
+#endif
 
 #define TAG mybot_codec_audio_board.tag
 #define AUDIO_CONTEXT_MAGIC 0x53333141U
@@ -40,6 +55,10 @@ typedef struct audio_stream_context {
     bool stop_pending;
     bool deferred;
     struct audio_stream_context *deferred_next;
+#if MYBOT_LOCAL_AEC
+    mosaico_local_aec_t *local_aec;
+    size_t local_aec_input_frames;
+#endif
 } audio_stream_context_t;
 typedef struct {
     i2s_chan_handle_t tx_channel;
@@ -236,6 +255,16 @@ static int start_codec_locked(void) {
         (void)close_codec_locked();
         return -1;
     }
+#if MYBOT_LOCAL_AEC
+    int reference_config = 0;
+    if (esp_codec_dev_read_reg(s_audio.device, 0x44, &reference_config) != ESP_CODEC_DEV_OK ||
+        (reference_config & 0x70) != 0x50) {
+        ESP_LOGE(TAG, "event=local_aec action=reference_check result=error reg44=0x%02x",
+                 reference_config);
+        (void)close_codec_locked();
+        return -1;
+    }
+#endif
     return 0;
 }
 static int ensure_tx_locked(void) {
@@ -307,6 +336,68 @@ static int capture_init(void **out, int rate, int channels, int bits) {
 static int playback_init(void **out, int rate, int channels, int bits) {
     return stream_init(out, rate, channels, bits, AUDIO_DIRECTION_PLAYBACK);
 }
+#if MYBOT_LOCAL_AEC
+static int local_capture_start(audio_stream_context_t *context) {
+    if (context->local_aec)
+        return 0;
+    context->local_aec = mosaico_local_aec_create();
+    context->local_aec_input_frames = 0;
+    return context->local_aec ? 0 : -1;
+}
+static void local_capture_release(audio_stream_context_t *context) {
+    mosaico_local_aec_destroy(context->local_aec);
+    context->local_aec = NULL;
+    context->local_aec_input_frames = 0;
+}
+static int local_capture_reset(audio_stream_context_t *context) {
+    if (!context->local_aec)
+        return local_capture_start(context);
+    context->local_aec_input_frames = 0;
+    return mosaico_local_aec_reset(context->local_aec);
+}
+static int local_capture_fill(audio_stream_context_t *context) {
+    int chunk = mosaico_local_aec_chunk_frames(context->local_aec);
+    if (chunk <= 0 || chunk > AUDIO_MAX_FRAMES)
+        return -1;
+    if (!stream_running(context))
+        return 0;
+    size_t remaining = (size_t)chunk - context->local_aec_input_frames;
+    uint32_t timeout =
+        AUDIO_IO_TIMEOUT_MS + (uint32_t)(remaining * 1000U / MYBOT_AUDIO_SAMPLE_RATE);
+    size_t bytes = 0;
+    esp_err_t err = i2s_channel_read(
+        s_audio.rx_channel, context->scratch + context->local_aec_input_frames * AUDIO_BUS_SLOTS,
+        remaining * AUDIO_BUS_SLOTS * sizeof(int16_t), &bytes, timeout);
+    bool valid = bytes <= remaining * AUDIO_BUS_SLOTS * sizeof(int16_t) &&
+                 bytes % (AUDIO_BUS_SLOTS * sizeof(int16_t)) == 0;
+    int captured = valid ? (int)(bytes / (AUDIO_BUS_SLOTS * sizeof(int16_t))) : -1;
+    if (err != ESP_OK && err != ESP_ERR_TIMEOUT && stream_running(context))
+        return -1;
+    if (captured < 0)
+        return -1;
+    if (captured == 0)
+        return 0;
+    context->local_aec_input_frames += (size_t)captured;
+    if (context->local_aec_input_frames < (size_t)chunk)
+        return 0;
+    int result = mosaico_local_aec_feed(context->local_aec, context->scratch, (size_t)chunk);
+    context->local_aec_input_frames = 0;
+    return result;
+}
+static int capture_read_aec(audio_stream_context_t *context, int16_t *output, int frames) {
+    size_t produced = mosaico_local_aec_read(context->local_aec, output, (size_t)frames);
+    while (produced < (size_t)frames && stream_running(context)) {
+        if (local_capture_fill(context) < 0)
+            return -1;
+        size_t copied = mosaico_local_aec_read(context->local_aec, output + produced,
+                                               (size_t)frames - produced);
+        if (!copied)
+            break;
+        produced += copied;
+    }
+    return (int)produced;
+}
+#endif
 static int capture_start(void *opaque) {
     audio_stream_context_t *context = opaque;
     if (!context_valid(context, AUDIO_DIRECTION_CAPTURE) || !audio_lock())
@@ -317,6 +408,10 @@ static int capture_start(void *opaque) {
         goto done;
     if (ensure_tx_locked() < 0 || start_codec_locked() < 0)
         goto rollback;
+#if MYBOT_LOCAL_AEC
+    if (local_capture_start(context) < 0)
+        goto rollback;
+#endif
     if (i2s_channel_enable(s_audio.rx_channel) != ESP_OK)
         goto rollback;
     s_audio.rx_enabled = true;
@@ -325,6 +420,9 @@ static int capture_start(void *opaque) {
     result = 0;
     goto done;
 rollback:
+#if MYBOT_LOCAL_AEC
+    local_capture_release(context);
+#endif
     if (!s_audio.playback_started) {
         context->stop_pending = close_codec_locked() < 0;
         context->stop_pending |= disable_channel(s_audio.tx_channel, &s_audio.tx_enabled) < 0;
@@ -376,6 +474,9 @@ static int capture_read(void *opaque, void *buffer, int frames) {
     portEXIT_CRITICAL(&s_audio_state_lock);
     if (!running)
         return 0;
+#if MYBOT_LOCAL_AEC
+    int captured = capture_read_aec(context, buffer, frames);
+#else
     size_t bytes = 0;
     esp_err_t err = i2s_channel_read(s_audio.rx_channel, context->scratch,
                                      (size_t)frames * AUDIO_BUS_SLOTS * sizeof(int16_t), &bytes,
@@ -390,6 +491,7 @@ static int capture_read(void *opaque, void *buffer, int frames) {
         for (int frame = 0; frame < captured; ++frame)
             output[frame] = context->scratch[frame * AUDIO_BUS_SLOTS];
     }
+#endif
     portENTER_CRITICAL(&s_audio_state_lock);
     --context->in_flight;
     portEXIT_CRITICAL(&s_audio_state_lock);
@@ -436,9 +538,13 @@ static int stream_stop_locked(audio_stream_context_t *context) {
         }
         if (disable_channel(s_audio.rx_channel, &s_audio.rx_enabled) < 0) {
             result = -1;
-            goto done;
         }
         s_audio.capture_started = false;
+#if MYBOT_LOCAL_AEC
+        local_capture_release(context);
+#endif
+        if (result < 0)
+            goto done;
     } else {
         if (set_pa(false) < 0 || mybot_pcm_playback_buffer_stop(context->playback_buffer) < 0) {
             result = -1;
@@ -485,6 +591,9 @@ static int destroy_owned_locked(audio_stream_context_t *context) {
     if (s_audio.references)
         --s_audio.references;
     context->magic = 0;
+#if MYBOT_LOCAL_AEC
+    local_capture_release(context);
+#endif
     free(context->scratch);
     free(context);
     return 0;
@@ -536,6 +645,31 @@ static void stream_destroy(void *opaque) {
     } else {
         ESP_LOGW(TAG, "event=audio_device action=destroy result=deferred owner=driver reason=lock");
     }
+}
+
+static int capture_reset(void *opaque) {
+    audio_stream_context_t *context = opaque;
+    if (!context_valid(context, AUDIO_DIRECTION_CAPTURE))
+        return -1;
+    /* The capture owner serializes reset with read. Admit the DSP operation
+     * under the same stop fence as read, without taking the lifecycle mutex:
+     * stop holds that mutex while it waits for in_flight to become zero. */
+    portENTER_CRITICAL(&s_audio_state_lock);
+    bool admitted = stream_running(context) && !context->in_flight;
+    if (admitted)
+        ++context->in_flight;
+    portEXIT_CRITICAL(&s_audio_state_lock);
+    if (!admitted)
+        return -1;
+    int result = 0;
+#if MYBOT_LOCAL_AEC
+    result = local_capture_reset(context);
+#endif
+    portENTER_CRITICAL(&s_audio_state_lock);
+    bool running = stream_running(context);
+    --context->in_flight;
+    portEXIT_CRITICAL(&s_audio_state_lock);
+    return running ? result : -1;
 }
 
 static int persist_volume(audio_volume_context_t *context, int volume) {
@@ -679,6 +813,7 @@ static const mybot_audio_capture_ops_t s_capture_ops = {
     .read = capture_read,
     .stop = stream_stop,
     .destroy = stream_destroy,
+    .reset = capture_reset,
 };
 static const mybot_audio_playback_ops_t s_playback_ops = {
     .init = playback_init,
