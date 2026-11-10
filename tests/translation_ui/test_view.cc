@@ -847,6 +847,193 @@ static void test_meeting_flow() {
         "PASS meeting UI: USB capability, acknowledged source selection, language mapping, "
         "pending locks, both caption routes, simultaneous pause and preserved scene languages");
 }
+static void test_language_swap() {
+    lv_display_t display;
+    display.width = display.root.width = 480;
+    display.root.height = 480;
+    commands.clear();
+    events.clear();
+    captions.clear();
+    accept_ui_commands = true;
+    CHECK(mybot_lvgl_view_create(&display) == 0);
+    mybot_lcd_content_t content{};
+    content.screen = MYBOT_LCD_SCREEN_READY;
+    content.volume = 40;
+    content.usb_audio_available = true;
+    std::strcpy(content.source_language, "zh-CN");
+    std::strcpy(content.target_language, "en-US");
+    update(display, content);
+    click(find(&display.root, home_action()));
+    click(find(&display.root, tr("会议互译", "Meeting")));
+    CHECK(commands.size() == 1 && commands.back().type == MYBOT_UI_SET_MODE);
+    const auto swap_enabled = [&](bool allow) {
+        auto *icon = find(&display.root, "<>");
+        CHECK(icon && icon->parent && (icon->parent->flags & LV_OBJ_FLAG_CLICKABLE));
+        CHECK(lv_obj_has_state(icon->parent, LV_STATE_DISABLED) != allow);
+    };
+    swap_enabled(false);
+    click(find(&display.root, "<>"));
+    CHECK(commands.size() == 1);
+    content.translation_mode = MYBOT_TRANSLATION_LISTEN_SPEAK;
+    ++content.selection_revision;
+    update(display, content); // The RTC mode does not acknowledge the USB source.
+    ticks += 2000;
+    timer->callback(timer);
+    swap_enabled(false);
+    click(find(&display.root, "<>"));
+    CHECK(commands.size() == 1);
+    content.audio_source = MYBOT_AUDIO_SOURCE_USB;
+    ++content.selection_revision;
+    update(display, content);
+    swap_enabled(true);
+
+    content.usb_audio_available = false;
+    update(display, content);
+    swap_enabled(false);
+    click(find(&display.root, "<>"));
+    CHECK(commands.size() == 1);
+    content.usb_audio_available = true;
+    update(display, content);
+    accept_ui_commands = false;
+    click(find(&display.root, "<>"));
+    CHECK(commands.size() == 1);
+    swap_enabled(true); // A rejected mailbox must allow an immediate retry.
+    accept_ui_commands = true;
+    click(find(&display.root, "<>"));
+    CHECK(commands.size() == 2 && commands.back().type == MYBOT_UI_SET_LANGUAGES);
+    CHECK(std::strcmp(commands.back().source_language, "en-US") == 0 &&
+          std::strcmp(commands.back().target_language, "zh-CN") == 0);
+    CHECK(find(&display.root, tr("中文", "Chinese"))->parent->x <
+          find(&display.root, tr("英语", "English"))->parent->x);
+    swap_enabled(false); // Only a stored language pair can change the display.
+    click(find(&display.root, "<>"));
+    click(find(&display.root, tr("中文", "Chinese")));
+    click(find(&display.root, tr("英语", "English")));
+    click(find(&display.root, tr("开始翻译  >", "Start translation  >")));
+    CHECK(commands.size() == 2 && events.empty());
+    ++content.volume;
+    ++content.caption_revision;
+    ++content.selection_revision;
+    update(display, content);
+    ticks += 2000;
+    timer->callback(timer);
+    swap_enabled(false); // Neither unrelated snapshots nor the timer acknowledge languages.
+    click(find(&display.root, "<>"));
+    click(find(&display.root, tr("开始翻译  >", "Start translation  >")));
+    CHECK(commands.size() == 2 && events.empty());
+    click(find(&display.root, tr("< 返回", "< Back")));
+    click(find(&display.root, tr("媒体翻译", "Listen")));
+    click(find(&display.root, tr("面对面", "In person")));
+    click(find(&display.root, tr("会议互译", "Meeting")));
+    CHECK(commands.size() == 2 && events.empty());
+    CHECK(find(&display.root, tr("选择翻译方式", "Choose a translation scene")));
+
+    std::strcpy(content.source_language, "en-US");
+    std::strcpy(content.target_language, "zh-CN");
+    update(display, content);
+    click(find(&display.root, tr("会议互译", "Meeting")));
+    CHECK(commands.size() == 2);
+    swap_enabled(true);
+    CHECK(find(&display.root, tr("英语", "English"))->parent->x <
+          find(&display.root, tr("中文", "Chinese"))->parent->x);
+    click(find(&display.root, "<>"));
+    CHECK(commands.size() == 3 && commands.back().type == MYBOT_UI_SET_LANGUAGES);
+    CHECK(std::strcmp(commands.back().source_language, "zh-CN") == 0 &&
+          std::strcmp(commands.back().target_language, "en-US") == 0);
+    std::strcpy(content.source_language, "zh-CN");
+    std::strcpy(content.target_language, "en-US");
+    update(display, content);
+    swap_enabled(true);
+
+    click(find(&display.root, "<>"));
+    CHECK(commands.size() == 4);
+    content.screen = MYBOT_LCD_SCREEN_TRANSLATION_ERROR;
+    std::strcpy(content.error_code, "STORAGE_ERROR");
+    update(display, content);
+    CHECK(find(&display.root, "STORAGE_ERROR"));
+    click(find(&display.root, tr("返回设置", "Back to settings")));
+    swap_enabled(true); // A failed save releases the guard and preserves the accepted pair.
+    CHECK(find(&display.root, tr("中文", "Chinese"))->parent->x <
+          find(&display.root, tr("英语", "English"))->parent->x);
+    content.error_code[0] = '\0';
+    update(display, content);
+    click(find(&display.root, "<>"));
+    CHECK(commands.size() == 5);
+    CHECK(std::strcmp(commands.back().source_language, "en-US") == 0 &&
+          std::strcmp(commands.back().target_language, "zh-CN") == 0);
+    std::strcpy(content.source_language, "en-US");
+    std::strcpy(content.target_language, "zh-CN");
+    update(display, content);
+    swap_enabled(true);
+
+    const char *codec_scenes[] = {tr("面对面", "In person"), tr("媒体翻译", "Listen")};
+    for (unsigned scene = 0; scene < 2; ++scene) {
+        click(find(&display.root, tr("< 返回", "< Back")));
+        const auto before_mode = commands.size();
+        click(find(&display.root, codec_scenes[scene]));
+        CHECK(commands.size() == before_mode + 1 && commands.back().type == MYBOT_UI_SET_MODE);
+        swap_enabled(false);
+        content.usb_audio_available = false;
+        ++content.volume;
+        update(display, content);
+        ticks += 2000;
+        timer->callback(timer);
+        click(find(&display.root, "<>"));
+        CHECK(commands.size() == before_mode + 1);
+        swap_enabled(false); // Codec scenes also wait for their mode/source acknowledgement.
+        content.audio_source = MYBOT_AUDIO_SOURCE_CODEC;
+        content.translation_mode =
+            scene == 0 ? MYBOT_TRANSLATION_LISTEN_SPEAK : MYBOT_TRANSLATION_LISTEN;
+        ++content.selection_revision;
+        update(display, content);
+        swap_enabled(true); // Neither codec scene requires USB capability.
+        const std::string source = content.source_language;
+        const std::string target = content.target_language;
+        click(find(&display.root, "<>"));
+        const auto after_swap = commands.size();
+        CHECK(after_swap == before_mode + 2 && commands.back().type == MYBOT_UI_SET_LANGUAGES);
+        CHECK(commands.back().source_language == target &&
+              commands.back().target_language == source);
+        swap_enabled(false);
+        click(find(&display.root, "<>"));
+        click(find(&display.root, tr("英语", "English")));
+        click(find(&display.root, tr("开始翻译  >", "Start translation  >")));
+        CHECK(commands.size() == after_swap && events.empty());
+        ++content.volume;
+        ++content.caption_revision;
+        update(display, content);
+        ticks += 2000;
+        timer->callback(timer);
+        swap_enabled(false);
+        std::snprintf(content.source_language, sizeof(content.source_language), "%s",
+                      target.c_str());
+        std::snprintf(content.target_language, sizeof(content.target_language), "%s",
+                      source.c_str());
+        update(display, content);
+        swap_enabled(true);
+
+        // A manual language edit and a swap share the same pending guard.
+        click(find(&display.root, scene == 0 ? tr("中文", "Chinese") : tr("英语", "English")));
+        click(find(&display.root, scene == 0 ? tr("日语", "Japanese") : tr("韩语", "Korean")));
+        CHECK(commands.size() == after_swap + 1 && commands.back().type == MYBOT_UI_SET_LANGUAGES);
+        const char *edited_source = scene == 0 ? "ja-JP" : "ko-KR";
+        CHECK(std::strcmp(commands.back().source_language, edited_source) == 0 &&
+              commands.back().target_language == source);
+        swap_enabled(false);
+        click(find(&display.root, "<>"));
+        click(find(&display.root, tr("开始翻译  >", "Start translation  >")));
+        CHECK(commands.size() == after_swap + 1 && events.empty());
+        std::snprintf(content.source_language, sizeof(content.source_language), "%s",
+                      edited_source);
+        update(display, content);
+        swap_enabled(true);
+    }
+    CHECK(events.empty());
+    mybot_lvgl_view_destroy();
+    CHECK(!live && !timer && display.root.children.empty());
+    std::puts("PASS language swap: all scenes, atomic pair, source readiness, mailbox rejection, "
+              "acknowledgement locks, failed save and shared language-edit guard");
+}
 static void test_start_recovery_flow() {
     lv_display_t display;
     display.width = display.root.width = 480;
@@ -1442,6 +1629,7 @@ int main() {
     CHECK(!live && !timer && display.root.children.empty());
     test_face_flow();
     test_meeting_flow();
+    test_language_swap();
     test_start_recovery_flow();
     std::puts("PASS native simulator UI: USB availability, direct language selection, real volume, "
               "pause, streamed captions/history, lifecycle gates and allocation cleanup");

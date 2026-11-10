@@ -67,6 +67,7 @@ enum Action : uintptr_t {
     Setup,
     Source,
     Target,
+    Swap,
     Start,
     Menu,
     Live,
@@ -457,7 +458,7 @@ void entry() {
 }
 void setup() {
     heading(scene_name(), Entry);
-    const int column = 184;
+    const int column = 176;
     const int left = margin();
     const int right = kDisplayWidth - left - column;
     label(s_view.body, left, 78, column, 30,
@@ -468,8 +469,8 @@ void setup() {
                                        : tr("对方语言", "Other language"));
     button(left, 116, column, 96, language_name(s_view.content.source_language), Source, kTeal,
            languages_allowed());
-    label(s_view.body, left + column, 144, right - left - column, 40,
-          s_view.scene == Scene::Media ? ">" : "<>", &mybot_lvgl_font_28);
+    button(left + column, 132, right - left - column, 64, "<>", Swap, kWhite,
+           idle() && languages_allowed());
     button(right, 116, column, 96, language_name(s_view.content.target_language), Target, kPurple,
            languages_allowed());
     label(s_view.body, margin(), 236, content_width(), 76,
@@ -994,6 +995,20 @@ int command(mybot_ui_command_type_t type, int value) {
     request.value = value;
     return mybot_ui_port_command(&request);
 }
+void submit_languages(const char *source, const char *target) {
+    if (std::strcmp(source, target) == 0)
+        return;
+    mybot_ui_command_t request{};
+    request.type = MYBOT_UI_SET_LANGUAGES;
+    std::snprintf(request.source_language, sizeof(request.source_language), "%s", source);
+    std::snprintf(request.target_language, sizeof(request.target_language), "%s", target);
+    /* Wait for the complete pair before accepting another edit or swap. A rejected
+     * mailbox leaves the controls available for an immediate retry. */
+    if (mybot_ui_port_command(&request) == 0) {
+        std::memcpy(s_view.pending_source, request.source_language, sizeof(s_view.pending_source));
+        std::memcpy(s_view.pending_target, request.target_language, sizeof(s_view.pending_target));
+    }
+}
 void stop(bool change) {
     if (!active())
         return;
@@ -1030,20 +1045,7 @@ void clicked(lv_event_t *event) {
         const char *source = s_view.pick_target ? s_view.content.source_language : list[index].code;
         const char *destination =
             s_view.pick_target ? list[index].code : s_view.content.target_language;
-        if (std::strcmp(source, destination) == 0)
-            return;
-        mybot_ui_command_t request{};
-        request.type = MYBOT_UI_SET_LANGUAGES;
-        std::snprintf(request.source_language, sizeof(request.source_language), "%s", source);
-        std::snprintf(request.target_language, sizeof(request.target_language), "%s", destination);
-        /* A language pair must be read back before another pair is built.
-         * Submit directly so a rejected mailbox cannot leave a permanent guard. */
-        if (mybot_ui_port_command(&request) == 0) {
-            std::memcpy(s_view.pending_source, request.source_language,
-                        sizeof(s_view.pending_source));
-            std::memcpy(s_view.pending_target, request.target_language,
-                        sizeof(s_view.pending_target));
-        }
+        submit_languages(source, destination);
         s_view.page = Page::Setup;
         redraw();
         return;
@@ -1090,6 +1092,11 @@ void clicked(lv_event_t *event) {
     case Setup:
         if (idle())
             s_view.page = Page::Setup;
+        break;
+    case Swap:
+        if (s_view.page != Page::Setup || !idle() || !languages_allowed())
+            return;
+        submit_languages(s_view.content.target_language, s_view.content.source_language);
         break;
     case Source:
     case Target:
