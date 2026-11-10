@@ -157,7 +157,17 @@ jobs:
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
           git -C "$GITHUB_WORKSPACE" rev-parse --verify HEAD
       - name: Install prompt conversion prerequisite
-        run: apt-get update && apt-get install -y ffmpeg
+        run: |
+          for source in /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
+            if [ -f "$source" ]; then
+              sed -i \
+                -e 's|http://archive\.ubuntu\.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' \
+                -e 's|http://security\.ubuntu\.com/ubuntu|https://security.ubuntu.com/ubuntu|g' "$source"
+            fi
+          done
+          apt_options=(-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30)
+          apt-get "${apt_options[@]}" -o APT::Update::Error-Mode=any update
+          apt-get "${apt_options[@]}" install -y --no-install-recommends ffmpeg
       - name: Verify bundled S31 RTSA fingerprints
         run: python3 scripts/check_s31_build.py --vendor-only
       - name: Verify toolchain
