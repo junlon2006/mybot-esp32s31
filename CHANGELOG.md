@@ -2,6 +2,9 @@
 
 ## Unreleased — standalone S31 translation
 
+- Add a one-tap language-pair swap in media, face-to-face and meeting setup using
+  the existing acknowledged language selection command.
+
 - Add an explicit, confirmed recovery action for unknown starts after cloud sessions
   are ended in the console; preserve Wi-Fi, binding and preferences, and keep binding polling active.
 - Distinguish HTTP failures before the first transport write from ambiguous starts,

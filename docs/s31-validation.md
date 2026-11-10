@@ -1573,3 +1573,30 @@ OTA free 449,104 bytes. English application: 4,874,704 bytes, minimum OTA free
 368,176 bytes. Both keep 5 MiB OTA slots, more than 300 KiB reserve, Local AEC,
 AI QoS off and 40-row display buffers. Saved configuration and active build remain
 English. Manifests accurately mark the current source changes as uncommitted.
+
+## 2026-11-10 Language-pair swap in all three scenes
+
+Every scene's setup exposes the middle `<>` icon as a 64x64 touch button. It submits
+one existing SET_LANGUAGES command with the accepted source and target exchanged;
+the SDK's existing pair persistence and route mapping apply without a new command
+or session mechanism. Only idle setup with the selected scene's acknowledged
+mode/source can submit it. Meeting additionally requires USB capability; media and
+face-to-face work without USB. Active sessions must end before changing the pair.
+
+Bilingual host UI regressions pass for pair reversal, repeated reversal, rejected
+enqueue retry, mode/source readiness, USB loss, duplicate taps, start/language/scene
+locks, delayed readback, unrelated presenter/timer updates and storage failure.
+Additional media/face-to-face cases verify codec operation without USB, full-pair
+swaps and a shared pending guard for manual edits and swaps. Geometry and allocation-
+failure checks pass, as do static-font coverage and all 22,771 real LVGL caption glyph
+decodes/pixel checks. Changed sources pass clang-format 18.1.8, SPDX and whitespace
+checks. Both six-page PDF manuals include current LVGL screenshots and swap steps
+for all three scenes; PDFKit parsing, extracted text and rendered pages pass.
+These are host results; the new swap action has not been tested on hardware.
+
+Direct Chinese and English ESP-IDF v6.1 builds and delivery/map checks pass in
+build/mosaico-v1.2. Chinese application: 4,793,824 bytes, minimum OTA free 449,056
+bytes. English application: 4,874,752 bytes, minimum OTA free 368,128 bytes. Both
+retain Local AEC and the 300 KiB minimum reserve. Saved configuration and the active
+build are English; manifests identify base revision 89d2634 with uncommitted swap
+changes. No device was flashed by the agent.
