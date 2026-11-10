@@ -49,6 +49,12 @@ Pipeline pause fencing itself is covered by `tests/media_pause`. UI command test
 also verify mode/direction completion revisions, including repeated failures,
 successful retries and unrelated volume/caption refreshes.
 
+Unknown-start recovery is a copied asynchronous command with an explicit affirmative value.
+Tests verify consumption-time state checks and completion revisions on success or rejection,
+including unchanged errors. Active RTC/USB routes block it, while background physical capture
+and initialized idle USB resources do not. Real journal durability and storage failures are
+covered by `tests/translation_lifecycle`.
+
 Meeting selects USB capture/playback together with LISTEN_SPEAK and local/remote
 languages. Control tests require both USB capabilities, reject the obsolete USB+LISTEN
 topology, prevent cloud start when USB cannot start, and release prepared USB media

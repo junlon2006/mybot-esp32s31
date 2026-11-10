@@ -140,6 +140,10 @@ void mybot_device_lifecycle_finish_shutdown(mybot_device_lifecycle_t *lifecycle)
 void mybot_device_lifecycle_request_pair(mybot_device_lifecycle_t *lifecycle);
 void mybot_device_lifecycle_request_start(mybot_device_lifecycle_t *lifecycle);
 void mybot_device_lifecycle_request_stop(mybot_device_lifecycle_t *lifecycle);
+/** Control-owner only. The user must first confirm all device sessions ended in
+ * the web console. Erases only the idle unknown-start journal before unlocking;
+ * known parents, active work and storage faults remain blocked. */
+int mybot_device_lifecycle_confirm_start_recovery(mybot_device_lifecycle_t *lifecycle);
 void mybot_device_lifecycle_notify_conversation_ended(mybot_device_lifecycle_t *lifecycle);
 /** RTC token-expiry notification ends the session; translation has no renewal API. */
 void mybot_device_lifecycle_notify_credentials_expiring(mybot_device_lifecycle_t *lifecycle);

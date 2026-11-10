@@ -26,7 +26,7 @@ trap 'rm -r -- "$test_build_dir"' EXIT HUP INT TERM
     -I"$repo_root/components/mybot_stack/mybot_sdk/mybot/include" \
     "$test_dir/test_keys.cc" "$test_build_dir/mosaico_keys.o" \
     "$test_build_dir/ui_input_router.o" -o "$test_build_dir/test_mosaico_keys"
-for scenario in mutex gpio task gpio_behavior touch touch_stale touch_ordering ui_controls ui_commands late_cancel; do
+for scenario in mutex gpio task gpio_behavior touch touch_stale touch_ordering ui_controls ui_commands start_recovery late_cancel; do
     "$test_build_dir/test_mosaico_keys" "$scenario"
 done
 

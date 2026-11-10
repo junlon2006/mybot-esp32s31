@@ -1528,3 +1528,48 @@ The final exterior illustration has seven evenly spaced upper openings and seven
 lower openings centered on USB-C, as requested by the user. PDFKit parses and
 renders both six-page manuals; text extraction checks the explicit button times,
 four-language coverage and the corrected factory-reset unbinding instructions.
+
+## Unknown-start recovery after restart (2026-11-10)
+
+User logs from repeated power cycles enter start_unknown immediately after SDK
+initialization, before any new conversation HTTP request. Audio/USB statistics and
+touch events continue; the evidence identifies restoration of an old unknown-start
+journal, not a frozen processor or a new failed start on every reboot. The user
+confirmed that every cloud session for this device was ended. The original failed
+start was not logged, so its initial transport/service cause is not established.
+
+The unknown page now opens an explicit confirmation after the operator ends all
+sessions in the web console. The control owner only accepts recovery for an idle
+unknown journal without a known parent or in-flight/live session. It erases only
+tr_session and commits before publishing readiness. Valid binding, languages,
+Wi-Fi and volume remain intact. Storage failure retains the journal and requires
+restart/retry. Recovery never starts a new session. Binding polling continues while
+unknown, and neither a bound response nor revoked credentials silently erase the
+pending journal. The normal invalid-auth path remains available after recovery.
+
+A separate confirmed defect is fixed in HTTP start classification: transport-write
+evidence stays false until the first send call. Connection failure, pre-send
+allocation failure and expiry before sending do not create an ambiguous result.
+A failed/partial write or later transport/parse failure remains conservative. Start
+keeps one 30-second deadline and is never automatically retransmitted.
+
+Host checks pass: 18 production transport scenarios, 473/465 protocol/fault cases,
+41 lifecycle cases with UBSan, and related control cases including 30 UI command
+cases. Recovery tests cover erase failure, known-parent/busy/stale-state rejection,
+settings preservation and unknown→confirm→reinitialize without recurring lock.
+The real input router's new regression first failed because the command was not
+admitted; it now passes with explicit value=1 and fresh unknown-state gestures,
+rejecting stale/invalid/detached touches. Existing input, board, bilingual UI,
+display/touch fault and 22,771-caption-glyph checks pass. The static UI font adds
+U+90E8 using the same pinned source/tools (307 glyphs at each UI size). Formatting,
+SPDX and whitespace checks pass. No device was flashed or its NVS modified here.
+
+The bilingual six-page PDF manuals now describe Console sessions ended → Confirm
+recovery after web reconciliation, replacing the earlier whole-NVS reset fallback.
+
+Direct Chinese and English ESP-IDF v6.1 builds and delivery checks pass in the
+fixed build/mosaico-v1.2 directory. Chinese application: 4,793,776 bytes, minimum
+OTA free 449,104 bytes. English application: 4,874,704 bytes, minimum OTA free
+368,176 bytes. Both keep 5 MiB OTA slots, more than 300 KiB reserve, Local AEC,
+AI QoS off and 40-row display buffers. Saved configuration and active build remain
+English. Manifests accurately mark the current source changes as uncommitted.

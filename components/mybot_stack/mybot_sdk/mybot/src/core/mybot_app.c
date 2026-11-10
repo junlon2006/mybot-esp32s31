@@ -975,6 +975,8 @@ static bool ui_command_valid(const mybot_ui_command_t *command) {
         return command->value >= 0 && command->value <= 100;
     case MYBOT_UI_SET_PAUSED:
         return command->value == 0 || command->value == 1;
+    case MYBOT_UI_CONFIRM_START_RECOVERY:
+        return command->value == 1;
     case MYBOT_UI_SET_MODE:
         if ((command->value != MYBOT_TRANSLATION_LISTEN &&
              command->value != MYBOT_TRANSLATION_LISTEN_SPEAK) ||
@@ -1144,10 +1146,21 @@ static void handle_ui_command(const aosl_ts_t *ts, aosl_refobj_t ref, uintptr_t 
     case MYBOT_UI_SET_DIRECTION:
         result = control_set_direction(runtime, command.value);
         break;
+    case MYBOT_UI_CONFIRM_START_RECOVERY:
+        if (!aosl_atomic_read(&runtime->media.rtc_connected) &&
+            !aosl_atomic_read(&runtime->meeting_active) &&
+            !(runtime->usb_media && (aosl_atomic_read(&runtime->usb_media->running) ||
+                                     aosl_atomic_read(&runtime->usb_media->rtc_connected))) &&
+            !(aosl_atomic_read(&runtime->rtc_media_state) & 1))
+            result = mybot_device_lifecycle_confirm_start_recovery(&runtime->lifecycle);
+        break;
     }
-    if (command.type == MYBOT_UI_SET_MODE || command.type == MYBOT_UI_SET_DIRECTION) {
+    if (command.type == MYBOT_UI_SET_MODE || command.type == MYBOT_UI_SET_DIRECTION ||
+        command.type == MYBOT_UI_CONFIRM_START_RECOVERY) {
         if (++runtime->presenter.selection_revision == 0)
             ++runtime->presenter.selection_revision;
+    }
+    if (command.type == MYBOT_UI_SET_MODE || command.type == MYBOT_UI_SET_DIRECTION) {
         if (result < 0 && !aosl_atomic_read(&runtime->media_cancel_requested) &&
             !aosl_atomic_read(&runtime->lifecycle.stop_request)) {
             snprintf(runtime->lifecycle.error_code, sizeof(runtime->lifecycle.error_code), "%s",

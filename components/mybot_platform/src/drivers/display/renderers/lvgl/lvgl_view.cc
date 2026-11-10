@@ -52,6 +52,7 @@ enum class Page {
     History,
     EndConfirm,
     ChangeConfirm,
+    StartRecoveryConfirm,
     Complete,
     Service
 };
@@ -81,6 +82,9 @@ enum Action : uintptr_t {
     ConfirmChange,
     RetryStop,
     CancelStart,
+    StartRecovery,
+    ConfirmStartRecovery,
+    CancelStartRecovery,
     CaptionExit,
     HistoryPrevious,
     HistoryNext,
@@ -155,6 +159,9 @@ bool idle() {
 }
 bool active() {
     return s_view.content.screen == MYBOT_LCD_SCREEN_IN_CONVERSATION;
+}
+bool start_recovery_available() {
+    return s_view.content.screen == MYBOT_LCD_SCREEN_START_UNKNOWN;
 }
 bool languages_pending() {
     return s_view.pending_source[0] != '\0';
@@ -302,7 +309,8 @@ void mark_pending() {
 void update_clock(lv_timer_t *timer) {
     /* Mailbox rejection must never leave a UI button permanently disabled.
      * This only releases a local button guard; SDK state still owns all outcomes. */
-    if (timer && s_view.command_pending && lv_tick_get() - s_view.pending_since >= 1500) {
+    if (timer && s_view.command_pending && s_view.page != Page::StartRecoveryConfirm &&
+        lv_tick_get() - s_view.pending_since >= 1500) {
         s_view.command_pending = false;
         redraw();
     }
@@ -782,6 +790,27 @@ void confirmation(bool change) {
            change ? tr("结束并更换", "End and change") : tr("结束翻译", "End translation"),
            change ? ConfirmChange : ConfirmEnd, kPink);
 }
+void start_recovery_confirmation() {
+    const bool failed = s_view.content.screen == MYBOT_LCD_SCREEN_TRANSLATION_ERROR;
+    heading(failed                   ? tr("恢复失败", "Recovery failed")
+            : s_view.command_pending ? tr("正在恢复设备", "Recovering device")
+                                     : tr("确认恢复设备？", "Recover this device?"));
+    label(s_view.body, margin() + 12, 108, content_width() - 24, 128,
+          failed ? tr("请重启后重试", "Restart the device to retry")
+                 : tr("请先在网页控制台结束这台设备的全部会话，再确认恢复设备。",
+                      "End every session for this device in the web console before confirming "
+                      "recovery."),
+          &mybot_lvgl_font_20);
+    s_view.caption_notice =
+        label(s_view.body, margin(), 244, content_width(), 56, s_view.content.error_code,
+              &mybot_lvgl_font_20, LV_TEXT_ALIGN_CENTER, kWarning);
+    button(margin(), 320, (content_width() - 24) / 2, 68, tr("返回", "Back"), CancelStartRecovery,
+           kWhite, !s_view.command_pending);
+    button((kDisplayWidth + 24) / 2, 320, (content_width() - 24) / 2, 68,
+           s_view.command_pending ? tr("正在恢复...", "Recovering...")
+                                  : tr("确认恢复", "Confirm recovery"),
+           ConfirmStartRecovery, kTeal, start_recovery_available() && !s_view.command_pending);
+}
 struct Message {
     const char *title;
     const char *notice;
@@ -878,6 +907,9 @@ void service() {
              (active() && s_view.stop_requested))
         button((kDisplayWidth - 344) / 2, 330, 344, 62, tr("重试结束", "Retry stop"), RetryStop,
                kPink, !s_view.command_pending);
+    else if (start_recovery_available())
+        button((kDisplayWidth - 344) / 2, 330, 344, 62,
+               tr("控制台已结束，恢复设备", "Console sessions ended"), StartRecovery, kTeal);
     else if (idle_error())
         button((kDisplayWidth - 344) / 2, 330, 344, 62, tr("返回设置", "Back to settings"), Setup,
                kTeal);
@@ -934,6 +966,9 @@ void redraw() {
         break;
     case Page::ChangeConfirm:
         confirmation(true);
+        break;
+    case Page::StartRecoveryConfirm:
+        start_recovery_confirmation();
         break;
     case Page::Complete:
         heading(tr("翻译已结束", "Translation ended"), Home);
@@ -1090,6 +1125,29 @@ void clicked(lv_event_t *event) {
         s_view.stop_requested = true;
         mybot_ui_port_event(MYBOT_KEY_EVENT_CONVERSATION_STOP);
         break;
+    case StartRecovery:
+        if (!start_recovery_available() || s_view.command_pending)
+            return;
+        s_view.page = Page::StartRecoveryConfirm;
+        break;
+    case CancelStartRecovery:
+        if (s_view.page != Page::StartRecoveryConfirm || s_view.command_pending)
+            return;
+        s_view.page = Page::Service;
+        break;
+    case ConfirmStartRecovery:
+        if (s_view.page != Page::StartRecoveryConfirm || !start_recovery_available() ||
+            s_view.command_pending)
+            return;
+        if (command(MYBOT_UI_CONFIRM_START_RECOVERY, 1) < 0) {
+            redraw();
+            caption_text(s_view.caption_notice, tr("暂时无法恢复，请稍后重试",
+                                                   "Could not submit recovery. Please retry."));
+            return;
+        }
+        s_view.pending_selection_revision = s_view.content.selection_revision;
+        mark_pending();
+        break;
     case Menu:
         if (active())
             s_view.page = Page::Menu;
@@ -1244,11 +1302,14 @@ void mybot_lvgl_view_update(const mybot_lcd_content_t *content) {
         previous.volume == content->volume && previous.indicators == content->indicators &&
         previous.selection_revision == content->selection_revision;
     const bool was_pending = s_view.command_pending || languages_pending();
+    const bool was_recovery_confirmation = s_view.page == Page::StartRecoveryConfirm;
+    const bool recovery_pending = was_recovery_confirmation && s_view.command_pending;
     const int previous_pending_mode = s_view.pending_mode;
     const int previous_pending_direction = s_view.pending_direction;
     s_view.content = *content;
     const bool selection_finished =
         content->selection_revision != s_view.pending_selection_revision;
+    const bool recovery_acknowledged = recovery_pending && selection_finished;
     if (s_view.pending_mode >= 0 &&
         (!idle() ||
          (selection_finished && ((content->translation_mode == s_view.pending_mode &&
@@ -1293,12 +1354,13 @@ void mybot_lvgl_view_update(const mybot_lcd_content_t *content) {
          (error_changed && content->error_code[0])))
         s_view.pending_source[0] = '\0';
     /* Other controls use a local retry guard; only SDK state may show success. */
-    if (!captions_only)
+    if (!captions_only && (!recovery_pending || changed || recovery_acknowledged))
         s_view.command_pending = false;
     if (changed || (s_view.page == Page::Service && completed_cleanup_hint())) {
         if (content->screen == MYBOT_LCD_SCREEN_READY) {
             s_view.page =
-                s_view.stop_requested
+                was_recovery_confirmation ? Page::Home
+                : s_view.stop_requested
                     ? (s_view.change_after_stop || s_view.cancel_requested ? Page::Setup
                                                                            : Page::Complete)
                     : (changed ? Page::Home : Page::Setup);
@@ -1317,9 +1379,11 @@ void mybot_lvgl_view_update(const mybot_lcd_content_t *content) {
     if (!changed && (detail_changed || s_view.start_requested || selection_acknowledged) &&
         idle_error())
         s_view.page = Page::Service;
+    if (was_recovery_confirmation && content->screen == MYBOT_LCD_SCREEN_TRANSLATION_ERROR)
+        s_view.page = Page::StartRecoveryConfirm;
     s_view.start_requested = false;
     if (changed || language_changed || paused_changed || detail_changed || mode_changed ||
-        capability_changed || selection_acknowledged ||
+        capability_changed || selection_acknowledged || recovery_acknowledged ||
         (direction_changed && s_view.page == Page::Live) || (was_pending && !captions_only) ||
         (s_view.page == Page::Setup || s_view.page == Page::Service))
         redraw();
@@ -1327,6 +1391,10 @@ void mybot_lvgl_view_update(const mybot_lcd_content_t *content) {
         update_volume();
         update_clock(nullptr);
     }
+    if (recovery_acknowledged && start_recovery_available())
+        caption_text(s_view.caption_notice,
+                     tr("恢复未完成，请重试或重启设备",
+                        "Recovery incomplete. Retry or restart the device."));
 }
 void mybot_lvgl_view_destroy(void) {
     if (s_view.timer)

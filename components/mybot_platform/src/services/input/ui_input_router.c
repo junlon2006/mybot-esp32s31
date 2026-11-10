@@ -129,6 +129,8 @@ static bool command_allowed(const mybot_ui_command_t *command, mybot_state_t sta
     case MYBOT_UI_SET_DIRECTION:
         /* The SDK verifies the active mode, audio source and requested direction. */
         return state == MYBOT_STATE_IN_CONVERSATION;
+    case MYBOT_UI_CONFIRM_START_RECOVERY:
+        return state == MYBOT_STATE_START_UNKNOWN && command->value == 1;
     default:
         return false;
     }
@@ -137,8 +139,11 @@ static bool command_allowed(const mybot_ui_command_t *command, mybot_state_t sta
 int mybot_ui_input_command(const mybot_ui_command_t *command) {
     uint32_t click = s_touch_click;
     s_touch_click = 0;
+    mybot_state_t state = mybot_get_state();
     if (!click || (click >> 9) != __atomic_load_n(&s_epoch, __ATOMIC_ACQUIRE) ||
-        !command_allowed(command, mybot_get_state()))
+        !command_allowed(command, state) ||
+        (command->type == MYBOT_UI_CONFIRM_START_RECOVERY &&
+         (mybot_state_t)((click >> 4) & 31U) != state))
         return -1;
     return mybot_ui_submit(command);
 }
