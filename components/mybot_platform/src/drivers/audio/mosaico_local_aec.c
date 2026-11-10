@@ -161,18 +161,18 @@ int mosaico_local_aec_reset(mosaico_local_aec_t *aec) {
         return -1;
     int expected_chunk = aec->chunk_frames;
     release_handle(aec);
-    if (create_handle(aec) < 0)
-        return -1;
-    if (expected_chunk > 0 && aec->chunk_frames != expected_chunk) {
-        release_handle(aec);
-        return -1;
-    }
+    /* Old PCM is invalid even when recreating the filter fails. The capture
+     * owner must observe that failure before admitting another session. */
     aec->ring_head = 0;
     aec->ring_count = 0;
     aec->processed_chunks = 0;
     aec->reference_chunks = 0;
     aec->max_process_us = 0;
     aec->last_log_us = esp_timer_get_time();
+    if (create_handle(aec) < 0 || (expected_chunk > 0 && aec->chunk_frames != expected_chunk)) {
+        release_handle(aec);
+        return -1;
+    }
     return 0;
 }
 

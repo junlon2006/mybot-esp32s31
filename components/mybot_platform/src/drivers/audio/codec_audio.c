@@ -58,7 +58,6 @@ typedef struct audio_stream_context {
 #if MYBOT_LOCAL_AEC
     mosaico_local_aec_t *local_aec;
     size_t local_aec_input_frames;
-    bool local_aec_reset_requested;
 #endif
 } audio_stream_context_t;
 typedef struct {
@@ -343,14 +342,12 @@ static int local_capture_start(audio_stream_context_t *context) {
         return 0;
     context->local_aec = mosaico_local_aec_create();
     context->local_aec_input_frames = 0;
-    __atomic_store_n(&context->local_aec_reset_requested, false, __ATOMIC_RELEASE);
     return context->local_aec ? 0 : -1;
 }
 static void local_capture_release(audio_stream_context_t *context) {
     mosaico_local_aec_destroy(context->local_aec);
     context->local_aec = NULL;
     context->local_aec_input_frames = 0;
-    __atomic_store_n(&context->local_aec_reset_requested, false, __ATOMIC_RELEASE);
 }
 static int local_capture_reset(audio_stream_context_t *context) {
     if (!context->local_aec)
@@ -388,9 +385,6 @@ static int local_capture_fill(audio_stream_context_t *context) {
     return result;
 }
 static int capture_read_aec(audio_stream_context_t *context, int16_t *output, int frames) {
-    if (__atomic_exchange_n(&context->local_aec_reset_requested, false, __ATOMIC_ACQ_REL) &&
-        local_capture_reset(context) < 0)
-        return -1;
     size_t produced = mosaico_local_aec_read(context->local_aec, output, (size_t)frames);
     while (produced < (size_t)frames && stream_running(context)) {
         if (local_capture_fill(context) < 0)
@@ -657,10 +651,25 @@ static int capture_reset(void *opaque) {
     audio_stream_context_t *context = opaque;
     if (!context_valid(context, AUDIO_DIRECTION_CAPTURE))
         return -1;
+    /* The capture owner serializes reset with read. Admit the DSP operation
+     * under the same stop fence as read, without taking the lifecycle mutex:
+     * stop holds that mutex while it waits for in_flight to become zero. */
+    portENTER_CRITICAL(&s_audio_state_lock);
+    bool admitted = stream_running(context) && !context->in_flight;
+    if (admitted)
+        ++context->in_flight;
+    portEXIT_CRITICAL(&s_audio_state_lock);
+    if (!admitted)
+        return -1;
+    int result = 0;
 #if MYBOT_LOCAL_AEC
-    __atomic_store_n(&context->local_aec_reset_requested, true, __ATOMIC_RELEASE);
+    result = local_capture_reset(context);
 #endif
-    return 0;
+    portENTER_CRITICAL(&s_audio_state_lock);
+    bool running = stream_running(context);
+    --context->in_flight;
+    portEXIT_CRITICAL(&s_audio_state_lock);
+    return running ? result : -1;
 }
 
 static int persist_volume(audio_volume_context_t *context, int volume) {

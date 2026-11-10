@@ -4,6 +4,8 @@
 
 MyBot 公开音频契约为 16 kHz、mono、signed 16-bit PCM，长度使用帧数。板级使用 ES8311 标准 Philips I2S、两个 16-bit 时隙及 MCLK256，播放样本复制到两个时隙。默认端侧 AEC 读取时隙 0 的麦克风和时隙 1 的同步 DAC 参考，处理后再返回 mono PCM。采集/播放独立持有 handle，共享 codec/I2S 引用计数，PA 跟随播放。
 
+暂停／恢复、面对面切向、会话清理和 RTC 重连的采集屏障会同步清除 AEC 输入余样、待取输出及滤波器历史。重置失败保持媒体关闭，随后由既有 stop/start 恢复；停止会等待在途重置退出后再释放 DSP。
+
 共享 PCM buffer 的 FIFO、暂存数据和 worker 栈使用 PSRAM，同步控制留在内部内存。owner 提供有界 sink write，等待 worker 确认后才释放资源，stop 超时保留待清理资源。有限提示音播放完成时等待 FIFO 和 DMA 尾部排空再停止。
 
 受跟踪的 Ogg 提示音/数字是构建输入：CMake 调用 ffmpeg 在当前构建目录生成 16 kHz mono S16LE，再嵌入固件。固件不运行 Ogg/Opus 解码，也不链接 S3 decoder。移除运行时解码器后仍保留源素材、hash 和许可。

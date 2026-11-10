@@ -9,6 +9,11 @@ microphone and slot 1 for the synchronized ES8311 DAC reference before returning
 cleaned mono PCM. Capture/playback have independent handles and share
 reference-counted codec/I2S resources; the PA follows playback.
 
+Capture fences synchronously clear AEC input carry, pending output and filter
+history for pause/resume, direction changes, session cleanup and RTC reconnect.
+A reset failure keeps media closed until the existing stop/start recovery succeeds;
+stop waits for an in-flight reset before releasing its DSP resources.
+
 The shared PCM buffer uses PSRAM for its FIFO, staging data and worker stack while synchronization state remains internal. The owner supplies bounded sink writes, waits for worker acknowledgement before releasing resources and retains pending resources when stop times out. Finite prompts wait for FIFO and DMA-tail drain before stopping playback.
 
 Tracked Ogg prompts/digits are build inputs. CMake calls ffmpeg to generate 16 kHz mono S16LE in the selected build directory and embeds that PCM. Firmware performs no Ogg/Opus decoding and links no S3 decoder binary. Keep the source assets and their hashes/licenses even though the runtime decoder was removed.

@@ -271,14 +271,26 @@ static void flush_playback_cb(const aosl_ts_t *ts, aosl_refobj_t ref, uintptr_t 
     aosl_atomic_set(&pipeline->announce_clear_pb, false);
 }
 
+static void reset_capture_dsp(mybot_media_pipeline_t *pipeline) {
+    const mybot_audio_capture_ops_t *ops = pipeline->audio.capture_ops;
+    if (!pipeline->cap_ctx || !ops || !ops->reset || !aosl_atomic_read(&pipeline->running) ||
+        aosl_atomic_read(&pipeline->capture_fault))
+        return;
+    if (ops->reset(pipeline->cap_ctx) < 0) {
+        aosl_atomic_set(&pipeline->capture_fault, true);
+        if (pipeline->cbs.on_audio_error)
+            pipeline->cbs.on_audio_error(pipeline->cbs.user_data);
+    }
+}
+
 static void flush_capture_barrier_cb(const aosl_ts_t *ts, aosl_refobj_t ref, uintptr_t argc,
                                      uintptr_t argv[]) {
     (void)ts;
     (void)ref;
     (void)argc;
-    (void)argv;
-    /* The callback is a barrier: once it runs, capture_timer() has completed
-     * every write that was already in flight after rtc_connected was cleared. */
+    /* Prior reads have finished on this owner. Clear backend DSP carry as well
+     * as the SDK queues before the caller can restore media readiness. */
+    reset_capture_dsp((mybot_media_pipeline_t *)argv[0]);
 }
 
 static void flush_send_cb(const aosl_ts_t *ts, aosl_refobj_t ref, uintptr_t argc,
@@ -619,8 +631,10 @@ int mybot_media_pipeline_flush_session(mybot_media_pipeline_t *pipeline) {
     }
     int rc = 0;
     if (!aosl_mpq_invalid(pipeline->cap_mpq)) {
+        bool capture_healthy = !aosl_atomic_read(&pipeline->capture_fault);
         if (aosl_mpq_call(pipeline->cap_mpq, AOSL_REF_INVALID, "flush_capture",
-                          flush_capture_barrier_cb, 1, (uintptr_t)pipeline) < 0) {
+                          flush_capture_barrier_cb, 1, (uintptr_t)pipeline) < 0 ||
+            (capture_healthy && aosl_atomic_read(&pipeline->capture_fault))) {
             rc = -1;
         }
     }
@@ -672,9 +686,6 @@ int mybot_media_pipeline_end_session(mybot_media_pipeline_t *pipeline) {
         pipeline->playback_suspended = false;
         aosl_atomic_set(&pipeline->playback_fault, false);
     }
-    if (pipeline->cap_ctx && pipeline->audio.capture_ops->reset &&
-        pipeline->audio.capture_ops->reset(pipeline->cap_ctx) < 0)
-        return -1;
     aosl_atomic_set(&pipeline->paused, false);
     return 0;
 }
@@ -695,7 +706,9 @@ static void pause_fence_cb(const aosl_ts_t *ts, aosl_refobj_t ref, uintptr_t arg
         aosl_atomic_read(&pipeline->pause_fence_generation) != generation) {
         return;
     }
-    if (worker == MEDIA_FENCE_PLAYBACK) {
+    if (worker == MEDIA_FENCE_CAPTURE) {
+        reset_capture_dsp(pipeline);
+    } else if (worker == MEDIA_FENCE_PLAYBACK) {
         uintptr_t argument = (uintptr_t)pipeline;
         flush_playback_cb(NULL, NULL, 1, &argument);
     } else if (worker == MEDIA_FENCE_SEND) {
@@ -706,6 +719,8 @@ static void pause_fence_cb(const aosl_ts_t *ts, aosl_refobj_t ref, uintptr_t arg
 }
 
 static int fence_paused_workers(mybot_media_pipeline_t *pipeline) {
+    if (aosl_atomic_read(&pipeline->capture_fault))
+        return -1;
     const aosl_mpq_t workers[] = {pipeline->cap_mpq, pipeline->pb_mpq, pipeline->send_mpq};
     intptr_t previous = aosl_atomic_read(&pipeline->pause_fence_generation);
     intptr_t generation = previous == INTPTR_MAX ? 1 : previous + 1;
@@ -726,6 +741,8 @@ static int fence_paused_workers(mybot_media_pipeline_t *pipeline) {
             }
             aosl_msleep(MEDIA_PAUSE_WAIT_STEP_MS);
         }
+        if (aosl_atomic_read(&pipeline->capture_fault))
+            return -1;
     }
     return 0;
 }

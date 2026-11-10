@@ -1392,3 +1392,28 @@ Fresh Chinese builds pass for both modes. Local AEC uses `MYBOT_LOCAL_AEC=1`,
 does not link the local AEC object, and produces a `0x3b7f00` application with
 `0xb8100` bytes free. No device was flashed; acoustic effectiveness, CPU headroom,
 double-talk quality and long-run stability still require hardware validation.
+
+## Local AEC boundary reset follow-up (2026-11-10)
+
+Capture DSP reset now completes synchronously on the capture owner at session
+flush and pause/direction fences, before media can resume. The driver removes
+its deferred-reset flag and uses the same started/in-flight stop protection as
+capture reads. A failed recreation clears old PCM and releases the partial
+handle. New reset failures set capture_fault and reject readiness; a later end
+can still recover through the existing stop/start path without repeating an
+already-failed reset or resetting a newly created filter twice.
+
+The previous implementation fails new carry/reset assertions. Codec/helper UBSan
+tests cover partial input and unconsumed chunk256 output, synchronous errors,
+reset/stop overlap, allocation cleanup and paired ramp continuity across multiple
+chunk sizes and partial reads. Media tests pass 26 cases for each cloud-AEC
+setting, including capture-owner reset, old-sample rejection and failure recovery.
+Control tests pass 16 shutdown, 27 UI, nine caption and 46 face/meeting cases for
+each AEC setting. Formatting/SPDX and whitespace checks pass. No hardware result
+is claimed and no device was flashed.
+
+The ESP-IDF configuration server selected Local AEC in the existing
+build/mosaico-v1.2 context while retaining the user's English UI. Direct en-US
+build and source/link/OTA checks pass: application 4,042,480 bytes and minimum
+OTA free space 610,576 bytes. Compile commands confirm Local=1/Cloud=0; live
+aec_create_from_config and aec_process symbols come from the ESP32-S31 archive.
