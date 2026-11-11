@@ -126,7 +126,14 @@ No external reference repository was modified.
 
 The official codec source files retain their original bytes and line endings. The optional Xtensa-only `device/zl38063/firmware/libfirmware.a` is not versioned or used by S31; the board rejects `CONFIG_CODEC_ZL38063_SUPPORT`. This optional binary is unrelated to the approved S31 RTSA input.
 
-The `esp-wifi-connect` CMake wrapper explicitly declares its IDF 6 cJSON dependency, including builds that use the already-resolved managed sources with the component manager disabled. Its application sources remain unchanged.
+The `esp-wifi-connect` CMake wrapper explicitly declares its IDF 6 cJSON dependency,
+including builds that use the already-resolved managed sources with the component
+manager disabled. The project also maintains `wifi_manager.cc` and its public
+header under the retained MIT license: synchronous lifecycle operations serialize
+on a separate lock, while callbacks and published-state queries use a short state
+lock. Driver teardown never holds the state lock while joining IDF event handlers
+or the provisioning HTTP server. Other component application sources remain at the
+pinned baseline. See `tests/wifi_manager` for deterministic host regressions.
 
 ## Mosaico V1.2 translation board
 

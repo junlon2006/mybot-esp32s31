@@ -1600,3 +1600,39 @@ bytes. English application: 4,874,752 bytes, minimum OTA free 368,128 bytes. Bot
 retain Local AEC and the 300 KiB minimum reserve. Saved configuration and the active
 build are English; manifests identify base revision 89d2634 with uncommitted swap
 changes. No device was flashed by the agent.
+
+## 2026-11-11 Wi-Fi lifecycle/event lock ordering
+
+The project-maintained Wi-Fi manager now serializes complete driver lifecycle
+operations on a separate operation mutex. Its short state/callback mutex is never
+held across start/stop, IDF event-handler unregister or HTTP-server cleanup. Stop
+revokes published driver access before joining in-flight callbacks. Station
+connection, SSID/IP and AP identity queries use manager snapshots; callbacks may
+query state or replace the callback without waiting for lifecycle operations.
+Initialization, mode changes, stop and power-save requests must be dispatched from
+a control task rather than invoked or awaited by those callbacks. The component
+header and README now describe synchronous teardown accurately.
+
+The new production-source/real-header host suite passes eight cases with UBSan:
+station stop and station-to-AP transitions with an in-flight event-loop callback,
+AP stop and AP-to-station state/callback access, callback queries/replacement,
+concurrent lifecycle requests, power-save serialization with start, and delayed
+transition notifications. Each case runs in a child process with a three-second
+watchdog. Against the original tracked source and matching header, the same suite
+fails six cases: five watchdog deadlocks and one competing-transition assertion.
+These controlled counterchecks establish the regression without claiming a device
+reproduction.
+
+The existing network/SNTP bootstrap and seven application stop/reprovision fault
+scenarios pass. Changed/new C++ files pass clang-format 18.1.8 and SPDX checks;
+workflow YAML, shell syntax and whitespace checks pass. CI now runs this regression
+and checks the maintained manager sources and test mocks. Vendored-source and MIT
+license notices record the local manager/header changes.
+
+Direct Chinese ESP-IDF v6.1 preview build and size checks pass in the fixed
+`build/mosaico-v1.2` directory. The application binary is 4,794,320 bytes, with
+448,560 bytes free in the minimum OTA slot. Final config/binary/map checks pass:
+Local AEC, 60 ms audio, RISC-V, local source-built AOSL, unchanged pinned RTSA and
+no video runtime. Saved configuration and the active build are Chinese. No device
+was flashed; radio behavior, repeated provisioning and physical shutdown latency
+remain hardware checks.

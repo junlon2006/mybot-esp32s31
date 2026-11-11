@@ -53,6 +53,16 @@ jobs:
             clang-format --dry-run --Werror "$file"
             head -n 5 "$file" | grep -q 'SPDX-License-Identifier:'
           done
+      - name: Wi-Fi manager format and SPDX
+        run: |
+          files=(components/esp-wifi-connect/wifi_manager.cc components/esp-wifi-connect/include/wifi_manager.h)
+          while IFS= read -r -d '' file; do
+            files+=("$file")
+          done < <(find tests/wifi_manager -type f \( -name '*.h' -o -name '*.cc' \) -print0)
+          clang-format --dry-run --Werror "${files[@]}"
+          for file in "${files[@]}"; do
+            head -n 5 "$file" | grep -q 'SPDX-License-Identifier:'
+          done
       - name: Whitespace check
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
@@ -90,6 +100,7 @@ jobs:
         run: sh tests/codec_audio/run.sh
       - name: Network and application bootstrap lifecycle tests
         run: |
+          sh tests/wifi_manager/run.sh
           sh tests/platform_network/run.sh
           sh tests/bootstrap_main/run.sh
       - name: Translation protocol, lifecycle and RTC ownership tests

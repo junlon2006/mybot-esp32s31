@@ -6,6 +6,25 @@ It first tries to connect to a Wi-Fi network using the credentials stored in the
 
 The URL to access the web server is `http://192.168.4.1`.
 
+## Project-maintained lifecycle correction
+
+This checkout separates serialized driver lifecycle operations from the short
+state/callback lock. Start/stop and automatic station/AP transitions are synchronous;
+stop waits for IDF event-handler and HTTP-server cleanup. Driver cleanup does not
+hold the lock needed by event callbacks or state queries. Station connection,
+SSID/IP and AP identity queries read published manager state.
+
+Callbacks run on the Wi-Fi event task or the lifecycle caller, outside the state
+lock. They may query state and replace the callback. Send initialization, mode
+changes, stop and power-save requests to a control task; callbacks must not call
+or wait for those serialized operations. Concurrent lifecycle requests remain
+serialized through the complete transition and its notifications.
+
+The host regression in `tests/wifi_manager` models an in-flight IDF event callback
+joining driver teardown and checks both mode transitions, state queries, callback
+replacement and competing lifecycle requests. It does not establish real radio
+behavior or a hardware-tested shutdown deadline.
+
 ### Screenshot: Wi-Fi Configuration v3.2
 
 <img src="assets/ap_v3_2.jpg" width="320" alt="Wi-Fi Configuration v3.2">

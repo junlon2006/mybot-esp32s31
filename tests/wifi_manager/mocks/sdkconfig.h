@@ -1,0 +1,5 @@
+/* SPDX-License-Identifier: MIT */
+#ifndef TEST_WIFI_MANAGER_SDKCONFIG_H
+#define TEST_WIFI_MANAGER_SDKCONFIG_H
+#define CONFIG_IDF_TARGET_ESP32P4 0
+#endif
