@@ -23,6 +23,21 @@ default to Local AEC; existing configurations retain their choice, so new defaul
 do not switch an older Cloud AEC configuration. Change the mode through menuconfig
 before rebuilding. Local and Cloud AEC are alternatives; disabled AEC is diagnostic.
 
+The local builder supports the activated IDF Python 3.10+ environment:
+
+```sh
+python3 scripts/build_all.py --dry-run
+python3 scripts/build_all.py
+```
+
+By default it builds and packages Chinese then English Local AEC in the same
+`build/mosaico-v1.2`, leaving the saved configuration in English. Select one
+language with `--language zh-CN` or `--language en-US`, and AEC with `--aec-mode`.
+IDF's configuration server switches language/AEC/60 ms choices while retaining
+other settings. Local builds are incremental and preserve build siblings and
+unrelated output files, updating the selected variants' five delivery files.
+Python 3.11 and `--no-clean` are not required.
+
 The checker validates target/configuration, the expected AEC mode and compiled flags,
 pinned RTSA inputs, final links and exact flash segments. For Local AEC it also checks
 live AEC symbols and their S31 ESP-SR archive paths in the map. It reads the built
@@ -75,6 +90,12 @@ roots are cleaned only after an ownership-marker check; an unowned nonempty dire
 is rejected. Each job uploads the five delivery files in an artifact whose name includes
 its AEC mode. The workflow uploads no original tgz, sdkconfig, link map or NVS data and creates no GitHub
 Release automatically.
+
+An explicit `--build-root` selects this isolated workflow. Cleanup uses directory
+descriptors and no-follow operations on Python 3.10+; `--no-clean` preserves owned
+roots. CI should use a separate new/empty output directory: nonempty `releases/`
+from local packaging has no cleanup ownership marker and cannot be reused as an
+isolated cleanup root. The quality job uses Python 3.10 to cover the same runtime.
 
 Local verification and remote workflow results are separate. Remote CI execution is pending until an actual run is recorded in [validation](s31-validation.md).
 

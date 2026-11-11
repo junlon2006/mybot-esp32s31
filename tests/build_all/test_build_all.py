@@ -23,7 +23,7 @@ builder = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(builder)
 
 MARKER = ".mybot-generated-root.json"
-SAFE_CLEANUP = sys.version_info >= (3, 11) and builder.shutil.rmtree.avoids_symlink_attacks
+SAFE_CLEANUP = builder._supports_safe_cleanup()
 
 
 class BuildConfigurationTests(unittest.TestCase):
@@ -348,13 +348,13 @@ class GeneratedRootTests(unittest.TestCase):
         output = self.workspace / "firmware"
         self.assertEqual(builder.validate_output_roots(build, output), (build, output))
 
-    @unittest.skipUnless(SAFE_CLEANUP, "cleanup requires Python 3.11+ and symlink-safe rmtree")
+    @unittest.skipUnless(SAFE_CLEANUP, "cleanup requires POSIX descriptor and no-follow APIs")
     def test_prepare_new_root_writes_ownership_marker(self) -> None:
         path = self.workspace / "new" / "build"
         builder.prepare_generated_root(path, "build", False)
         self.assertEqual(json.loads((path / MARKER).read_text(encoding="utf-8")), self.marker_data(path))
 
-    @unittest.skipUnless(SAFE_CLEANUP, "cleanup requires Python 3.11+ and symlink-safe rmtree")
+    @unittest.skipUnless(SAFE_CLEANUP, "cleanup requires POSIX descriptor and no-follow APIs")
     def test_owned_cleanup_keeps_root_and_marker_and_can_repeat(self) -> None:
         path = self.workspace / "owned-cleanup"
         self.mark(path)
@@ -370,7 +370,7 @@ class GeneratedRootTests(unittest.TestCase):
         self.assertEqual(path.stat().st_ino, inode)
         self.assertEqual(json.loads((path / MARKER).read_text(encoding="utf-8")), self.marker_data(path))
 
-    @unittest.skipUnless(SAFE_CLEANUP, "cleanup requires Python 3.11+ and symlink-safe rmtree")
+    @unittest.skipUnless(SAFE_CLEANUP, "cleanup requires POSIX descriptor and no-follow APIs")
     def test_symlink_children_are_removed_without_following(self) -> None:
         path = self.workspace / "owned-links"
         self.mark(path)
@@ -384,7 +384,7 @@ class GeneratedRootTests(unittest.TestCase):
         self.assertEqual(sentinel.read_text(encoding="utf-8"), "preserve")
         self.assertEqual({entry.name for entry in path.iterdir()}, {MARKER})
 
-    @unittest.skipUnless(SAFE_CLEANUP, "cleanup requires Python 3.11+ and symlink-safe rmtree")
+    @unittest.skipUnless(SAFE_CLEANUP, "cleanup requires POSIX descriptor and no-follow APIs")
     def test_root_symlink_swap_after_validation_cannot_delete_target(self) -> None:
         path = self.workspace / "swap-root"
         self.mark(path)
@@ -425,31 +425,171 @@ class GeneratedRootTests(unittest.TestCase):
         builder.prepare_generated_root(path, "build", False, clean=False)
         self.assertEqual(json.loads((path / MARKER).read_text(encoding="utf-8")), self.marker_data(path))
 
-    def test_cleanup_fails_closed_without_symlink_safe_rmtree(self) -> None:
+    @unittest.skipUnless(SAFE_CLEANUP, "cleanup requires POSIX descriptor and no-follow APIs")
+    def test_cleanup_runs_on_python_310_without_shutil_rmtree(self) -> None:
+        path = self.workspace / "python-310-cleanup"
+        self.mark(path)
+        inode = path.stat().st_ino
+        nested = path / "objects" / "nested"
+        nested.mkdir(parents=True)
+        (nested / "object.o").write_bytes(b"object")
+        external = self.workspace / "source.txt"
+        external.write_bytes(b"preserve")
+        (path / "source-link").symlink_to(external)
+        with (
+            mock.patch.object(builder.sys, "version_info", (3, 10)),
+            mock.patch.object(builder.shutil, "rmtree", side_effect=AssertionError("rmtree used")) as remove,
+        ):
+            builder.prepare_generated_root(path, "build", False)
+        remove.assert_not_called()
+        self.assertEqual(path.stat().st_ino, inode)
+        self.assertEqual({entry.name for entry in path.iterdir()}, {MARKER})
+        self.assertEqual(external.read_bytes(), b"preserve")
+
+    def test_cleanup_fails_closed_without_required_descriptor_capabilities(self) -> None:
         path = self.workspace / "unsupported-cleanup"
         self.mark(path)
         artifact = path / "firmware.bin"
         artifact.write_bytes(b"preserve")
-        with (
-            mock.patch.object(builder.shutil.rmtree, "avoids_symlink_attacks", False),
-            self.assertRaises(RuntimeError),
-        ):
-            builder.prepare_generated_root(path, "build", False)
-        self.assertEqual(artifact.read_bytes(), b"preserve")
+        capabilities = [
+            ("supports_dir_fd", operation) for operation in builder._CLEANUP_DIR_FD_OPERATIONS
+        ] + [
+            ("supports_fd", builder._CLEANUP_LIST_DIRECTORY),
+            ("supports_follow_symlinks", builder._CLEANUP_STAT),
+        ]
+        for attribute, operation in capabilities:
+            with (
+                self.subTest(attribute=attribute, operation=operation.__name__),
+                mock.patch.object(builder.os, attribute, getattr(builder.os, attribute) - {operation}),
+                self.assertRaisesRegex(RuntimeError, "POSIX directory descriptors"),
+            ):
+                builder.prepare_generated_root(path, "build", False)
+            self.assertEqual(artifact.read_bytes(), b"preserve")
+            missing = self.workspace / "uncreated-root"
+            with (
+                mock.patch.object(builder.os, attribute, getattr(builder.os, attribute) - {operation}),
+                self.assertRaisesRegex(RuntimeError, "POSIX directory descriptors"),
+            ):
+                builder.prepare_generated_root(missing, "build", False)
+            self.assertFalse(missing.exists())
 
-    def test_cleanup_fails_closed_on_python_310_before_mutation(self) -> None:
-        path = self.workspace / "unsupported-python"
+    def test_cleanup_fails_closed_without_no_follow_directory_flags(self) -> None:
+        for attribute in ("O_DIRECTORY", "O_NOFOLLOW"):
+            missing = self.workspace / "uncreated-root"
+            with (
+                self.subTest(attribute=attribute),
+                mock.patch.object(builder.os, attribute),
+            ):
+                delattr(builder.os, attribute)
+                self.assertFalse(builder._supports_safe_cleanup())
+                with self.assertRaisesRegex(RuntimeError, "POSIX directory descriptors"):
+                    builder.prepare_generated_root(missing, "build", False)
+            self.assertFalse(missing.exists())
+
+    @unittest.skipUnless(SAFE_CLEANUP, "cleanup requires POSIX descriptor and no-follow APIs")
+    def test_child_symlink_swap_before_open_cannot_delete_target(self) -> None:
+        path = self.workspace / "child-symlink-swap"
         self.mark(path)
-        artifact = path / "firmware.bin"
-        artifact.write_bytes(b"preserve")
+        nested = path / "objects"
+        nested.mkdir()
+        (nested / "object.o").write_bytes(b"preserve object")
+        moved = self.workspace / "moved-objects"
+        external = self.workspace / "external-source"
+        external.mkdir()
+        sentinel = external / "source.txt"
+        sentinel.write_bytes(b"preserve source")
+        original_open = builder.os.open
+        swapped = False
+
+        def swap_before_open(name: object, flags: int, *args: object, **kwargs: object) -> int:
+            nonlocal swapped
+            if name == nested.name and kwargs.get("dir_fd") is not None:
+                self.assertFalse(swapped)
+                swapped = True
+                nested.rename(moved)
+                nested.symlink_to(external, target_is_directory=True)
+            return original_open(name, flags, *args, **kwargs)
+
         with (
-            mock.patch.object(builder.sys, "version_info", (3, 10)),
-            mock.patch.object(builder.shutil, "rmtree") as remove,
-            self.assertRaisesRegex(RuntimeError, "Python 3.11"),
+            mock.patch.object(builder.os, "open", side_effect=swap_before_open),
+            self.assertRaises((OSError, RuntimeError)),
         ):
             builder.prepare_generated_root(path, "build", False)
-        remove.assert_not_called()
-        self.assertEqual(artifact.read_bytes(), b"preserve")
+        self.assertTrue(swapped)
+        self.assertEqual(sentinel.read_bytes(), b"preserve source")
+        self.assertEqual((moved / "object.o").read_bytes(), b"preserve object")
+        self.assertTrue((path / MARKER).is_file())
+
+    @unittest.skipUnless(SAFE_CLEANUP, "cleanup requires POSIX descriptor and no-follow APIs")
+    def test_child_directory_swap_before_open_is_rejected_and_closes_descriptor(self) -> None:
+        path = self.workspace / "child-directory-swap"
+        self.mark(path)
+        nested = path / "objects"
+        nested.mkdir()
+        (nested / "object.o").write_bytes(b"preserve object")
+        moved = self.workspace / "moved-objects"
+        replacement = self.workspace / "replacement"
+        replacement.mkdir()
+        (replacement / "source.txt").write_bytes(b"preserve source")
+        original_open = builder.os.open
+        opened: list[int] = []
+
+        def replace_before_open(name: object, flags: int, *args: object, **kwargs: object) -> int:
+            if name == nested.name and kwargs.get("dir_fd") is not None:
+                nested.rename(moved)
+                replacement.rename(nested)
+                child = original_open(name, flags, *args, **kwargs)
+                opened.append(child)
+                return child
+            return original_open(name, flags, *args, **kwargs)
+
+        with (
+            mock.patch.object(builder.os, "open", side_effect=replace_before_open),
+            self.assertRaisesRegex(RuntimeError, "directory replaced during cleanup"),
+        ):
+            builder.prepare_generated_root(path, "build", False)
+        self.assertEqual(len(opened), 1)
+        with self.assertRaises(OSError):
+            builder.os.fstat(opened[0])
+        self.assertEqual((nested / "source.txt").read_bytes(), b"preserve source")
+        self.assertEqual((moved / "object.o").read_bytes(), b"preserve object")
+        self.assertTrue((path / MARKER).is_file())
+
+    @unittest.skipUnless(SAFE_CLEANUP, "cleanup requires POSIX descriptor and no-follow APIs")
+    def test_child_symlink_swap_after_open_keeps_deletion_anchored_to_original_descriptor(self) -> None:
+        path = self.workspace / "opened-child-swap"
+        self.mark(path)
+        nested = path / "objects"
+        nested.mkdir()
+        (nested / "object.o").write_bytes(b"generated object")
+        moved = self.workspace / "moved-objects"
+        external = self.workspace / "external-source"
+        external.mkdir()
+        sentinel = external / "source.txt"
+        sentinel.write_bytes(b"preserve source")
+        identity = nested.stat()
+        original_listdir = builder.os.listdir
+        opened: list[int] = []
+
+        def swap_before_listing(directory: int) -> list[str]:
+            if builder.os.path.samestat(builder.os.fstat(directory), identity):
+                self.assertEqual(opened, [])
+                opened.append(directory)
+                nested.rename(moved)
+                nested.symlink_to(external, target_is_directory=True)
+            return original_listdir(directory)
+
+        with (
+            mock.patch.object(builder.os, "listdir", side_effect=swap_before_listing),
+            self.assertRaisesRegex(RuntimeError, "directory replaced during cleanup"),
+        ):
+            builder.prepare_generated_root(path, "build", False)
+        self.assertEqual(len(opened), 1)
+        with self.assertRaises(OSError):
+            builder.os.fstat(opened[0])
+        self.assertEqual(sentinel.read_bytes(), b"preserve source")
+        self.assertEqual(list(moved.iterdir()), [])
+        self.assertTrue((path / MARKER).is_file())
 
     def test_no_clean_does_not_claim_nonempty_unowned_directory(self) -> None:
         path = self.workspace / "unowned-incremental"
@@ -507,7 +647,7 @@ class GeneratedRootTests(unittest.TestCase):
             idf.assert_not_called()
             remove.assert_not_called()
 
-    @unittest.skipUnless(SAFE_CLEANUP, "cleanup requires Python 3.11+ and symlink-safe rmtree")
+    @unittest.skipUnless(SAFE_CLEANUP, "cleanup requires POSIX descriptor and no-follow APIs")
     def test_main_accepts_default_roots_and_records_ownership(self) -> None:
         build = self.project / "build"
         output = self.project / "releases"

@@ -22,6 +22,19 @@ idf.py --preview -B build/mosaico-v1.2 size
 新的 defaults 不会把旧 Cloud AEC 配置切到 Local。切换模式应先通过 menuconfig 选择，
 再重新编译。本地与云端 AEC 二选一；disabled 仅用于诊断。
 
+一键本地构建兼容 IDF 的 Python 3.10+：
+
+```sh
+python3 scripts/build_all.py --dry-run
+python3 scripts/build_all.py
+```
+
+默认在同一个 `build/mosaico-v1.2` 里依次构建并打包中英文 Local AEC，结束后保留英文
+配置。用 `--language zh-CN` 或 `--language en-US` 选择单种语言，`--aec-mode` 选择 AEC。
+脚本通过 IDF 配置服务器修改语言／AEC／60 ms 选择，保存其他已有配置；本地流程始终
+增量构建，保留 `build/` 的兄弟目录和输出目录里的其他文件，更新所选变体的五项交付文件。
+不需要升级到 Python 3.11，也不需要 `--no-clean`。
+
 检查项包括目标／配置、预期 AEC 模式及编译宏、RTSA 固定输入、最终链接与实际写入段。
 Local AEC 还检查有效 AEC 符号及 map 中的 S31 ESP-SR archive 路径。检查器读取已构建
 分区表，要求所有 OTA 应用槽至少留出 **300 KiB**。这些结果证明构建一致性，不代表声学效果。
@@ -67,6 +80,11 @@ push/PR 执行源码检查、host 测试，并构建三个固件组合：中文 
 使用随工程的固定 RTSA，并使用临时独立构建／配置和输出根目录。生成目录只有在所有权
 标记校验通过后才会清理，非空且无标记的目录会被拒绝。各 job 上传上述五项交付文件，
 artifact 名称包含 AEC 模式。不上传原 tgz、sdkconfig、link map 或 NVS，不自动创建 GitHub Release。
+
+显式 `--build-root` 选择上述隔离流程。其清理在 Python 3.10+ 上使用目录描述符和
+禁止跟随符号链接的操作；`--no-clean` 可保留已归属的根目录。CI 应选择独立的新／空输出
+目录；本地一键打包使用的非空 `releases/` 没有清理所有权标记，不能直接作为 CI 清理根。
+源码检查 job 也使用 Python 3.10，覆盖相同版本的清理和构建脚本回归。
 
 本地验证与远端执行分开记录。远端 CI 需实际运行后才可标为通过，当前状态见[验证记录](s31-validation.md)。
 
