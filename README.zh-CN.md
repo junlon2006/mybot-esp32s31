@@ -73,6 +73,18 @@ idf.py --preview -B build/mosaico-v1.2 \
 配置切到 Local。更换模式前，先执行 `idf.py --preview -B build/mosaico-v1.2 menuconfig`，
 在 `mybot` 的 Echo cancellation 中选择，再重新编译。
 
+也可以在已激活的 IDF Python 3.10+ 环境中一键构建并打包：
+
+```sh
+python3 scripts/build_all.py
+# 仅生成中文 Local AEC：
+python3 scripts/build_all.py --language zh-CN --aec-mode local
+```
+
+默认依次生成中英文，复用同一个 `build/mosaico-v1.2`；通过 IDF 配置服务器切换语言、
+AEC 和 60 ms 包长，保留其他已有配置。双语完成后保存的配置为英文。脚本保留构建及
+输出目录内容，将本次五项交付文件写入 `releases/`；支持 `--dry-run` 预览命令。
+
 CI 使用 `scripts/build_all.py --language LANGUAGE --aec-mode MODE`，配合临时独立构建／
 交付根目录。AEC 模式支持 `local`（默认）、`cloud` 及诊断用 `disabled`。脚本统一执行
 reconfigure、build、size、merge-bin、构建来源和交付校验。[交付文档](docs/RELEASING.zh-CN.md)

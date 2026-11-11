@@ -1661,3 +1661,34 @@ Direct Chinese ESP-IDF v6.1 preview build, size and final config/binary/map chec
 pass in `build/mosaico-v1.2`: Local AEC, 60 ms, RISC-V, local AOSL, pinned RTSA and
 no video runtime. The application is 4,794,320 bytes with 448,560 bytes minimum OTA
 free space. No device or standalone diagnostic image was flashed or hardware-tested.
+
+## 2026-11-11 Python 3.10 builder compatibility and fixed local directory
+
+The builder's cleanup now uses public POSIX directory-descriptor APIs rather than
+Python 3.11's `shutil.rmtree(dir_fd=...)`. Ownership-marker checks, no-follow opens,
+directory identity checks and descriptor cleanup remain enforced. Missing required
+capabilities fail before creating markers or deleting data.
+
+Without `--build-root`, the builder preserves existing directories and reuses
+`build/mosaico-v1.2` for both languages. IDF's configuration server sets the requested
+language, AEC mode and 60 ms choice while keeping other settings; saved selections
+are checked before compilation. Later local stages reuse the configured CMake cache.
+Local preflight rejects linked/non-regular sdkconfig, backup and delivery files.
+Explicit CI roots retain isolated variants and ownership-checked cleanup. The quality
+job now selects Python 3.10; documentation records both workflows and their output
+ownership differences.
+
+All 122 builder/source/delivery regressions pass with the actual IDF Python 3.10.19
+and Python 3.11, with zero skips. Coverage includes child symlink/directory swaps,
+descriptor reclamation, unavailable capabilities, preserved local siblings and
+outputs, configuration-server failures, rejected choices and output/config aliases.
+Python syntax, SPDX, workflow YAML/shell syntax and whitespace checks pass.
+
+The default `python3 scripts/build_all.py` was run under the activated IDF Python
+3.10.19 environment and completed both Local AEC variants in the fixed directory,
+including merge and delivery/config/map verification. Chinese application:
+4,794,320 bytes, minimum OTA free 448,560 bytes. English application: 4,875,248 bytes,
+minimum OTA free 367,632 bytes. Both preserve 60 ms, pinned RTSA, local RISC-V AOSL
+and no video runtime. Each produced the five local delivery files in `releases/`;
+the saved configuration and active build are English after the batch. No device
+was flashed and no remote CI run is claimed.

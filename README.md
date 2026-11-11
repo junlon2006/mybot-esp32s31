@@ -82,6 +82,21 @@ new defaults do not switch an older Cloud AEC configuration. Before rebuilding f
 a different mode, run `idf.py --preview -B build/mosaico-v1.2 menuconfig` and choose
 the Echo cancellation mode under `mybot`.
 
+For a complete local build and package using the activated IDF Python 3.10+
+environment, run:
+
+```sh
+python3 scripts/build_all.py
+# Chinese Local AEC only:
+python3 scripts/build_all.py --language zh-CN --aec-mode local
+```
+
+The default builds Chinese then English in the same `build/mosaico-v1.2` directory.
+IDF's configuration server switches language, AEC and the 60 ms packet interval
+while preserving other settings. The saved configuration is English after both
+variants finish. Existing build/output contents are preserved, and the five
+delivery files per variant are written to `releases/`. Use `--dry-run` to preview.
+
 CI uses `scripts/build_all.py --language LANGUAGE --aec-mode MODE` with isolated
 temporary build and release roots. Its AEC modes are `local` (default), `cloud` and
 `disabled` for diagnosis. The script performs reconfigure, build, size, merge, provenance

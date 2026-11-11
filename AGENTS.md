@@ -80,9 +80,10 @@ Before handing off changes, run relevant host lifecycle/fault-injection tests,
 clang-format/SPDX and git diff --check; build Chinese firmware with direct idf.py during development.
 All local firmware builds use `build/mosaico-v1.2` and `build/mosaico-v1.2/sdkconfig`;
 do not create or switch to another local build directory. CI jobs retain isolated
-build/sdkconfig directories. The builder supports dry-run; its safe cleanup
-requires Python 3.11+, while direct IDF builds support the installed IDF
-Python environment. Record binary/config/map checks separately from real hardware
+build/sdkconfig directories. The builder supports Python 3.10+ and dry-run;
+default local builds preserve directories and reuse `build/mosaico-v1.2`, while
+explicit CI roots use ownership-checked, descriptor-based safe cleanup. Record
+binary/config/map checks separately from real hardware
 results. Update board docs, validation, source provenance and license notices when
 inputs or hardware facts change. The Mosaico diagnostic USB microphone/speaker
 have user-reported confirmation. The user also confirmed normal Mosaico 480x480
