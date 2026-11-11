@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: Apache-2.0 */
-#pragma once
+#ifndef MYBOT_MOSAICO_TUSB_CONFIG_H_
+#define MYBOT_MOSAICO_TUSB_CONFIG_H_
 
 /* The pinned UAC headers provide the format/descriptor definitions; the project
  * owns runtime state. One configuration reaches both USB layers and the board. */
@@ -41,3 +42,5 @@
 /* The duplex function has two streaming interfaces, each with alt 0 and 1. */
 #undef CFG_TUD_AUDIO_FUNC_1_N_AS_INT
 #define CFG_TUD_AUDIO_FUNC_1_N_AS_INT 2
+
+#endif /* MYBOT_MOSAICO_TUSB_CONFIG_H_ */

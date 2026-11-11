@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: 2026 MyBot Project Contributors
 // SPDX-License-Identifier: Apache-2.0
 
-#pragma once
+#ifndef MYBOT_MOSAICO_UAC_FREERTOS_COMPAT_H_
+#define MYBOT_MOSAICO_UAC_FREERTOS_COMPAT_H_
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -39,3 +40,5 @@ static inline BaseType_t mosaico_uac_notify(TaskHandle_t task) {
 #define portENTER_CRITICAL(mux) portENTER_CRITICAL_ISR(mux)
 #undef portEXIT_CRITICAL
 #define portEXIT_CRITICAL(mux) portEXIT_CRITICAL_ISR(mux)
+
+#endif /* MYBOT_MOSAICO_UAC_FREERTOS_COMPAT_H_ */

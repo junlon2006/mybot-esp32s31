@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: Apache-2.0 */
-#pragma once
+#ifndef MYBOT_MOSAICO_USB_AUDIO_H_
+#define MYBOT_MOSAICO_USB_AUDIO_H_
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -88,3 +89,5 @@ void mosaico_usb_audio_log_stats(void);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* MYBOT_MOSAICO_USB_AUDIO_H_ */

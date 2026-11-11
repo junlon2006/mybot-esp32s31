@@ -1636,3 +1636,28 @@ Local AEC, 60 ms audio, RISC-V, local source-built AOSL, unchanged pinned RTSA a
 no video runtime. Saved configuration and the active build are Chinese. No device
 was flashed; radio behavior, repeated provisioning and physical shutdown latency
 remain hardware checks.
+
+## 2026-11-11 Header guards and C/C++ linkage
+
+Replaced `#pragma once` in 84 project-owned headers with unique `MYBOT_*_H_`
+guards: 11 platform, one main, four diagnostic and 68 test headers. Test guard
+names include their suite and mock path. Existing declarations, macros and license
+prefixes are preserved; immutable dependency snapshots are unchanged.
+
+Added conditional `extern "C"` blocks to 19 C API headers in the platform, SDK,
+S31 task adapter, main and diagnostic. Includes precede those blocks; the existing
+JSON header now follows the same order. Pure type/macro and C++ test-support
+headers retain their appropriate linkage. All 96 changed headers pass
+clang-format 18.1.8 and SPDX checks, and whitespace checks pass.
+
+A temporary translation unit using the real S31 C++ compiler and platform build
+flags includes all 19 API headers twice and compiles successfully. Object-symbol
+inspection confirms 50 external functions and the codec-board object retain C
+names. Relevant existing audio, AOSL, USB, UI/display/input, hardware, bootstrap,
+storage, HTTP/time/trace, caption and translation lifecycle host suites pass;
+affected suites were rerun after the linkage changes.
+
+Direct Chinese ESP-IDF v6.1 preview build, size and final config/binary/map checks
+pass in `build/mosaico-v1.2`: Local AEC, 60 ms, RISC-V, local AOSL, pinned RTSA and
+no video runtime. The application is 4,794,320 bytes with 448,560 bytes minimum OTA
+free space. No device or standalone diagnostic image was flashed or hardware-tested.

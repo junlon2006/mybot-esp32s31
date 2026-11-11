@@ -1,3 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
-#pragma once
+#ifndef MYBOT_TEST_CODEC_AUDIO_MOCKS_DRIVER_I2S_COMMON_H_
+#define MYBOT_TEST_CODEC_AUDIO_MOCKS_DRIVER_I2S_COMMON_H_
+
 #include "driver/i2s_tdm.h"
+
+#endif /* MYBOT_TEST_CODEC_AUDIO_MOCKS_DRIVER_I2S_COMMON_H_ */

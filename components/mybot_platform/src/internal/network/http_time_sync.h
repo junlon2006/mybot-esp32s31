@@ -5,6 +5,10 @@
 #include <stdbool.h>
 #include <stddef.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #define MYBOT_HTTP_TIME_SYNC_HEADER_CAPACITY 2048U
 
 /* Zero-initialize one state per verified TLS connection. Keep it in PSRAM with
@@ -19,4 +23,8 @@ typedef struct {
  * observes the first response header and never changes HTTP transport results. */
 void mybot_http_time_sync_recv(mybot_http_time_sync_t *state, const void *data, size_t length);
 
+#ifdef __cplusplus
+}
 #endif
+
+#endif /* MYBOT_HTTP_TIME_SYNC_H */

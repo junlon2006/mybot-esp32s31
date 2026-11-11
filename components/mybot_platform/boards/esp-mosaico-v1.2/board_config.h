@@ -1,5 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
-#pragma once
+#ifndef MYBOT_MOSAICO_BOARD_CONFIG_H_
+#define MYBOT_MOSAICO_BOARD_CONFIG_H_
+
 #include "driver/gpio.h"
 #include "driver/spi_master.h"
 #define MYBOT_BOARD_NAME "esp-mosaico-v1.2"
@@ -29,3 +31,5 @@
 #define MYBOT_DISPLAY_DATA3 GPIO_NUM_9
 #define MYBOT_TOUCH_INT GPIO_NUM_6
 #define MYBOT_TOUCH_RST GPIO_NUM_NC
+
+#endif /* MYBOT_MOSAICO_BOARD_CONFIG_H_ */

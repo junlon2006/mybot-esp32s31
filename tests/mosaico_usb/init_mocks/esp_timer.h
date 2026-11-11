@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: Apache-2.0 */
-#pragma once
+#ifndef MYBOT_TEST_MOSAICO_USB_INIT_MOCKS_ESP_TIMER_H_
+#define MYBOT_TEST_MOSAICO_USB_INIT_MOCKS_ESP_TIMER_H_
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -18,3 +19,5 @@ typedef struct {
 esp_err_t esp_timer_create(const esp_timer_create_args_t *config, esp_timer_handle_t *timer);
 esp_err_t esp_timer_start_periodic(esp_timer_handle_t timer, uint64_t period);
 esp_err_t esp_timer_delete(esp_timer_handle_t timer);
+
+#endif /* MYBOT_TEST_MOSAICO_USB_INIT_MOCKS_ESP_TIMER_H_ */

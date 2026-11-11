@@ -1,3 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
-#pragma once
+#ifndef MYBOT_TEST_FACTORY_RESET_MOCKS_ESP_SYSTEM_H_
+#define MYBOT_TEST_FACTORY_RESET_MOCKS_ESP_SYSTEM_H_
+
 void esp_restart(void);
+
+#endif /* MYBOT_TEST_FACTORY_RESET_MOCKS_ESP_SYSTEM_H_ */

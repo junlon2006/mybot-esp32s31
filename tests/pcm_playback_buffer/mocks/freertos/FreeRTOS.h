@@ -1,5 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
-#pragma once
+#ifndef MYBOT_TEST_PCM_PLAYBACK_BUFFER_MOCKS_FREERTOS_FREERTOS_H_
+#define MYBOT_TEST_PCM_PLAYBACK_BUFFER_MOCKS_FREERTOS_FREERTOS_H_
+
 #include <pthread.h>
 #include <stdint.h>
 typedef unsigned int TickType_t;
@@ -14,3 +16,5 @@ typedef pthread_mutex_t portMUX_TYPE;
 #define pdFAIL 0
 #define portMAX_DELAY UINT32_MAX
 #define pdMS_TO_TICKS(ms) ((TickType_t)(ms))
+
+#endif /* MYBOT_TEST_PCM_PLAYBACK_BUFFER_MOCKS_FREERTOS_FREERTOS_H_ */

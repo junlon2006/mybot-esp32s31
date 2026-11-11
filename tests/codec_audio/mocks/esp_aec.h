@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: Apache-2.0 */
-#pragma once
+#ifndef MYBOT_TEST_CODEC_AUDIO_MOCKS_ESP_AEC_H_
+#define MYBOT_TEST_CODEC_AUDIO_MOCKS_ESP_AEC_H_
 
 #include <stdint.h>
 
@@ -42,3 +43,5 @@ int aec_get_chunksize(const aec_handle_t *handle);
 char *aec_get_mode_string(aec_mode_t mode);
 char *aec_get_nlp_string(aec_nlp_level_t level);
 void aec_destroy(aec_handle_t *handle);
+
+#endif /* MYBOT_TEST_CODEC_AUDIO_MOCKS_ESP_AEC_H_ */

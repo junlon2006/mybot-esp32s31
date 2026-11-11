@@ -1,5 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
-#pragma once
+#ifndef MYBOT_TEST_CODEC_AUDIO_MOCKS_DRIVER_I2S_TDM_H_
+#define MYBOT_TEST_CODEC_AUDIO_MOCKS_DRIVER_I2S_TDM_H_
+
 #include "esp_err.h"
 #include <stdbool.h>
 #include <stddef.h>
@@ -43,3 +45,5 @@ esp_err_t i2s_channel_disable(i2s_chan_handle_t);
 esp_err_t i2s_del_channel(i2s_chan_handle_t);
 esp_err_t i2s_channel_read(i2s_chan_handle_t, void *, size_t, size_t *, uint32_t);
 esp_err_t i2s_channel_write(i2s_chan_handle_t, const void *, size_t, size_t *, uint32_t);
+
+#endif /* MYBOT_TEST_CODEC_AUDIO_MOCKS_DRIVER_I2S_TDM_H_ */

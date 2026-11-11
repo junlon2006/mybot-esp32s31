@@ -24,13 +24,13 @@
 #ifndef MYBOT_JSON_H_
 #define MYBOT_JSON_H_
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 /*
  * This cJSON-derived implementation is intentionally namespaced. Do not add

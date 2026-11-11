@@ -1,9 +1,14 @@
 // SPDX-FileCopyrightText: 2026 MyBot Project Contributors
 // SPDX-License-Identifier: Apache-2.0
 
-#pragma once
+#ifndef MYBOT_MOSAICO_UAC_USB_TRANSFER_H_
+#define MYBOT_MOSAICO_UAC_USB_TRANSFER_H_
 
 #include <stdint.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 typedef struct {
     uint32_t fb_attempts;
@@ -21,3 +26,9 @@ typedef struct {
 
 /* Cumulative counters since boot; fields are independent atomic snapshots. */
 mosaico_usb_transfer_stats_t mosaico_usb_transfer_stats(void);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* MYBOT_MOSAICO_UAC_USB_TRANSFER_H_ */

@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: Apache-2.0 */
-#pragma once
+#ifndef MYBOT_MOSAICO_LOCAL_AEC_H_
+#define MYBOT_MOSAICO_LOCAL_AEC_H_
 
 #include <stddef.h>
 #include <stdint.h>
@@ -29,3 +30,5 @@ size_t mosaico_local_aec_read(mosaico_local_aec_t *aec, int16_t *mono, size_t fr
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* MYBOT_MOSAICO_LOCAL_AEC_H_ */

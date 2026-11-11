@@ -1,5 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
-#pragma once
+#ifndef MYBOT_TEST_PCM_PLAYBACK_BUFFER_HOST_RUNTIME_H_
+#define MYBOT_TEST_PCM_PLAYBACK_BUFFER_HOST_RUNTIME_H_
+
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdlib.h>
@@ -17,3 +19,5 @@ void host_wait_until(bool (*condition)(void));
 void host_real_delay(unsigned int milliseconds);
 void host_free(void *pointer);
 void host_expect_psram(void *pointer);
+
+#endif /* MYBOT_TEST_PCM_PLAYBACK_BUFFER_HOST_RUNTIME_H_ */
