@@ -1,5 +1,7 @@
 /* SPDX-License-Identifier: MIT */
-#pragma once
+#ifndef MYBOT_TEST_TRANSLATION_UI_MOCKS_LVGL_H_
+#define MYBOT_TEST_TRANSLATION_UI_MOCKS_LVGL_H_
+
 #include <stdbool.h>
 #include <stdint.h>
 #include <stddef.h>
@@ -89,3 +91,5 @@ int lv_display_get_vertical_resolution(lv_display_t *);
 lv_timer_t *lv_timer_create(lv_timer_cb_t, unsigned, void *);
 void lv_timer_delete(lv_timer_t *);
 uint32_t lv_tick_get(void);
+
+#endif /* MYBOT_TEST_TRANSLATION_UI_MOCKS_LVGL_H_ */

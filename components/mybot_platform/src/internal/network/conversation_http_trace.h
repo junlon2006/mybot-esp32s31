@@ -5,6 +5,10 @@
 #include <stdbool.h>
 #include <stddef.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 typedef struct mybot_conversation_http_trace mybot_conversation_http_trace_t;
 
 /* Project HTTPS diagnostics. The platform currently attaches one trace to every
@@ -23,4 +27,8 @@ void mybot_conversation_http_trace_recv(mybot_conversation_http_trace_t *trace, 
 void mybot_conversation_http_trace_finish(mybot_conversation_http_trace_t *trace, bool eof,
                                           bool transport_error);
 
+#ifdef __cplusplus
+}
 #endif
+
+#endif /* MYBOT_CONVERSATION_HTTP_TRACE_H */

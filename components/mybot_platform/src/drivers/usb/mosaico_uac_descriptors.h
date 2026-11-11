@@ -24,7 +24,8 @@
  *
  */
 
-#pragma once
+#ifndef MYBOT_MOSAICO_UAC_DESCRIPTORS_H_
+#define MYBOT_MOSAICO_UAC_DESCRIPTORS_H_
 
 #include "uac_descriptors.h"
 
@@ -87,3 +88,5 @@
         TUD_AUDIO_DESC_CS_AS_ISO_EP(AUDIO_CS_AS_ISO_DATA_EP_ATT_NON_MAX_PACKETS_OK,                \
                                     AUDIO_CTRL_NONE,                                               \
                                     AUDIO_CS_AS_ISO_DATA_EP_LOCK_DELAY_UNIT_UNDEFINED, 0x0000)
+
+#endif /* MYBOT_MOSAICO_UAC_DESCRIPTORS_H_ */

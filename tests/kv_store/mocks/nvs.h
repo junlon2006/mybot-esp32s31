@@ -1,5 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
-#pragma once
+#ifndef MYBOT_TEST_KV_STORE_MOCKS_NVS_H_
+#define MYBOT_TEST_KV_STORE_MOCKS_NVS_H_
+
 #include <stddef.h>
 #include <stdint.h>
 typedef int esp_err_t;
@@ -24,3 +26,5 @@ esp_err_t nvs_commit(nvs_handle_t handle);
 esp_err_t nvs_erase_key(nvs_handle_t handle, const char *key);
 esp_err_t nvs_get_stats(const char *partition, nvs_stats_t *stats);
 void nvs_close(nvs_handle_t handle);
+
+#endif /* MYBOT_TEST_KV_STORE_MOCKS_NVS_H_ */

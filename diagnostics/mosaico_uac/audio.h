@@ -1,11 +1,16 @@
 // SPDX-FileCopyrightText: 2026 MyBot Project Contributors
 // SPDX-License-Identifier: Apache-2.0
 
-#pragma once
+#ifndef MYBOT_MOSAICO_UAC_AUDIO_H_
+#define MYBOT_MOSAICO_UAC_AUDIO_H_
 
 #include <stddef.h>
 
 #include "esp_err.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 #define MOSAICO_AUDIO_SAMPLE_RATE 48000
 #define MOSAICO_AUDIO_CHANNELS 2
@@ -25,3 +30,9 @@ esp_err_t mosaico_audio_test_tone(void);
  * buffer. The codec's I2S adapter has a one-second wait timeout. */
 esp_err_t mosaico_audio_read(void *data, size_t bytes);
 esp_err_t mosaico_audio_write(void *data, size_t bytes);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* MYBOT_MOSAICO_UAC_AUDIO_H_ */

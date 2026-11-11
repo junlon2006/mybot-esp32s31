@@ -1,5 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
-#pragma once
+#ifndef MYBOT_TEST_PCM_PLAYBACK_BUFFER_MOCKS_ESP_HEAP_CAPS_H_
+#define MYBOT_TEST_PCM_PLAYBACK_BUFFER_MOCKS_ESP_HEAP_CAPS_H_
+
 #include <stddef.h>
 #include <stdint.h>
 #define MALLOC_CAP_INTERNAL 1
@@ -11,3 +13,5 @@ void *heap_caps_aligned_alloc(size_t alignment, size_t bytes, uint32_t caps);
 void heap_caps_free(void *pointer);
 size_t heap_caps_get_free_size(uint32_t caps);
 size_t heap_caps_get_largest_free_block(uint32_t caps);
+
+#endif /* MYBOT_TEST_PCM_PLAYBACK_BUFFER_MOCKS_ESP_HEAP_CAPS_H_ */

@@ -1,5 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
-#pragma once
+#ifndef MYBOT_TEST_AOSL_S31_TASKS_MOCKS_FREERTOS_FREERTOS_H_
+#define MYBOT_TEST_AOSL_S31_TASKS_MOCKS_FREERTOS_FREERTOS_H_
+
 #include <stdint.h>
 typedef int BaseType_t;
 typedef unsigned UBaseType_t;
@@ -14,3 +16,5 @@ typedef struct {
 #define portMAX_DELAY UINT32_MAX
 #define portBYTE_ALIGNMENT 16
 #define configMAX_PRIORITIES 25
+
+#endif /* MYBOT_TEST_AOSL_S31_TASKS_MOCKS_FREERTOS_FREERTOS_H_ */

@@ -1,9 +1,15 @@
 /* SPDX-License-Identifier: Apache-2.0 */
-#pragma once
+#ifndef MYBOT_CODEC_AUDIO_H_
+#define MYBOT_CODEC_AUDIO_H_
+
 #include <mybot/platform/mybot_audio.h>
 #include "driver/i2s_common.h"
 #include "esp_codec_dev.h"
 #include "esp_codec_dev_defaults.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 /* Board wiring and codec setup; stream ownership, bounded I/O and NVS volume
  * remain shared between boards. Only the selected board defines this object. */
@@ -20,3 +26,9 @@ extern const mybot_codec_audio_board_t mybot_codec_audio_board;
 const mybot_audio_capture_ops_t *mybot_codec_audio_capture_ops(void);
 const mybot_audio_playback_ops_t *mybot_codec_audio_playback_ops(void);
 const mybot_audio_volume_ops_t *mybot_codec_audio_volume_ops(void);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* MYBOT_CODEC_AUDIO_H_ */

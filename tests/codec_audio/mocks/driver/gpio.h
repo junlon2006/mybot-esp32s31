@@ -1,5 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
-#pragma once
+#ifndef MYBOT_TEST_CODEC_AUDIO_MOCKS_DRIVER_GPIO_H_
+#define MYBOT_TEST_CODEC_AUDIO_MOCKS_DRIVER_GPIO_H_
+
 #include "esp_err.h"
 typedef int gpio_num_t;
 #define GPIO_NUM_NC -1
@@ -26,3 +28,5 @@ esp_err_t gpio_set_level(gpio_num_t pin, unsigned level);
 #define GPIO_NUM_56 56
 #define GPIO_NUM_57 57
 #define GPIO_NUM_60 60
+
+#endif /* MYBOT_TEST_CODEC_AUDIO_MOCKS_DRIVER_GPIO_H_ */

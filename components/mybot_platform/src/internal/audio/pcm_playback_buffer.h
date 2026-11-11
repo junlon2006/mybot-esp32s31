@@ -7,6 +7,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 typedef struct mybot_pcm_playback_buffer mybot_pcm_playback_buffer_t;
 
 /* The worker submits up to 240 mono signed-16 frames at 16 kHz. The board sink
@@ -34,5 +38,9 @@ int mybot_pcm_playback_buffer_destroy(mybot_pcm_playback_buffer_t *buffer);
 
 /* Implemented by the selected board's audio driver, for finite local prompts. */
 int mybot_audio_playback_drain(void *context, uint32_t timeout_ms);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* MYBOT_PLATFORM_PCM_PLAYBACK_BUFFER_H_ */

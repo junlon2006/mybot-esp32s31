@@ -1,5 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
-#pragma once
+#ifndef MYBOT_TEST_MOSAICO_USB_AUDIO_MOCKS_TUSB_H_
+#define MYBOT_TEST_MOSAICO_USB_AUDIO_MOCKS_TUSB_H_
+
 #include <stdbool.h>
 #include <stdint.h>
 #include <string.h>
@@ -61,3 +63,5 @@ bool tud_audio_buffer_and_schedule_control_xfer(uint8_t port, const tusb_control
 typedef struct {
     unsigned unused;
 } tu_fifo_t;
+
+#endif /* MYBOT_TEST_MOSAICO_USB_AUDIO_MOCKS_TUSB_H_ */

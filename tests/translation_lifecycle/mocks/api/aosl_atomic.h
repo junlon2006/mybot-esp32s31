@@ -1,5 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
-#pragma once
+#ifndef MYBOT_TEST_TRANSLATION_LIFECYCLE_MOCKS_API_AOSL_ATOMIC_H_
+#define MYBOT_TEST_TRANSLATION_LIFECYCLE_MOCKS_API_AOSL_ATOMIC_H_
+
 #include <stdint.h>
 typedef intptr_t aosl_atomic_t;
 static inline intptr_t aosl_atomic_read(const aosl_atomic_t *v) {
@@ -14,3 +16,5 @@ static inline intptr_t aosl_atomic_xchg(aosl_atomic_t *v, intptr_t value) {
 static inline void aosl_atomic_inc(aosl_atomic_t *v) {
     (void)__atomic_add_fetch(v, 1, __ATOMIC_SEQ_CST);
 }
+
+#endif /* MYBOT_TEST_TRANSLATION_LIFECYCLE_MOCKS_API_AOSL_ATOMIC_H_ */

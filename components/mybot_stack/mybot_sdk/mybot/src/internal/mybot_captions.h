@@ -5,6 +5,10 @@
 #include <mybot/mybot_captions.h>
 #include <stddef.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #define MYBOT_CAPTION_MESSAGE_CAPACITY 8192U
 
 typedef struct mybot_captions mybot_captions_t;
@@ -27,5 +31,9 @@ int mybot_captions_copy(const mybot_captions_t *captions, uint32_t sequence, myb
  * integers and are used only when both start_ms and duration_ms are present. */
 int mybot_captions_apply_json(mybot_captions_t *captions, mybot_translation_direction_t direction,
                               const void *data, size_t len);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* MYBOT_CAPTIONS_INTERNAL_H_ */

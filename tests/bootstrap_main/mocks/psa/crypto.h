@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: Apache-2.0 */
-#pragma once
+#ifndef MYBOT_TEST_BOOTSTRAP_MAIN_MOCKS_PSA_CRYPTO_H_
+#define MYBOT_TEST_BOOTSTRAP_MAIN_MOCKS_PSA_CRYPTO_H_
 
 #include <stddef.h>
 #include <stdint.h>
@@ -26,3 +27,5 @@ psa_status_t psa_mac_compute(psa_key_id_t key, int algorithm, const uint8_t *inp
                              size_t input_length, uint8_t *mac, size_t mac_size,
                              size_t *mac_length);
 psa_status_t psa_destroy_key(psa_key_id_t key);
+
+#endif /* MYBOT_TEST_BOOTSTRAP_MAIN_MOCKS_PSA_CRYPTO_H_ */

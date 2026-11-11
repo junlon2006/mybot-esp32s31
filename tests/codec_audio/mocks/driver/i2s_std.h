@@ -1,5 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
-#pragma once
+#ifndef MYBOT_TEST_CODEC_AUDIO_MOCKS_DRIVER_I2S_STD_H_
+#define MYBOT_TEST_CODEC_AUDIO_MOCKS_DRIVER_I2S_STD_H_
+
 #include "driver/i2s_common.h"
 typedef struct {
     int sample_rate_hz, mclk_multiple;
@@ -14,3 +16,5 @@ typedef struct {
 #define I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(bits, mode)                                            \
     ((host_slot_t){.data_bit_width = bits, .slot_mode = mode})
 esp_err_t i2s_channel_init_std_mode(i2s_chan_handle_t, const i2s_std_config_t *);
+
+#endif /* MYBOT_TEST_CODEC_AUDIO_MOCKS_DRIVER_I2S_STD_H_ */

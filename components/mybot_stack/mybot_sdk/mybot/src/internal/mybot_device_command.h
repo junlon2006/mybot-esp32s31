@@ -6,6 +6,10 @@
 
 #include <stdbool.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #define MYBOT_DEVICE_COMMAND_ID_CAPACITY 128
 
 typedef enum {
@@ -26,5 +30,9 @@ typedef struct {
  * issued_at and expires_at are optional and ignored.
  * root is borrowed; command owns its fields and is valid only on success. */
 bool mybot_device_command_parse(const mybot_json_t *root, mybot_device_command_t *command);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* MYBOT_DEVICE_COMMAND_H_ */

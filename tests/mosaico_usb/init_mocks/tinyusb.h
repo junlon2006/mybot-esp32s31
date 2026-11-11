@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: Apache-2.0 */
-#pragma once
+#ifndef MYBOT_TEST_MOSAICO_USB_INIT_MOCKS_TINYUSB_H_
+#define MYBOT_TEST_MOSAICO_USB_INIT_MOCKS_TINYUSB_H_
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -24,3 +25,5 @@ typedef struct {
 
 esp_err_t tinyusb_driver_install(const tinyusb_config_t *config);
 esp_err_t tinyusb_driver_uninstall(void);
+
+#endif /* MYBOT_TEST_MOSAICO_USB_INIT_MOCKS_TINYUSB_H_ */
