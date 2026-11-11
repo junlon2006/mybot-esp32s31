@@ -32,6 +32,10 @@ The bundled S31 RTSA header/configuration/static library are retained from the u
 
 The esp-wifi-connect 3.2.2 manifest declares MIT, but its archive omitted the license file. The retained `LICENSE` is byte-identical to the MIT text later published upstream in commit `347682fa013b52f863052ad4b1a793ca3cabff17`.
 
+The local Wi-Fi manager implementation and header include project-maintained
+lifecycle/state-lock corrections and retain that MIT license. The upstream
+component license and copyright notice remain unchanged.
+
 The complete official `esp_codec_dev` 1.5.9 release, LVGL and the inherited LVGL-port display/runtime subset retain their license files and file-level notices. Existing LVGL-port integration corrections remain documented in its `PATCHES.md`; this update preserves that baseline. Local CMake wrappers select the S31 runtime sources; they do not remove licenses from the source snapshots. Managed base-touch and cJSON licenses accompany their generated packages.
 
 ## Local AEC dependency terms
