@@ -4,6 +4,12 @@
 #include <cstdint>
 typedef int wifi_auth_mode_t;
 typedef struct {
+    uint8_t ssid[32];
+    uint8_t password[64];
+} wifi_sta_config_t;
+typedef struct {
     uint8_t ssid[33];
+    int8_t rssi;
+    wifi_auth_mode_t authmode;
 } wifi_ap_record_t;
 #endif

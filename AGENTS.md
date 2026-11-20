@@ -85,13 +85,6 @@ default local builds preserve directories and reuse `build/mosaico-v1.2`, while
 explicit CI roots use ownership-checked, descriptor-based safe cleanup. Record
 binary/config/map checks separately from real hardware
 results. Update board docs, validation, source provenance and license notices when
-inputs or hardware facts change. The Mosaico diagnostic USB microphone/speaker
-have user-reported confirmation. The user also confirmed normal Mosaico 480x480
-caption display after changing partial buffers to 40 rows; keep that display baseline. The user
-confirmed PC-audio meeting listening plays translated Chinese on the device and reported
-bidirectional meeting tests passing after the PSRAM task-stack revision (e279926).
-Mosaico media/face-to-face support is implemented. Later review fixes
-have host/build results only until another hardware result is recorded.
-Translation quality, AEC, reconnect/endurance, USB current and VCC ramp behavior require their own results.
-Translation route subscription, language controls, Local/Cloud AEC and recovery require
-their own hardware results. The development service is https://mybot.sh3t.agoralab.co/api.
+inputs or hardware facts change. Keep the 40-row partial display buffers. Maintain the current
+hardware evidence and outstanding tests in [docs/VALIDATION.md](docs/VALIDATION.md).
+The development service is https://mybot.sh3t.agoralab.co/api.

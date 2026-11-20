@@ -194,14 +194,25 @@ jobs:
             --output-root "$GITHUB_WORKSPACE/releases"
       - name: Verify composite descriptors against pinned USB headers
         run: sh tests/mosaico_usb/run_descriptors.sh
+      - name: Check Wi-Fi portal JSON with the resolved cJSON package
+        run: sh tests/wifi_manager/run_portal_json.sh
+      - name: Select verified delivery directory
+        id: delivery
+        env:
+          LANGUAGE: ${{ matrix.language }}
+        run: |
+          name="esp-mosaico-v1.2-$LANGUAGE"
+          directory=$(dirname "$(realpath "releases/$name.bin")")
+          echo "directory=$directory" >> "$GITHUB_OUTPUT"
       - name: Upload firmware
         uses: actions/upload-artifact@v4
         with:
           name: mybot-esp-mosaico-v1.2-${{ matrix.language }}-aec-${{ matrix.aec_mode }}-ptime60-no-video-${{ github.sha }}
           if-no-files-found: error
+          include-hidden-files: true
           path: |
-            releases/esp-mosaico-v1.2-${{ matrix.language }}.bin
-            releases/esp-mosaico-v1.2-${{ matrix.language }}.manifest.json
-            releases/esp-mosaico-v1.2-${{ matrix.language }}.sha256
-            releases/esp-mosaico-v1.2-${{ matrix.language }}.flash.txt
-            releases/esp-mosaico-v1.2-${{ matrix.language }}.licenses.txt
+            ${{ steps.delivery.outputs.directory }}/esp-mosaico-v1.2-${{ matrix.language }}.bin
+            ${{ steps.delivery.outputs.directory }}/esp-mosaico-v1.2-${{ matrix.language }}.manifest.json
+            ${{ steps.delivery.outputs.directory }}/esp-mosaico-v1.2-${{ matrix.language }}.sha256
+            ${{ steps.delivery.outputs.directory }}/esp-mosaico-v1.2-${{ matrix.language }}.flash.txt
+            ${{ steps.delivery.outputs.directory }}/esp-mosaico-v1.2-${{ matrix.language }}.licenses.txt

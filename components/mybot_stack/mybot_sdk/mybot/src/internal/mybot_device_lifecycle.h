@@ -120,6 +120,9 @@ typedef struct {
     aosl_atomic_t network_generation;
 } mybot_device_lifecycle_t;
 
+/* Start a fresh, offline run before attaching Wi-Fi. Its serialized callbacks may
+ * then publish connectivity while the control worker loads persistent state. */
+void mybot_device_lifecycle_prepare(mybot_device_lifecycle_t *lifecycle);
 int mybot_device_lifecycle_init(mybot_device_lifecycle_t *lifecycle, mybot_kv_store_t *kv_store,
                                 const char *server_base, const char *device_id,
                                 const char *firmware_ver, const char *hw_model,

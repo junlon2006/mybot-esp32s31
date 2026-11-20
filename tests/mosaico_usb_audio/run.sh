@@ -16,6 +16,7 @@ trap 'rm -r -- "$test_build_dir"' EXIT HUP INT TERM
 "$test_build_dir/test_audio" normal
 "$test_build_dir/test_audio" controls
 "$test_build_dir/test_audio" capture
+"$test_build_dir/test_audio" capture_reset
 "$test_build_dir/test_audio" concurrency
 "$test_build_dir/test_audio" resampler
 "$test_build_dir/test_audio" playback

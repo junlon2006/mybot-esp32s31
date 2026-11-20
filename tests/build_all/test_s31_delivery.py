@@ -43,6 +43,7 @@ class S31DeliveryTests(unittest.TestCase):
         self.write_description()
         self.config = (
             'CONFIG_IDF_TARGET="esp32s31"\nCONFIG_ESPTOOLPY_FLASHSIZE_16MB=y\n'
+            'CONFIG_BOOTLOADER_OFFSET_IN_FLASH=0x2000\nCONFIG_PARTITION_TABLE_OFFSET=0x8000\n'
             'CONFIG_SPIRAM=y\nCONFIG_SPIRAM_MODE_OCT=y\nCONFIG_CODEC_ES8311_SUPPORT=y\n'
             '# CONFIG_CODEC_ES8389_SUPPORT is not set\n'
             'CONFIG_MYBOT_LVGL_UI=y\nCONFIG_MYBOT_AUDIO_PTIME_60=y\nCONFIG_MYBOT_AUDIO_PTIME_MS=60\n'
@@ -83,6 +84,7 @@ class S31DeliveryTests(unittest.TestCase):
             ("assets", 1, 0x82, 0x800000, 0x800000, 0),
         ]
         self.write_partition_table()
+        (self.build / "ota_data_initial.bin").write_bytes(b"\xff" * 0x2000)
         (self.build / "mybot_esp32s31.bin").write_bytes(b"application-data")
         self.flash = {
             "extra_esptool_args": {
@@ -91,8 +93,11 @@ class S31DeliveryTests(unittest.TestCase):
             "flash_settings": {"flash_mode": "dio", "flash_size": "16MB", "flash_freq": "80m"},
             "flash_files": {"0x2000": "bootloader/bootloader.bin",
                             "0x8000": "partition_table/partition-table.bin",
+                            "0xd000": "ota_data_initial.bin",
                             "0x20000": "mybot_esp32s31.bin"},
+            "bootloader": {"offset": "0x2000", "file": "bootloader/bootloader.bin"},
             "partition-table": {"offset": "0x8000", "file": "partition_table/partition-table.bin"},
+            "otadata": {"offset": "0xd000", "file": "ota_data_initial.bin"},
             "app": {"offset": "0x20000", "file": "mybot_esp32s31.bin"},
         }
         self.write_flash()
@@ -489,7 +494,9 @@ class S31DeliveryTests(unittest.TestCase):
         self.assertEqual(metadata, manifest)
         self.assertEqual(manifest["image"]["flash_offset"], "0x0")
         self.assertEqual(manifest["image"]["sha256"], hashlib.sha256(self.merged.read_bytes()).hexdigest())
-        self.assertEqual([s["offset"] for s in manifest["segments"]], ["0x2000", "0x8000", "0x20000"])
+        self.assertEqual([(s["role"], s["offset"]) for s in manifest["segments"]],
+                         [("bootloader", "0x2000"), ("partition-table", "0x8000"),
+                          ("otadata", "0xd000"), ("app", "0x20000")])
         self.assertEqual(manifest["project_version"], "0.1.0")
         self.assertEqual(manifest["idf_version"], "v6.1")
         self.assertFalse(manifest["video_enabled"])
@@ -513,6 +520,21 @@ class S31DeliveryTests(unittest.TestCase):
             self.merged.with_suffix(".sha256").name, self.merged.with_suffix(".flash.txt").name,
             self.merged.with_suffix(".licenses.txt").name,
         })
+
+    def test_verify_merged_checks_published_image_and_sidecars_without_writing(self) -> None:
+        import build_all as builder
+        with builder._staged_delivery(self.root, self.merged.stem, False) as stage:
+            image = stage / self.merged.name
+            image.write_bytes(self.merged.read_bytes())
+            checker.package(self.build, image, "zh-CN")
+        checker.package(self.build, self.merged, "zh-CN", verify_only=True)
+        with self.assertRaisesRegex(RuntimeError, "read-only"):
+            checker.package(self.build, self.merged.resolve(), "zh-CN")
+        checksum = self.merged.with_suffix(".sha256").resolve()
+        checksum.write_bytes(b"stale")
+        with self.assertRaisesRegex(RuntimeError, "metadata mismatch"):
+            checker.package(self.build, self.merged, "zh-CN", verify_only=True)
+        self.assertEqual(checksum.read_bytes(), b"stale")
 
     def test_delivery_keeps_complete_original_license_and_notice_bytes(self) -> None:
         checker.package(self.build, self.merged, "zh-CN")
@@ -623,8 +645,34 @@ class S31DeliveryTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "must match an application partition start"):
                     checker.verify_build(self.build, "zh-CN")
 
-    def test_missing_or_inconsistent_app_and_partition_flash_records_are_rejected(self) -> None:
-        for role in ("app", "partition-table"):
+    def test_incomplete_blank_board_package_rejected_even_with_matching_provenance(self) -> None:
+        for role in ("bootloader", "otadata"):
+            info = self.flash.pop(role)
+            del self.flash["flash_files"][info["offset"]]
+        self.write_flash()
+        self.refresh_provenance()
+        with self.assertRaisesRegex(RuntimeError, "missing bootloader flash record"):
+            checker.package(self.build, self.merged, "zh-CN")
+        self.assertFalse(self.merged.with_suffix(".manifest.json").exists())
+
+    def test_role_offsets_checked_against_config_and_built_partition(self) -> None:
+        for role, moved, error in (("bootloader", "0x3000", "board configuration"),
+                                   ("partition-table", "0x7000", "board configuration"),
+                                   ("otadata", "0xa000", "OTA data partition")):
+            with self.subTest(role=role):
+                info = self.flash[role]
+                original = info["offset"]
+                info["offset"] = moved
+                self.flash["flash_files"][moved] = self.flash["flash_files"].pop(original)
+                self.write_flash()
+                self.refresh_provenance()
+                with self.assertRaisesRegex(RuntimeError, error):
+                    checker.package(self.build, self.merged, "zh-CN")
+                info["offset"] = original
+                self.flash["flash_files"][original] = self.flash["flash_files"].pop(moved)
+
+    def test_missing_or_inconsistent_flash_records_are_rejected(self) -> None:
+        for role in ("bootloader", "partition-table", "otadata", "app"):
             original = self.flash[role]
             for value in (None, {"offset": "bad", "file": original["file"]},
                           {"offset": hex(int(original["offset"], 0) + 0x1000), "file": original["file"]},
@@ -874,9 +922,10 @@ class WorkflowDeliveryTests(unittest.TestCase):
         self.assertNotIn("scripts/check_s31_build.py --build-dir", build_job)
         self.assertIn("python3 scripts/build_all.py", build_job)
         upload = workflow.split("      - name: Upload firmware", 1)[1]
+        self.assertIn('dirname "$(realpath "releases/$name.bin")"', workflow)
         for suffix in (".bin", ".manifest.json", ".sha256", ".flash.txt", ".licenses.txt"):
             self.assertIn(
-                'releases/esp-mosaico-v1.2-${{ matrix.language }}' + suffix,
+                '${{ steps.delivery.outputs.directory }}/esp-mosaico-v1.2-${{ matrix.language }}' + suffix,
                 upload,
             )
         self.assertNotIn(".map", upload)

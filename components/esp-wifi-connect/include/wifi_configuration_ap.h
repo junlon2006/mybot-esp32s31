@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: MIT */
 #ifndef _WIFI_CONFIGURATION_AP_H_
 #define _WIFI_CONFIGURATION_AP_H_
 
@@ -43,15 +44,16 @@ public:
 #if !CONFIG_IDF_TARGET_ESP32P4
     void StartSmartConfig();
 #endif
+    static esp_err_t HandleSubmit(httpd_req_t *req);
     bool ConnectToWifi(const std::string &ssid, const std::string &password);
-    void Save(const std::string &ssid, const std::string &password);
+    bool Save(const std::string &ssid, const std::string &password);
     std::vector<wifi_ap_record_t> GetAccessPoints();
     std::string GetSsid();
     std::string GetWebServerUrl();
 
     /**
-     * Set callback for when exit is requested from config mode
-     * This is called when user requests to exit config mode (e.g., via /exit endpoint)
+     * Notify the control owner after saving credentials or receiving an explicit exit request.
+     * The callback runs on the submitting task and must not stop or join it.
      */
     void OnExitRequested(std::function<void()> callback);
 

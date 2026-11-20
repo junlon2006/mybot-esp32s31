@@ -14,8 +14,15 @@ or channel mute/volume state; owned OUT queues,
 bounded capture, channel mute/gain, alternate-interface
 changes and concurrent stop/close/destroy; host-paced USB IN packets, independent
 playback lifecycle, short-utterance prebuffering, overflow/underflow and closed-host
-sample discard. Interpolation and decimation checks verify numerical passband/image
-rejection and identical results for varied chunk boundaries. Clock simulations run
+sample discard. The capture reset test keeps the speaker stream open, reads and
+discards pre-fence voice as the paused SDK does, then checks every sample of the
+first 60 ms after resuming with silence. It covers both queued USB OUT packets
+awaiting their callback and a reset during a multi-chunk callback. Another case
+feeds several USB batches between the capture reset and LISTEN reopening, then
+checks that the next SDK block is silent and fresh voice passes afterward.
+Interpolation and decimation checks verify numerical
+passband/image rejection and identical results for varied chunk boundaries.
+Clock simulations run
 both +417 ppm and -417 ppm offsets for 144 seconds with bounded queues and no new
 underflow/drop after priming.
 

@@ -58,7 +58,7 @@ static portMUX_TYPE s_capture_lock = portMUX_INITIALIZER_UNLOCKED;
 static struct {
     bool claimed, started, reading, speaker_open, microphone_open;
     unsigned head, count, generation;
-    bool priming;
+    bool priming, input_enabled, discard_next_out;
 } s_capture;
 static struct {
     unsigned generation;
@@ -90,6 +90,7 @@ static int capture_init(void **context, int rate, int channels, int bits) {
     if (available) {
         s_capture.claimed = true;
         s_capture.started = false;
+        s_capture.input_enabled = true;
         clear_capture_locked();
         *context = &s_capture;
     }
@@ -121,6 +122,33 @@ static int capture_stop(void *context) {
     clear_capture_locked();
     portEXIT_CRITICAL_ISR(&s_capture_lock);
     return valid ? 0 : -1;
+}
+
+static int capture_reset(void *context) {
+    if (context != &s_capture)
+        return -1;
+    portENTER_CRITICAL_ISR(&s_capture_lock);
+    bool valid = s_capture.claimed && s_capture.started && !s_capture.reading;
+    if (valid) {
+        clear_capture_locked();
+        mosaico_usb_resampler_reset(&s_reader.filter);
+        s_reader.generation = s_capture.generation;
+        /* The controller may already have placed PCM in TinyUSB's OUT FIFO. */
+        s_capture.discard_next_out = true;
+    }
+    portEXIT_CRITICAL_ISR(&s_capture_lock);
+    return valid ? 0 : -1;
+}
+
+static void capture_set_input_enabled(void *context, bool enabled) {
+    if (context != &s_capture)
+        return;
+    portENTER_CRITICAL_ISR(&s_capture_lock);
+    if (s_capture.claimed && s_capture.input_enabled != enabled) {
+        s_capture.input_enabled = enabled;
+        s_capture.discard_next_out = true;
+    }
+    portEXIT_CRITICAL_ISR(&s_capture_lock);
 }
 
 static void capture_destroy(void *context) {
@@ -268,6 +296,8 @@ const mybot_audio_capture_ops_t *mosaico_usb_audio_capture_ops(void) {
         .read = capture_read,
         .stop = capture_stop,
         .destroy = capture_destroy,
+        .reset = capture_reset,
+        .set_input_enabled = capture_set_input_enabled,
     };
     return &ops;
 }
@@ -633,6 +663,12 @@ bool tud_audio_rx_done_isr(uint8_t rhport, uint16_t bytes, uint8_t function, uin
     if (rhport != 0 || function != 0 || endpoint != MYBOT_USB_EP_AUDIO_OUT)
         return false;
     count(&s_output_callbacks, 1);
+    /* OUT completions are serial. A reset before entry discards this FIFO batch.
+     * A reset during a copy invalidates its remaining chunks and the next batch. */
+    portENTER_CRITICAL_ISR(&s_capture_lock);
+    bool discard = !s_capture.input_enabled || s_capture.discard_next_out;
+    s_capture.discard_next_out = false;
+    portEXIT_CRITICAL_ISR(&s_capture_lock);
     /* Bound work to the FIFO contents present at callback entry. Endpoint FIFO
      * ownership stays entirely on USB's callback; the SDK sees only s_ring. */
     unsigned remaining = tud_audio_n_available(function);
@@ -652,7 +688,8 @@ bool tud_audio_rx_done_isr(uint8_t rhport, uint16_t bytes, uint8_t function, uin
         }
         unsigned frames = received / USB_AUDIO_FRAME_BYTES;
         portENTER_CRITICAL_ISR(&s_capture_lock);
-        if (s_capture.started && s_capture.speaker_open) {
+        if (s_capture.started && s_capture.speaker_open && !discard &&
+            !s_capture.discard_next_out) {
             if (s_capture.count + frames > USB_RING_FRAMES) {
                 unsigned dropped = s_capture.count + frames - USB_RING_FRAMES;
                 s_capture.head = (s_capture.head + dropped) % USB_RING_FRAMES;

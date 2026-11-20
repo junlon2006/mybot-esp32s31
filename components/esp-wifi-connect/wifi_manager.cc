@@ -280,11 +280,7 @@ void WifiManager::StartConfigAp() {
     config_ap_->SetShowOtaConfig(config_.show_ota_config);
     config_ap_->SetShowSleepConfig(config_.show_sleep_config);
 
-    // Web handler calls this when user submits config
-    config_ap_->OnExitRequested([this]() {
-        ESP_LOGI(TAG, "Config exit requested from web");
-        StopConfigAp();
-    });
+    config_ap_->OnExitRequested([this]() { NotifyEvent(WifiEvent::ConfigModeExitRequested); });
 
     config_ap_->Start();
     {

@@ -60,6 +60,7 @@ struct Harness {
     std::atomic<int> power_calls{0};
     bool station_auto_connect = false;
     int provisioning_calls = 0;
+    std::function<void()> credentials_saved;
     std::string expected_provisioning_ssid;
     std::function<void()> scan_callback;
     std::function<void(const std::string &)> connecting_callback;
@@ -348,9 +349,12 @@ void CheckProvisioningIdentity() {
                 short_buffer[0] == '\0',
             "a short buffer is cleared instead of exposing a partial SSID");
     ++harness.provisioning_calls;
-    // This is the platform's UI callback, after StartConfigAp has released its
-    // lifecycle lock. Model the user finishing setup without waiting 30 seconds.
-    manager.StopConfigAp();
+    std::thread http([] {
+        harness.credentials_saved();
+        Require(harness.ap_active.load(),
+                "HTTP notification must return without stopping its server");
+    });
+    http.join();
 }
 
 void ProvisioningIdentity(const std::array<uint8_t, 6> &mac, const char *expected,
@@ -528,6 +532,7 @@ void WifiConfigurationAp::SetLanguage(const std::string &language) {
     language_ = language;
 }
 void WifiConfigurationAp::OnExitRequested(std::function<void()> callback) {
+    harness.credentials_saved = callback;
     on_exit_requested_ = std::move(callback);
 }
 void WifiConfigurationAp::Start() {
@@ -549,6 +554,9 @@ std::string WifiConfigurationAp::GetWebServerUrl() {
 
 SsidManager::SsidManager() = default;
 SsidManager::~SsidManager() = default;
+std::vector<SsidItem> SsidManager::GetSsidList() {
+    return {};
+}
 
 int main() {
     const TestCase tests[] = {

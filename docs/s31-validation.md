@@ -5,13 +5,7 @@ the revision tested at that time; entries for removed profiles are retained only
 historical validation evidence and do not describe supported hardware. Use the
 build-bound manifests and checksums beside delivered images for their binary identity.
 
-This records local build/host validation and separately attributed hardware feedback.
-The user confirmed diagnostic USB microphone/speaker audio, normal 40-row caption
-display and basic bidirectional meeting translation after the PSRAM-stack revision.
-Touch navigation and start operation also have device-log evidence. These reports
-precede this review-fix series and do not validate its recovery, key, USB identity or
-power changes. Quantitative audio quality, AEC, enumeration/reconnect stability,
-power/current measurements and endurance still require separate hardware results.
+See the [current validation matrix](VALIDATION.md) for hardware results and open tests.
 
 ## 2026-11-08 single-board convergence — host only
 
@@ -1727,3 +1721,39 @@ and no video runtime. Both merged images and their four metadata/license files
 are refreshed in `releases/`, use flash offset `0x0` and share the same source-input
 snapshot. Manifests mark the source changes as uncommitted. Saved configuration
 and the active build remain Chinese.
+
+## 2026-11-20 Meeting USB capture across pause and RTC readiness
+
+A host integration check exercised the production USB capture driver, resampler
+and SDK media pipeline with simulated USB transfers and worker scheduling. With
+the previous driver, 348 of the 960 samples in the first LISTEN frame were
+nonzero when PC audio was supplied during a pause and only silence followed
+resume. The fixed pipeline discarded all old samples on resume, initial RTC
+readiness, reconnect and reconnect while paused, in both Local and Cloud AEC
+configurations. Input injected between the capture reset and final readiness was
+also discarded. A new signal sent immediately after resume appeared in the
+first 60 ms frame.
+
+The 10 USB driver cases and 27 media lifecycle cases in each AEC build passed
+under UBSan. The direct Chinese ESP-IDF v6.1 build and config/binary/map checks
+passed with Local AEC and 448,128 bytes free in the smallest OTA slot. Hardware
+pause/resume and live RTC reconnect remain to be verified.
+
+## 2026-11-20 Wi-Fi reconnect during SDK initialization
+
+The SDK prepares an offline lifecycle before registering its Wi-Fi callback.
+Ordered link notifications update session availability immediately, including
+during service initialization. Queued notifications drive the control worker's
+state transitions without writing the link status a second time. Each link loss
+still invalidates earlier service requests and remains pending for cleanup.
+
+Two host regressions exercise SDK startup, Wi-Fi notification delivery, the LCD
+state and translation start admission. A disconnect during service setup followed
+by a reconnect after lifecycle initialization reaches READY and admits a start
+after pending loss is processed. A disconnect without that reconnect keeps the
+lifecycle offline across initialization. A later loss rejects a start even
+before control processes the screen change.
+
+The Chinese ESP-IDF v6.1 Local AEC build and config/binary/map checks passed
+with 448,208 bytes free in the smallest OTA slot. Startup reconnect on the
+physical board remains to be verified.

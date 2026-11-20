@@ -22,6 +22,11 @@ static inline intptr_t aosl_atomic_cmpxchg(aosl_atomic_t *value, intptr_t old, i
         *value = next;
     return previous;
 }
+static inline intptr_t aosl_atomic_xchg(aosl_atomic_t *value, intptr_t next) {
+    intptr_t previous = *value;
+    *value = next;
+    return previous;
+}
 static inline void aosl_atomic_inc(aosl_atomic_t *value) {
     ++*value;
 }

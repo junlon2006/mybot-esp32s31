@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: MIT */
 #include "wifi_configuration_ap.h"
 #include <cstdio>
 #include <memory>
@@ -17,6 +18,8 @@
 #include <esp_smartconfig.h>
 #endif
 #include "ssid_manager.h"
+#include "wifi_credentials.h"
+#include "wifi_portal_json.h"
 #include "sdkconfig.h"
 
 #define TAG "WifiConfigurationAp"
@@ -25,7 +28,6 @@
 #define WIFI_FAIL_BIT      BIT1
 
 extern const char index_html_start[] asm("_binary_wifi_configuration_html_start");
-extern const char done_html_start[] asm("_binary_wifi_configuration_done_html_start");
 
 WifiConfigurationAp::WifiConfigurationAp()
 {
@@ -230,6 +232,18 @@ void WifiConfigurationAp::StartAccessPoint()
     }
 }
 
+static esp_err_t SendPortalJson(httpd_req_t *req, const wifi_portal::Json &json) {
+    std::unique_ptr<char, decltype(&cJSON_free)> body(
+        json ? cJSON_PrintUnformatted(json.get()) : nullptr, cJSON_free);
+    if (!body) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to encode Wi-Fi list");
+        return ESP_FAIL;
+    }
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Connection", "close");
+    return httpd_resp_send(req, body.get(), HTTPD_RESP_USE_STRLEN);
+}
+
 void WifiConfigurationAp::StartWebServer()
 {
     // Start the web server
@@ -259,19 +273,7 @@ void WifiConfigurationAp::StartWebServer()
         .uri = "/saved/list",
         .method = HTTP_GET,
         .handler = [](httpd_req_t *req) -> esp_err_t {
-            auto ssid_list = SsidManager::GetInstance().GetSsidList();
-            std::string json_str = "[";
-            for (const auto& ssid : ssid_list) {
-                json_str += "\"" + ssid.ssid + "\",";
-            }
-            if (json_str.length() > 1) {
-                json_str.pop_back(); // Remove the last comma
-            }
-            json_str += "]";
-            httpd_resp_set_type(req, "application/json");
-            httpd_resp_set_hdr(req, "Connection", "close");
-            httpd_resp_send(req, json_str.c_str(), HTTPD_RESP_USE_STRLEN);
-            return ESP_OK;
+            return SendPortalJson(req, wifi_portal::SavedList(SsidManager::GetInstance().GetSsidList()));
         },
         .user_ctx = NULL
     };
@@ -288,7 +290,10 @@ void WifiConfigurationAp::StartWebServer()
                 int index = -1;
                 sscanf(&req->uri[pos+7], "%d", &index);
                 ESP_LOGI(TAG, "Set default item %d", index);
-                SsidManager::GetInstance().SetDefaultSsid(index);
+                if (!SsidManager::GetInstance().SetDefaultSsid(index)) {
+                    httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Wi-Fi profile change failed");
+                    return ESP_FAIL;
+                }
             }
             // send {}
             httpd_resp_set_type(req, "application/json");
@@ -311,7 +316,10 @@ void WifiConfigurationAp::StartWebServer()
                 int index = -1;
                 sscanf(&req->uri[pos+7], "%d", &index);
                 ESP_LOGI(TAG, "Delete saved list item %d", index);
-                SsidManager::GetInstance().RemoveSsid(index);
+                if (!SsidManager::GetInstance().RemoveSsid(index)) {
+                    httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Wi-Fi profile change failed");
+                    return ESP_FAIL;
+                }
             }
             // send {}
             httpd_resp_set_type(req, "application/json");
@@ -329,154 +337,36 @@ void WifiConfigurationAp::StartWebServer()
         .method = HTTP_GET,
         .handler = [](httpd_req_t *req) -> esp_err_t {
             auto *this_ = static_cast<WifiConfigurationAp *>(req->user_ctx);
-            std::lock_guard<std::mutex> lock(this_->mutex_);
-
-            // Check if 5G is supported
-            bool support_5g = false;
 #ifdef CONFIG_SOC_WIFI_SUPPORT_5G
-            support_5g = true;
+            constexpr bool support_5g = true;
+#else
+            constexpr bool support_5g = false;
 #endif
-
-            // Send the scan results as JSON
-            httpd_resp_set_type(req, "application/json");
-            httpd_resp_set_hdr(req, "Connection", "close");
-            httpd_resp_sendstr_chunk(req, "{\"support_5g\":");
-            httpd_resp_sendstr_chunk(req, support_5g ? "true" : "false");
-            httpd_resp_sendstr_chunk(req, ",\"aps\":[");
-            for (int i = 0; i < this_->ap_records_.size(); i++) {
-                ESP_LOGI(TAG, "SSID: %s, RSSI: %d, Authmode: %d",
-                    (char *)this_->ap_records_[i].ssid, this_->ap_records_[i].rssi, this_->ap_records_[i].authmode);
-                char buf[128];
-                snprintf(buf, sizeof(buf), "{\"ssid\":\"%s\",\"rssi\":%d,\"authmode\":%d}",
-                    (char *)this_->ap_records_[i].ssid, this_->ap_records_[i].rssi, this_->ap_records_[i].authmode);
-                httpd_resp_sendstr_chunk(req, buf);
-                if (i < this_->ap_records_.size() - 1) {
-                    httpd_resp_sendstr_chunk(req, ",");
-                }
-            }
-            httpd_resp_sendstr_chunk(req, "]}");
-            httpd_resp_sendstr_chunk(req, NULL);
-            return ESP_OK;
+            return SendPortalJson(req, wifi_portal::ScanList(this_->GetAccessPoints(), support_5g));
         },
         .user_ctx = this
     };
     ESP_ERROR_CHECK(httpd_register_uri_handler(server_, &scan));
 
-    // Register the form submission
     httpd_uri_t form_submit = {
         .uri = "/submit",
         .method = HTTP_POST,
-        .handler = [](httpd_req_t *req) -> esp_err_t {
-            char *buf;
-            size_t buf_len = req->content_len;
-            if (buf_len > 1024) { // 限制最大请求体大小
-                httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Payload too large");
-                return ESP_FAIL;
-            }
-
-            buf = (char *)malloc(buf_len + 1);
-            if (!buf) {
-                httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to allocate memory");
-                return ESP_FAIL;
-            }
-
-            int ret = httpd_req_recv(req, buf, buf_len);
-            if (ret <= 0) {
-                free(buf);
-                if (ret == HTTPD_SOCK_ERR_TIMEOUT) {
-                    httpd_resp_send_408(req);
-                } else {
-                    httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Failed to receive request");
-                }
-                return ESP_FAIL;
-            }
-            buf[ret] = '\0';
-
-            // 解析 JSON 数据
-            cJSON *json = cJSON_Parse(buf);
-            free(buf);
-            if (!json) {
-                httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
-                return ESP_FAIL;
-            }
-
-            cJSON *ssid_item = cJSON_GetObjectItemCaseSensitive(json, "ssid");
-            cJSON *password_item = cJSON_GetObjectItemCaseSensitive(json, "password");
-
-            if (!cJSON_IsString(ssid_item) || (ssid_item->valuestring == NULL) || (strlen(ssid_item->valuestring) >= 33)) {
-                cJSON_Delete(json);
-                httpd_resp_send(req, "{\"success\":false,\"error\":\"Invalid SSID\"}", HTTPD_RESP_USE_STRLEN);
-                return ESP_OK;
-            }
-
-            std::string ssid_str = ssid_item->valuestring;
-            std::string password_str = "";
-            if (cJSON_IsString(password_item) && (password_item->valuestring != NULL) && (strlen(password_item->valuestring) < 65)) {
-                password_str = password_item->valuestring;
-            }
-
-            // 获取当前对象
-            auto *this_ = static_cast<WifiConfigurationAp *>(req->user_ctx);
-            if (!this_->ConnectToWifi(ssid_str, password_str)) {
-                cJSON_Delete(json);
-                httpd_resp_send(req, "{\"success\":false,\"error\":\"Failed to connect to the Access Point\"}", HTTPD_RESP_USE_STRLEN);
-                return ESP_OK;
-            }
-
-            this_->Save(ssid_str, password_str);
-            cJSON_Delete(json);
-            // 设置成功响应
-            httpd_resp_set_type(req, "application/json");
-            httpd_resp_set_hdr(req, "Connection", "close");
-            httpd_resp_send(req, "{\"success\":true}", HTTPD_RESP_USE_STRLEN);
-            return ESP_OK;
-        },
+        .handler = WifiConfigurationAp::HandleSubmit,
         .user_ctx = this
     };
     ESP_ERROR_CHECK(httpd_register_uri_handler(server_, &form_submit));
 
-    // Register the done.html page
-    httpd_uri_t done_html = {
-        .uri = "/done.html",
-        .method = HTTP_GET,
-        .handler = [](httpd_req_t *req) -> esp_err_t {
-            httpd_resp_set_hdr(req, "Connection", "close");
-            httpd_resp_send(req, done_html_start, strlen(done_html_start));
-            return ESP_OK;
-        },
-        .user_ctx = NULL
-    };
-    ESP_ERROR_CHECK(httpd_register_uri_handler(server_, &done_html));
-
-    // Register the exit endpoint - exits config mode without rebooting
+    // An explicit exit is optional. The normal submit path signals the same owner.
     httpd_uri_t exit_config = {
         .uri = "/exit",
         .method = HTTP_POST,
         .handler = [](httpd_req_t *req) -> esp_err_t {
-            auto* this_ = static_cast<WifiConfigurationAp*>(req->user_ctx);
-            
-            // 设置响应头，防止浏览器缓存
+            auto *ap = static_cast<WifiConfigurationAp *>(req->user_ctx);
             httpd_resp_set_type(req, "application/json");
-            httpd_resp_set_hdr(req, "Cache-Control", "no-store");
-            httpd_resp_set_hdr(req, "Connection", "close");
-            // 发送响应
-            httpd_resp_send(req, "{\"success\":true}", HTTPD_RESP_USE_STRLEN);
-            
-            // 延迟调用回调，确保HTTP响应完全发送
-            ESP_LOGI(TAG, "Exiting config mode...");
-            xTaskCreate([](void *ctx) {
-                // 等待200ms确保HTTP响应完全发送
-                vTaskDelay(pdMS_TO_TICKS(200));
-                
-                auto* self = static_cast<WifiConfigurationAp*>(ctx);
-                // 通知回调退出配网模式
-                if (self->on_exit_requested_) {
-                    self->on_exit_requested_();
-                }
-                vTaskDelete(NULL);
-            }, "exit_config_task", 4096, this_, 5, NULL);
-            
-            return ESP_OK;
+            const esp_err_t sent = httpd_resp_sendstr(req, "{\"success\":true}");
+            if (ap->on_exit_requested_)
+                ap->on_exit_requested_();
+            return sent;
         },
         .user_ctx = this
     };
@@ -685,49 +575,15 @@ void WifiConfigurationAp::StartWebServer()
 
 bool WifiConfigurationAp::ConnectToWifi(const std::string &ssid, const std::string &password)
 {
-    if (ssid.empty()) {
-        ESP_LOGE(TAG, "SSID cannot be empty");
+    wifi_config_t wifi_config = {};
+    if (!wifi_credentials::CopyToStation(wifi_config.sta, ssid, password))
         return false;
-    }
-    
-    if (ssid.length() > 32) {  // WiFi SSID 最大长度
-        ESP_LOGE(TAG, "SSID too long");
-        return false;
-    }
+    wifi_config.sta.scan_method = WIFI_ALL_CHANNEL_SCAN;
+    wifi_config.sta.failure_retry_cnt = 1;
 
-    if (password.length() > 64) {
-        ESP_LOGE(TAG, "Password too long");
-        return false;
-    }
-    
     is_connecting_ = true;
 
-    // Upper-level retry loop with delay between attempts.
-    //
-    // Background: in APSTA mode the captive-portal session is on the AP
-    // beacon channel (typically 1), and the target home AP is on some
-    // other channel (e.g. 10). When ConnectToWifi triggers, esp-wifi
-    // performs a Channel Switch Announcement to move both AP and STA to
-    // the home AP's channel, then immediately issues an association
-    // request. The home AP frequently responds with "Association
-    // Response status=30 (Refused Temporarily)" + a Comeback Time in
-    // TUs (= ~1.1s for Buffalo routers, observed) because its own
-    // state hasn't settled yet for the new station.
-    //
-    // The ESP-IDF wifi driver's failure_retry_cnt issues re-association
-    // attempts back-to-back (within a few ms) and does not honor the
-    // 802.11 Comeback Time, so every driver-internal retry is refused
-    // the same way and the first ConnectToWifi() call returns failure.
-    // By the time the user clicks "submit" a second time (~8s later)
-    // the AP has fully settled and association succeeds on the first
-    // try — which is why users observe "it always fails the first
-    // time, then works".
-    //
-    // Fix: when an attempt fails, wait long enough for the comeback
-    // timer + AP state settle (~3s is safe), then retry once. This
-    // produces a single user-visible success path instead of forcing
-    // the user to resubmit. The driver-internal retries (set below
-    // via failure_retry_cnt) are kept as a secondary safety net.
+    // After the APSTA channel switch, allow the target AP time to accept reassociation.
     constexpr int kMaxAttempts = 2;
     constexpr int kRetryDelayMs = 3000;
     bool connected = false;
@@ -743,13 +599,6 @@ bool WifiConfigurationAp::ConnectToWifi(const std::string &ssid, const std::stri
 
         xEventGroupClearBits(event_group_, WIFI_CONNECTED_BIT | WIFI_FAIL_BIT);
         esp_wifi_scan_stop();
-
-        wifi_config_t wifi_config;
-        bzero(&wifi_config, sizeof(wifi_config));
-        strlcpy((char *)wifi_config.sta.ssid, ssid.c_str(), 32);
-        strlcpy((char *)wifi_config.sta.password, password.c_str(), 64);
-        wifi_config.sta.scan_method = WIFI_ALL_CHANNEL_SCAN;
-        wifi_config.sta.failure_retry_cnt = 1;
 
         ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
         auto ret = esp_wifi_connect();
@@ -811,10 +660,10 @@ bool WifiConfigurationAp::ConnectToWifi(const std::string &ssid, const std::stri
     }
 }
 
-void WifiConfigurationAp::Save(const std::string &ssid, const std::string &password)
+bool WifiConfigurationAp::Save(const std::string &ssid, const std::string &password)
 {
     ESP_LOGI(TAG, "Save SSID %s %d", ssid.c_str(), ssid.length());
-    SsidManager::GetInstance().AddSsid(ssid, password);
+    return SsidManager::GetInstance().AddSsid(ssid, password);
 }
 
 void WifiConfigurationAp::OnExitRequested(std::function<void()> callback)
@@ -892,22 +741,13 @@ void WifiConfigurationAp::SmartConfigEventHandler(void *arg, esp_event_base_t ev
             ESP_LOGI(TAG, "Got SmartConfig credentials");
             smartconfig_event_got_ssid_pswd_t *evt = (smartconfig_event_got_ssid_pswd_t *)event_data;
 
-            char ssid[32], password[64];
-            memcpy(ssid, evt->ssid, sizeof(evt->ssid));
-            memcpy(password, evt->password, sizeof(evt->password));
-            ESP_LOGI(TAG, "SmartConfig SSID: %s, Password: %s", ssid, password);
-            // 尝试连接WiFi会失败，故不连接
-            self->Save(ssid, password);
-            // 延迟退出配网模式
-            xTaskCreate([](void *ctx){
-                ESP_LOGI(TAG, "Exiting config mode in 1 second");
-                vTaskDelay(pdMS_TO_TICKS(1000));
-                auto* self = static_cast<WifiConfigurationAp*>(ctx);
-                if (self->on_exit_requested_) {
-                    self->on_exit_requested_();
-                }
-                vTaskDelete(NULL);
-            }, "exit_config_task", 4096, self, 5, NULL);
+            const char *ssid = reinterpret_cast<const char *>(evt->ssid);
+            const char *password = reinterpret_cast<const char *>(evt->password);
+            if (!self->Save(std::string(ssid, strnlen(ssid, sizeof(evt->ssid))),
+                            std::string(password, strnlen(password, sizeof(evt->password)))))
+                break;
+            if (self->on_exit_requested_)
+                self->on_exit_requested_();
             break;
         }
         case SC_EVENT_SEND_ACK_DONE:

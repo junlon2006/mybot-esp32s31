@@ -236,8 +236,8 @@ static void volume_destroy(void *context) {
     assert(context == &hardware_volume);
 }
 
-static const mybot_audio_capture_ops_t capture_ops = {capture_init, capture_start,   capture_read,
-                                                      capture_stop, capture_destroy, capture_reset};
+static const mybot_audio_capture_ops_t capture_ops = {
+    capture_init, capture_start, capture_read, capture_stop, capture_destroy, capture_reset, NULL};
 static int usb_init(void **context, int rate, int channels, int bits) {
     assert(rate == 16000 && channels == 1 && bits == 16);
     *context = &usb_active;
@@ -268,8 +268,8 @@ static void usb_destroy(void *context) {
     assert(context == &usb_active && !usb_active);
     usb_destroyed++;
 }
-static const mybot_audio_capture_ops_t usb_ops = {usb_init, usb_start,   usb_read,
-                                                  usb_stop, usb_destroy, NULL};
+static const mybot_audio_capture_ops_t usb_ops = {usb_init,    usb_start, usb_read, usb_stop,
+                                                  usb_destroy, NULL,      NULL};
 static const mybot_audio_playback_ops_t playback_ops = {
     playback_init, playback_start, playback_write, playback_stop, playback_destroy};
 static int usb_playback_init(void **context, int rate, int channels, int bits) {
@@ -1010,6 +1010,50 @@ static int start_usb(void) {
         .send_audio = send_audio, .on_audio_error = audio_error, .user_data = &pipeline};
     return mybot_media_pipeline_start_usb(&pipeline, &callbacks);
 }
+
+static bool usb_input_enabled;
+static unsigned usb_reset_calls;
+
+static void set_usb_input_enabled(void *context, bool enabled) {
+    assert(context == &usb_active);
+    if (enabled)
+        assert(pipeline.rtc_connected && !pipeline.paused);
+    usb_input_enabled = enabled;
+}
+
+static int reset_usb_input(void *context) {
+    assert(context == &usb_active && current_queue == CAPTURE_QUEUE && !usb_input_enabled);
+    ++usb_reset_calls;
+    return 0;
+}
+
+static void test_usb_input_admission_across_fences(void) {
+    reset_usb();
+    mybot_audio_capture_ops_t capture = usb_ops;
+    capture.reset = reset_usb_input;
+    capture.set_input_enabled = set_usb_input_enabled;
+    platform.audio_usb_capture = &capture;
+    usb_input_enabled = false;
+    usb_reset_calls = 0;
+    assert(start_usb() == 0);
+    assert(mybot_media_pipeline_flush_session(&pipeline) == 0 && !usb_input_enabled);
+    mybot_media_pipeline_set_rtc_connected(&pipeline, true);
+    assert(usb_input_enabled);
+
+    assert(mybot_media_pipeline_set_paused(&pipeline, true) == 0 && !usb_input_enabled);
+    mybot_media_pipeline_set_rtc_connected(&pipeline, false);
+    assert(mybot_media_pipeline_flush_session(&pipeline) == 0);
+    mybot_media_pipeline_set_rtc_connected(&pipeline, true);
+    assert(!usb_input_enabled);
+    fail_pb_start = true;
+    assert(mybot_media_pipeline_set_paused(&pipeline, false) < 0 && !usb_input_enabled);
+    fail_pb_start = false;
+    assert(mybot_media_pipeline_set_paused(&pipeline, false) == 0 && usb_input_enabled);
+    assert(usb_reset_calls == 5);
+    finish();
+    tests++;
+}
+
 static void test_usb_pipeline_zero_reference_and_unity_gain(void) {
     reset_usb();
     assert(start_usb() == 0);
@@ -1257,6 +1301,7 @@ static void test_capture_reset_failure_and_known_fault_recovery(void) {
 }
 
 int main(void) {
+    test_usb_input_admission_across_fences();
     test_capture_dsp_flush_boundaries();
     test_capture_reset_failure_and_known_fault_recovery();
     test_reconnect_flushes_both_routes_before_ready();

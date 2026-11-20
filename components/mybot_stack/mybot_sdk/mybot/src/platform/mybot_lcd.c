@@ -54,23 +54,6 @@ int mybot_lcd_show_content(mybot_lcd_t *lcd, const mybot_lcd_content_t *content)
     return render_content(lcd, content);
 }
 
-int mybot_lcd_show_pair_code(mybot_lcd_t *lcd, const char *pair_code) {
-    if (!pair_code) {
-        return -1;
-    }
-
-    size_t len = strlen(pair_code);
-    if (len == 0 || len >= MYBOT_LCD_PAIR_CODE_CAPACITY) {
-        return -1;
-    }
-
-    mybot_lcd_content_t content;
-    memset(&content, 0, sizeof(content));
-    content.screen = MYBOT_LCD_SCREEN_PAIR_CODE;
-    memcpy(content.pair_code, pair_code, len + 1);
-    return mybot_lcd_show_content(lcd, &content);
-}
-
 void mybot_lcd_deinit(mybot_lcd_t *lcd) {
     if (!lcd || !lcd->active) {
         return;

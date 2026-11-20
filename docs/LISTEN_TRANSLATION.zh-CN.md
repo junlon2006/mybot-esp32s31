@@ -26,15 +26,9 @@
 
 ## 构建和烧录
 
-开发只构建中文，所有本地增量编译固定使用 `build/mosaico-v1.2`，生成配置固定为
-`build/mosaico-v1.2/sdkconfig`：
+按[中文固件开发步骤](../CONTRIBUTING.zh-CN.md#验证)完成配置和构建，在同一个 IDF 环境中烧录：
 
 ```sh
-. /path/to/esp-idf/export.sh
-idf.py --preview -B build/mosaico-v1.2 \
-  -DMYBOT_MOSAICO_UAC_TEST=OFF \
-  -DSDKCONFIG=build/mosaico-v1.2/sdkconfig \
-  -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;ci/ptime60.defaults" build
 idf.py --preview -B build/mosaico-v1.2 -p DOWNLOAD_PORT flash
 # 启动后使用运行时 CDC 端口查看日志
 idf.py --preview -B build/mosaico-v1.2 -p RUNTIME_PORT monitor
@@ -56,7 +50,7 @@ AI QoS 默认关闭（`CONFIG_MYBOT_AI_QOS=n`），可在 menuconfig
 
 ## 验收
 
-用户确认了 40 行字幕显示及 PSRAM 栈修正版（`e279926`）的基础双向会议。主机测试验证路由／父 ID／清理／回调所有权、字幕归并和界面；编译验证 RISC-V 链接与配置。后续 review 修复尚未重新真机验收。实机需要分别验证媒体与面对面的真实服务授权、两个方向译音、指定 UID 订阅、单 RTM 接收双 Agent 字幕、方向快速切换与闲置一路、RTM 原文/译文消息与流式修订、长字幕/历史滚动、播放同时讲话时 Local／Cloud AEC 的抑制与双讲效果、音量变化、连接中取消、断网与反复启停。既有普通对话音频实测不能替代这些结果。
+各场景的实测版本及路由、字幕、回声消除和重连的验收范围见[验证矩阵](VALIDATION.md)。
 
 ## 启动排查与恢复
 

@@ -12,4 +12,4 @@ MyBot 公开音频契约为 16 kHz、mono、signed 16-bit PCM，长度使用帧�
 
 S31 RTSA 使用 **60 ms** jitter-buffer 帧，区别于源 Ogg 历史编码的 20 ms Opus 包，也区别于驱动 sink 分块。提供匹配 RTSA 之前，20/40 ms 配置会被拒绝。
 
-用户已确认独立 UAC 录放，以及 PSRAM 栈修正版（`e279926`）的基础双向会议互译。此后的恢复修复只有 host／构建结果。详细参考/麦克风路由、量化音质、回声调优和长稳不在本轮范围。host 测试位于 `tests/codec_audio`、`tests/pcm_playback_buffer`，结果见[验证记录](s31-validation.md)。总线引脚与操作见[板卡文档](esp-mosaico-v1.2.zh-CN.md)。
+宿主测试位于 `tests/codec_audio` 和 `tests/pcm_playback_buffer`。设备验收范围见[验证矩阵](VALIDATION.md)。总线引脚与操作见[板卡文档](esp-mosaico-v1.2.zh-CN.md)。

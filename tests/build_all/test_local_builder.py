@@ -178,18 +178,91 @@ class LocalBuilderTests(unittest.TestCase):
             else:
                 self.assertTrue(all(not arg.startswith("-D") for arg in args))
             events.append("merge-bin" if "merge-bin" in args else args[-1])
+            if "merge-bin" in args:
+                Path(args[-1]).write_bytes(b"new image")
+        def package(args, **kwargs):
+            events.append("package")
+            image = Path(args[-1])
+            self.assertNotEqual(image.parent, self.output)
+            for suffix in builder.DELIVERY_SUFFIXES[1:]:
+                image.with_suffix(suffix).write_bytes(b"verified")
         with (
             mock.patch.object(builder, "run", side_effect=idf_run),
             mock.patch.object(builder, "configure_local_variant",
                               side_effect=lambda *args: events.append("configure")) as configure,
-            mock.patch.object(builder.subprocess, "run",
-                              side_effect=lambda *args, **kwargs: events.append("package")),
+            mock.patch.object(builder.subprocess, "run", side_effect=package),
         ):
             image = builder.build_variant("idf.py", "zh-CN", self.build, self.output,
                                           False, "local", local=True)
         self.assertEqual(events, ["reconfigure", "configure", "build", "size", "merge-bin", "package"])
         self.assertEqual(configure.call_args.args[2], self.build / "sdkconfig")
         self.assertEqual(image, self.output / "esp-mosaico-v1.2-zh-CN.bin")
+
+    def test_publish_switches_five_files_together_across_interruption_and_migration(self) -> None:
+        name = builder.DEFAULT_BOARD + "-zh-CN"
+        self.output.mkdir()
+        files = [self.output / (name + suffix) for suffix in builder.DELIVERY_SUFFIXES]
+        def fill(directory, data):
+            for file in files:
+                (directory / file.name).write_bytes(data)
+        def contents():
+            return [f.read_bytes() for f in files]
+        fill(self.output, b"legacy")
+
+        with self.assertRaises(KeyboardInterrupt):
+            with builder._staged_delivery(self.output, name, False) as stage:
+                (stage / files[0].name).write_bytes(b"incomplete")
+                raise KeyboardInterrupt
+        self.assertEqual(contents(), [b"legacy"] * len(files))
+        self.assertFalse(any(f.is_symlink() for f in files))
+
+        real_set = builder._set_link
+        def interrupt_migration(target, link):
+            if link == files[2]:
+                raise KeyboardInterrupt
+            real_set(target, link)
+        with mock.patch.object(builder, "_set_link", side_effect=interrupt_migration):
+            with self.assertRaises(KeyboardInterrupt):
+                with builder._staged_delivery(self.output, name, False) as stage:
+                    fill(stage, b"partial migration")
+        self.assertTrue(files[0].is_symlink() and not files[2].is_symlink())
+        self.assertEqual(contents(), [b"legacy"] * len(files))
+
+        with builder._staged_delivery(self.output, name, False) as stage:
+            fill(stage, b"first")
+        previous = files[0].resolve().parent
+        def interrupt_switch(target, link):
+            self.assertEqual(link.name, "current")
+            raise KeyboardInterrupt
+        with mock.patch.object(builder, "_set_link", side_effect=interrupt_switch):
+            with self.assertRaises(KeyboardInterrupt):
+                with builder._staged_delivery(self.output, name, False) as stage:
+                    fill(stage, b"unpublished")
+        self.assertEqual(contents(), [b"first"] * len(files))
+        with builder._staged_delivery(self.output, name, False) as stage:
+            fill(stage, b"second")
+        self.assertEqual(contents(), [b"second"] * len(files))
+        self.assertTrue(all(f.resolve().parent == files[0].resolve().parent for f in files))
+        self.assertTrue(all((previous / f.name).read_bytes() == b"first" for f in files))
+
+    def test_publisher_rejects_retargeted_version_pointer(self) -> None:
+        name = builder.DEFAULT_BOARD + "-zh-CN"
+        self.output.mkdir()
+        with builder._staged_delivery(self.output, name, False) as stage:
+            for suffix in builder.DELIVERY_SUFFIXES:
+                (stage / (name + suffix)).write_bytes(b"safe")
+        current = builder._delivery_store(self.output, name) / "current"
+        version = current.resolve()
+        current.unlink()
+        current.symlink_to(self.workspace)
+        with self.assertRaisesRegex(RuntimeError, "invalid delivery pointer"):
+            builder.validate_variant_outputs(self.output, name)
+        current.unlink()
+        redirect = "version-" + "0" * 32
+        (current.parent / redirect).symlink_to(version)
+        current.symlink_to(redirect)
+        with self.assertRaises(OSError):
+            builder.validate_variant_outputs(self.output, name)
 
     def test_output_symlinks_hardlinks_and_nonregular_entries_fail_before_idf(self) -> None:
         self.output.mkdir()
