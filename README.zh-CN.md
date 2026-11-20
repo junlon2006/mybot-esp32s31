@@ -43,12 +43,7 @@ Mosaico 会议互译将电脑原声的译音送往设备喇叭，并通过 USB �
 480×480 CO5300 屏和 CST9220 触摸。沿用 `partitions/v2/16m.csv`；128 MB NAND 暂不使用。
 视频不启用。
 
-用户确认了 PSRAM 栈修正版（`e279926`）的
-基础 USB 双向会议互译，以及 40 行刷新缓冲的正常字幕显示；触摸导航及启动请求有实机日志。
-独立 UAC 麦克风／喇叭测试另有通过记录。
-此后的 review 修复已有 host 测试和中文构建结果，尚未重新进行真机验收。
-端侧／Cloud AEC 音质、重连／长稳、USB 电流及修订后的 VCC 软启动仍需单独验证。操作见[板卡说明](docs/esp-mosaico-v1.2.zh-CN.md)，
-范围见[验证记录](docs/s31-validation.md)。
+操作步骤见[板卡说明](docs/esp-mosaico-v1.2.zh-CN.md)。
 
 ## 构建
 
@@ -124,10 +119,7 @@ Mosaico 翻译固件通过 Type-C 提供 UAC2 声卡与 CDC 日志串口。会�
 
 ## 验证
 
-构建覆盖、已记录的真机结果和未支持能力统一维护在[验证记录](docs/s31-validation.md)。
-本地开发构建中文固件；CI 构建中英文 Local AEC 及中文 Cloud AEC，并验证链接和交付元数据。记录分别列出本地构建、
-远端 CI 和真机结果。CI 构建和宿主测试不能证明音质、屏幕行为、上电时序、
-Wi-Fi 恢复或长稳表现。
+[验证矩阵](docs/VALIDATION.md)列出各项实测版本、证据与待测项。CI 构建中英文 Local AEC 和中文 Cloud AEC 固件。
 
 ## 文档
 

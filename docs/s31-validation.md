@@ -5,13 +5,7 @@ the revision tested at that time; entries for removed profiles are retained only
 historical validation evidence and do not describe supported hardware. Use the
 build-bound manifests and checksums beside delivered images for their binary identity.
 
-This records local build/host validation and separately attributed hardware feedback.
-The user confirmed diagnostic USB microphone/speaker audio, normal 40-row caption
-display and basic bidirectional meeting translation after the PSRAM-stack revision.
-Touch navigation and start operation also have device-log evidence. These reports
-precede this review-fix series and do not validate its recovery, key, USB identity or
-power changes. Quantitative audio quality, AEC, enumeration/reconnect stability,
-power/current measurements and endurance still require separate hardware results.
+See the [current validation matrix](VALIDATION.md) for hardware results and open tests.
 
 ## 2026-11-08 single-board convergence — host only
 

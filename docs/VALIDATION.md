@@ -1,16 +1,14 @@
-# Validation index
+# ESP-Mosaico CoreBoard V1.2 validation
 
-The maintained record for this dedicated S31 project is [s31-validation.md](s31-validation.md). It separates source/host checks, ESP-IDF target builds and user-reported physical-board results.
+Use this matrix to find the last device evidence for each feature. A firmware build or a passing host test belongs in the [dated engineering record](s31-validation.md). Add a hardware result here when a particular revision is tested on a board.
 
-User feedback confirms standalone USB recording/playback, normal 40-row caption
-display and basic bidirectional meeting translation after the PSRAM-stack revision
-(`e279926`). Touch/start requests also have device logs. Later review fixes have
-host/build results only. Detailed subscription/language/pause/recovery behavior,
-acoustic quality, Cloud AEC, reconnect/endurance, USB current and VCC ramp timing
-require separate hardware results. Build, host-test and delivery results belong in
-the maintained record, with the tested revision and scope. A local build does not
-establish remote CI execution or translation behavior on hardware.
+| Feature | Latest device evidence | What still needs a device or measurement |
+| --- | --- | --- |
+| Standalone UAC diagnostic | On Nov 5 the user confirmed microphone recording and audible speaker playback on the diagnostic with the corrected HS feedback interval. [Diagnostic record](s31-validation.md#2026-11-05-mosaico-v12-minimum-usb-audio-test) | Clock drift and endurance over longer sessions |
+| Production captions and touch | The user confirmed the stripe disappeared with 40-row buffers on the Nov 5 build. Device logs show touch navigation and delivery of the start request. [Display](s31-validation.md#2026-11-05-caption-stripe-comparison) · [Touch/start](s31-validation.md#2026-11-05-mosaico-session-persistence-diagnostics) | Later glyph, language, input and recovery changes on the panel |
+| Production USB meeting | The user confirmed PC audio translated to Chinese on the board speaker, then reported bidirectional translation passing on `e279926`. [LISTEN](s31-validation.md#2026-11-06-user-confirmation-of-meeting-listening) · [Bidirectional](s31-validation.md#2026-11-06-rtc-initialization-and-psram-task-stacks) | Pause/resume and RTC reconnect on the latest firmware. The [USB capture regression](s31-validation.md#2026-11-20-meeting-usb-capture-across-pause-and-rtc-readiness) used simulated USB transfers. |
+| Translation routes and audio quality | Media, face-to-face and meeting routes have source, host and target-build coverage. The meeting result above covers basic end-to-end use. | Service authorization, language switching, per-direction subscription and captions, double-talk, Local/Cloud AEC quality and endurance |
+| Provisioning, binding and session recovery | The user reported four same-name APs on the older firmware. [SSID fix](s31-validation.md#2026-11-12-short-provisioning-ap-identity-from-the-complete-sta-mac) · [Startup reconnect](s31-validation.md#2026-11-20-wi-fi-reconnect-during-sdk-initialization) | Four-device SSID check, uninterrupted portal completion, binding and reconnect on the current build, and service-side binding after factory reset |
+| USB power and board startup | Descriptor checks cover the 500 mA declaration. Host tests cover the VCC ramp sequence. [USB power](s31-validation.md#review-fix-12-explicit-usb-bus-power-budget) · [VCC](s31-validation.md#review-fix-13-mosaico-revision-guard-and-vcc-ramp) | Physical current, inrush, VCC waveform and peripheral startup under load |
 
-The old multi-board S3 matrix and removed S31 profiles are retired. Historical
-baseline changes remain under [archive](archive/esp32-s3-baseline-changelog.md);
-they do not describe supported hardware.
+For each new result, record the revision or image hash, board, test conditions, observed result and remaining limits in the dated record. Keep setup instructions in the [board guide](esp-mosaico-v1.2.zh-CN.md). Earlier targets are documented in the [S3 archive](archive/esp32-s3-baseline-changelog.md).

@@ -20,9 +20,5 @@ Tracked Ogg prompts/digits are build inputs. CMake calls ffmpeg to generate 16 k
 
 The S31 RTSA package uses **60 ms** jitter-buffer frames. It is separate from the historical 20 ms Opus encoding of the source Ogg assets and from the driver's sink-write chunk size. Configurations of 20/40 ms are rejected without a matching RTSA package.
 
-The user confirmed standalone UAC recording/playback and basic bidirectional meeting
-translation after the PSRAM-stack revision (`e279926`). Later recovery fixes have
-host/build coverage only. Detailed reference/microphone routing, quantitative quality,
-echo tuning and endurance remain outside this update. Host coverage lives in
-`tests/codec_audio` and `tests/pcm_playback_buffer`; actual results are recorded in
-[validation](s31-validation.md). For bus pins and controls see [the board guide](esp-mosaico-v1.2.zh-CN.md).
+Host coverage lives in `tests/codec_audio` and `tests/pcm_playback_buffer`.
+See the [validation matrix](VALIDATION.md) for device results. For bus pins and controls see [the board guide](esp-mosaico-v1.2.zh-CN.md).

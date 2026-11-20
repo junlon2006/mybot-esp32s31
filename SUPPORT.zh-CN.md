@@ -14,6 +14,6 @@
 `event=audio_bus` 日志，明确场景及故障方向；会议问题同时说明电脑输入／输出选择和
 USB 收发计数。构建问题说明 ffmpeg 及 RTSA 包版本／hash，无需上传私有归档。
 
-HTTP 完整正文日志可能包含认证和设备信息，分享前请删除这些值。[板卡文档](docs/esp-mosaico-v1.2.zh-CN.md)说明当前操作。[验证记录](docs/s31-validation.md)区分用户通过的会议／字幕基线、后续 host／构建修复，以及尚待验证的音质、AEC、重连／长稳与供电项目。
+HTTP 完整正文日志可能包含认证和设备信息，分享前请删除这些值。[板卡文档](docs/esp-mosaico-v1.2.zh-CN.md)说明当前操作。各功能的实测版本见[验证矩阵](docs/VALIDATION.md)。
 
 本项目不提供支持 SLA。Agora SDK 授权或云服务问题请联系对应 Agora 支持渠道。
