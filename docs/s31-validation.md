@@ -1692,3 +1692,38 @@ minimum OTA free 367,632 bytes. Both preserve 60 ms, pinned RTSA, local RISC-V A
 and no video runtime. Each produced the five local delivery files in `releases/`;
 the saved configuration and active build are English after the batch. No device
 was flashed and no remote CI run is claimed.
+
+## 2026-11-12 Short provisioning AP identity from the complete STA MAC
+
+The user reported identical provisioning AP names on four flashed devices. The
+platform previously formatted only the first two STA MAC bytes, so devices with
+the same vendor prefix received the same name. The requested `mybot-xxxx` format
+now uses CRC-16/CCITT-FALSE of all six bytes returned by
+`esp_read_mac(..., ESP_MAC_WIFI_STA)`: polynomial 0x1021, initial value 0xffff,
+no reflection or final XOR. The suffix is four lowercase hexadecimal digits,
+including leading zeroes. The same STA MAC retains its name across provisioning
+sessions. The 16-bit space reduces shared-prefix collisions without guaranteeing
+global uniqueness.
+
+The production-source Wi-Fi suite passes all 18 cases with UBSan. It now compiles
+both the platform and manager and checks configuration, advertised AP name and UI
+getter together. Synthetic fixed vectors from Python `binascii.crc_hqx` cover four
+same-prefix devices, all six input-byte positions, lowercase/leading zeroes,
+repeated provisioning, insufficient output capacity and MAC-read failure/retry.
+With the first four MAC bytes fixed, all 65,536 trailing-byte combinations produce
+different IDs; this result is limited to that fixed-prefix domain. A countercheck
+using the old naming flow fails all eight AP-publication cases while preserving
+the eight lifecycle and two CRC-only results. Network/SNTP bootstrap, all seven
+application stop/reprovision fault scenarios and 19 input/board scenarios pass.
+Changed sources pass clang-format 18.1.8, SPDX, shell syntax and whitespace checks.
+These are host results; the new AP broadcasts, screen names and four-device
+behavior still need hardware confirmation. No device was flashed by the agent.
+
+Direct English and Chinese ESP-IDF v6.1 preview builds, size and delivery/config/map
+checks pass in `build/mosaico-v1.2`. English application: 4,875,312 bytes, minimum
+OTA free 367,568 bytes. Chinese application: 4,794,368 bytes, minimum OTA free
+448,512 bytes. Both retain Local AEC, 60 ms, local RISC-V AOSL, the pinned RTSA
+and no video runtime. Both merged images and their four metadata/license files
+are refreshed in `releases/`, use flash offset `0x0` and share the same source-input
+snapshot. Manifests mark the source changes as uncommitted. Saved configuration
+and the active build remain Chinese.

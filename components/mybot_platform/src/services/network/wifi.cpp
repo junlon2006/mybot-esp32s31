@@ -18,6 +18,19 @@
 
 #define TAG "mybot_wifi"
 
+extern "C" uint16_t mybot_wifi_provisioning_id(const uint8_t mac[6]) {
+    // CRC-16/CCITT-FALSE: polynomial 0x1021, initial value 0xffff, no reflection
+    // or final XOR. Mix the vendor prefix and device bytes into the short ID.
+    uint16_t crc = 0xffff;
+    for (unsigned index = 0; index < 6; ++index) {
+        crc = static_cast<uint16_t>(crc ^ (static_cast<uint16_t>(mac[index]) << 8));
+        for (unsigned bit = 0; bit < 8; ++bit) {
+            crc = static_cast<uint16_t>((crc << 1) ^ ((crc & 0x8000U) ? 0x1021U : 0U));
+        }
+    }
+    return crc;
+}
+
 namespace {
 
 constexpr auto kStationConnectionTimeout = std::chrono::seconds(30);
@@ -255,7 +268,8 @@ extern "C" int mybot_wifi_ensure_network(const char *device_id,
             return -1;
         }
         char provisioning_ssid[sizeof("mybot-ffff")];
-        snprintf(provisioning_ssid, sizeof(provisioning_ssid), "mybot-%02x%02x", mac[0], mac[1]);
+        std::snprintf(provisioning_ssid, sizeof(provisioning_ssid), "mybot-%04x",
+                      static_cast<unsigned>(mybot_wifi_provisioning_id(mac)));
 
         WifiManagerConfig config;
         config.ap_ssid = provisioning_ssid;
