@@ -9,5 +9,7 @@ typedef struct {
 } wifi_sta_config_t;
 typedef struct {
     uint8_t ssid[33];
+    int8_t rssi;
+    wifi_auth_mode_t authmode;
 } wifi_ap_record_t;
 #endif

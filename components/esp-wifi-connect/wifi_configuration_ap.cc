@@ -19,6 +19,7 @@
 #endif
 #include "ssid_manager.h"
 #include "wifi_credentials.h"
+#include "wifi_portal_json.h"
 #include "sdkconfig.h"
 
 #define TAG "WifiConfigurationAp"
@@ -232,6 +233,18 @@ void WifiConfigurationAp::StartAccessPoint()
     }
 }
 
+static esp_err_t SendPortalJson(httpd_req_t *req, const wifi_portal::Json &json) {
+    std::unique_ptr<char, decltype(&cJSON_free)> body(
+        json ? cJSON_PrintUnformatted(json.get()) : nullptr, cJSON_free);
+    if (!body) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to encode Wi-Fi list");
+        return ESP_FAIL;
+    }
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Connection", "close");
+    return httpd_resp_send(req, body.get(), HTTPD_RESP_USE_STRLEN);
+}
+
 void WifiConfigurationAp::StartWebServer()
 {
     // Start the web server
@@ -261,19 +274,7 @@ void WifiConfigurationAp::StartWebServer()
         .uri = "/saved/list",
         .method = HTTP_GET,
         .handler = [](httpd_req_t *req) -> esp_err_t {
-            auto ssid_list = SsidManager::GetInstance().GetSsidList();
-            std::string json_str = "[";
-            for (const auto& ssid : ssid_list) {
-                json_str += "\"" + ssid.ssid + "\",";
-            }
-            if (json_str.length() > 1) {
-                json_str.pop_back(); // Remove the last comma
-            }
-            json_str += "]";
-            httpd_resp_set_type(req, "application/json");
-            httpd_resp_set_hdr(req, "Connection", "close");
-            httpd_resp_send(req, json_str.c_str(), HTTPD_RESP_USE_STRLEN);
-            return ESP_OK;
+            return SendPortalJson(req, wifi_portal::SavedList(SsidManager::GetInstance().GetSsidList()));
         },
         .user_ctx = NULL
     };
@@ -337,34 +338,12 @@ void WifiConfigurationAp::StartWebServer()
         .method = HTTP_GET,
         .handler = [](httpd_req_t *req) -> esp_err_t {
             auto *this_ = static_cast<WifiConfigurationAp *>(req->user_ctx);
-            std::lock_guard<std::mutex> lock(this_->mutex_);
-
-            // Check if 5G is supported
-            bool support_5g = false;
 #ifdef CONFIG_SOC_WIFI_SUPPORT_5G
-            support_5g = true;
+            constexpr bool support_5g = true;
+#else
+            constexpr bool support_5g = false;
 #endif
-
-            // Send the scan results as JSON
-            httpd_resp_set_type(req, "application/json");
-            httpd_resp_set_hdr(req, "Connection", "close");
-            httpd_resp_sendstr_chunk(req, "{\"support_5g\":");
-            httpd_resp_sendstr_chunk(req, support_5g ? "true" : "false");
-            httpd_resp_sendstr_chunk(req, ",\"aps\":[");
-            for (int i = 0; i < this_->ap_records_.size(); i++) {
-                ESP_LOGI(TAG, "SSID: %s, RSSI: %d, Authmode: %d",
-                    (char *)this_->ap_records_[i].ssid, this_->ap_records_[i].rssi, this_->ap_records_[i].authmode);
-                char buf[128];
-                snprintf(buf, sizeof(buf), "{\"ssid\":\"%s\",\"rssi\":%d,\"authmode\":%d}",
-                    (char *)this_->ap_records_[i].ssid, this_->ap_records_[i].rssi, this_->ap_records_[i].authmode);
-                httpd_resp_sendstr_chunk(req, buf);
-                if (i < this_->ap_records_.size() - 1) {
-                    httpd_resp_sendstr_chunk(req, ",");
-                }
-            }
-            httpd_resp_sendstr_chunk(req, "]}");
-            httpd_resp_sendstr_chunk(req, NULL);
-            return ESP_OK;
+            return SendPortalJson(req, wifi_portal::ScanList(this_->GetAccessPoints(), support_5g));
         },
         .user_ctx = this
     };

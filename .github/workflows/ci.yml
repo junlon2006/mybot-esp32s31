@@ -194,6 +194,8 @@ jobs:
             --output-root "$GITHUB_WORKSPACE/releases"
       - name: Verify composite descriptors against pinned USB headers
         run: sh tests/mosaico_usb/run_descriptors.sh
+      - name: Check Wi-Fi portal JSON with the resolved cJSON package
+        run: sh tests/wifi_manager/run_portal_json.sh
       - name: Upload firmware
         uses: actions/upload-artifact@v4
         with:
