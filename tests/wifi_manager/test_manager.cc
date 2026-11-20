@@ -549,6 +549,9 @@ std::string WifiConfigurationAp::GetWebServerUrl() {
 
 SsidManager::SsidManager() = default;
 SsidManager::~SsidManager() = default;
+std::vector<SsidItem> SsidManager::GetSsidList() {
+    return {};
+}
 
 int main() {
     const TestCase tests[] = {

@@ -133,7 +133,8 @@ header under the retained MIT license: synchronous lifecycle operations serializ
 on a separate lock, while callbacks and published-state queries use a short state
 lock. Driver teardown never holds the state lock while joining IDF event handlers
 or the provisioning HTTP server. The AP, station and credential store use the IDF fixed-field sizes for Wi-Fi
-credentials, including full-width SSIDs and keys. See `tests/wifi_manager` for deterministic host regressions.
+credentials, including full-width SSIDs and keys. Wi-Fi profile updates commit a
+single ordered NVS blob and load the legacy SSID/password keys on first migration. See `tests/wifi_manager` for deterministic host regressions.
 
 ## Mosaico V1.2 translation board
 

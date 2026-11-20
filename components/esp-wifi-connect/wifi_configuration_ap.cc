@@ -290,7 +290,10 @@ void WifiConfigurationAp::StartWebServer()
                 int index = -1;
                 sscanf(&req->uri[pos+7], "%d", &index);
                 ESP_LOGI(TAG, "Set default item %d", index);
-                SsidManager::GetInstance().SetDefaultSsid(index);
+                if (!SsidManager::GetInstance().SetDefaultSsid(index)) {
+                    httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Wi-Fi profile change failed");
+                    return ESP_FAIL;
+                }
             }
             // send {}
             httpd_resp_set_type(req, "application/json");
@@ -313,7 +316,10 @@ void WifiConfigurationAp::StartWebServer()
                 int index = -1;
                 sscanf(&req->uri[pos+7], "%d", &index);
                 ESP_LOGI(TAG, "Delete saved list item %d", index);
-                SsidManager::GetInstance().RemoveSsid(index);
+                if (!SsidManager::GetInstance().RemoveSsid(index)) {
+                    httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Wi-Fi profile change failed");
+                    return ESP_FAIL;
+                }
             }
             // send {}
             httpd_resp_set_type(req, "application/json");
@@ -423,8 +429,11 @@ void WifiConfigurationAp::StartWebServer()
                 return ESP_OK;
             }
 
-            this_->Save(ssid_str, password_str);
             cJSON_Delete(json);
+            if (!this_->Save(ssid_str, password_str)) {
+                httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to save Wi-Fi credentials");
+                return ESP_FAIL;
+            }
             // 设置成功响应
             httpd_resp_set_type(req, "application/json");
             httpd_resp_set_hdr(req, "Connection", "close");
@@ -770,10 +779,10 @@ bool WifiConfigurationAp::ConnectToWifi(const std::string &ssid, const std::stri
     }
 }
 
-void WifiConfigurationAp::Save(const std::string &ssid, const std::string &password)
+bool WifiConfigurationAp::Save(const std::string &ssid, const std::string &password)
 {
     ESP_LOGI(TAG, "Save SSID %s %d", ssid.c_str(), ssid.length());
-    SsidManager::GetInstance().AddSsid(ssid, password);
+    return SsidManager::GetInstance().AddSsid(ssid, password);
 }
 
 void WifiConfigurationAp::OnExitRequested(std::function<void()> callback)
@@ -853,8 +862,9 @@ void WifiConfigurationAp::SmartConfigEventHandler(void *arg, esp_event_base_t ev
 
             const char *ssid = reinterpret_cast<const char *>(evt->ssid);
             const char *password = reinterpret_cast<const char *>(evt->password);
-            self->Save(std::string(ssid, strnlen(ssid, sizeof(evt->ssid))),
-                       std::string(password, strnlen(password, sizeof(evt->password))));
+            if (!self->Save(std::string(ssid, strnlen(ssid, sizeof(evt->ssid))),
+                            std::string(password, strnlen(password, sizeof(evt->password)))))
+                break;
             // 延迟退出配网模式
             xTaskCreate([](void *ctx){
                 ESP_LOGI(TAG, "Exiting config mode in 1 second");

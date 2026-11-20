@@ -1,6 +1,8 @@
+/* SPDX-License-Identifier: MIT */
 #ifndef SSID_MANAGER_H
 #define SSID_MANAGER_H
 
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -10,24 +12,27 @@ struct SsidItem {
 };
 
 class SsidManager {
-public:
-    static SsidManager& GetInstance() {
+  public:
+    static SsidManager &GetInstance() {
         static SsidManager instance;
         return instance;
     }
 
-    void AddSsid(const std::string& ssid, const std::string& password);
-    void RemoveSsid(int index);
-    void SetDefaultSsid(int index);
-    void Clear();
-    const std::vector<SsidItem>& GetSsidList() const { return ssid_list_; }
+    bool AddSsid(const std::string &ssid, const std::string &password);
+    bool RemoveSsid(int index);
+    bool SetDefaultSsid(int index);
+    bool Clear();
+    std::vector<SsidItem> GetSsidList();
 
-private:
+  private:
     SsidManager();
     ~SsidManager();
 
-    void LoadFromNvs();
-    void SaveToNvs();
+    bool LoadFromNvs();
+    bool SaveToNvs(std::vector<SsidItem> &profiles);
+
+    std::mutex mutex_;
+    bool loaded_ = false;
 
     std::vector<SsidItem> ssid_list_;
 };

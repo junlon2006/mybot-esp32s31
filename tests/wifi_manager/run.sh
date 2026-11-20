@@ -20,3 +20,8 @@ trap 'rm -r -- "$test_build_dir"' EXIT HUP INT TERM
 "${CXX:-c++}" -std=c++17 -Wall -Wextra -Werror -I"$test_dir/mocks" \
     "$test_dir/test_credentials.cc" -o "$test_build_dir/test_credentials"
 "$test_build_dir/test_credentials"
+"${CXX:-c++}" -std=c++17 -Wall -Wextra -Werror -pthread \
+    ${TEST_SANITIZE_FLAGS:--fsanitize=undefined} -I"$test_dir/mocks" \
+    -I"$repo_root/components/esp-wifi-connect/include" "$test_dir/test_profiles.cc" \
+    "$repo_root/components/esp-wifi-connect/ssid_manager.cc" -o "$test_build_dir/test_profiles"
+"$test_build_dir/test_profiles"
