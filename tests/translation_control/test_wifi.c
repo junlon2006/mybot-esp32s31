@@ -15,7 +15,9 @@ static struct {
     uintptr_t argc, args[4];
 } events[8];
 static unsigned queued, consumed;
-static bool reconnect_during_init;
+static bool reconnect_during_init, bound_on_boot;
+static unsigned codes_issued, prompts;
+static char visible_code[MYBOT_LCD_PAIR_CODE_CAPACITY];
 static mybot_lcd_screen_t screen;
 static mybot_wifi_event_handler_t notify_wifi;
 static void *wifi_context;
@@ -49,7 +51,7 @@ int mybot_kv_store_init(mybot_kv_store_t *store) {
 
 int mybot_kv_store_get(mybot_kv_store_t *store, const char *key, void *value, size_t capacity,
                        size_t *length) {
-    if (strcmp(key, DEVICE_AUTH_KEY))
+    if (!bound_on_boot || strcmp(key, DEVICE_AUTH_KEY))
         return MYBOT_ERR_NOT_FOUND;
     const device_auth_record_t auth = {.version = RECORD_VERSION,
                                        .server_base = "https://service.invalid",
@@ -72,12 +74,15 @@ aosl_timer_t aosl_mpq_set_timer(uintptr_t interval, aosl_timer_func_t callback, 
 
 static int render(void *ctx, const mybot_lcd_content_t *content) {
     screen = content->screen;
+    memcpy(visible_code, content->pair_code, sizeof(visible_code));
     return 0;
 }
 static int open_lcd(void **ctx) {
     return 0;
 }
-static const mybot_lcd_ops_t lcd_ops = {.init = open_lcd, .render = render};
+static void close_lcd(void *ctx) {
+}
+static const mybot_lcd_ops_t lcd_ops = {.init = open_lcd, .render = render, .destroy = close_lcd};
 
 static int open_wifi(void **ctx, const char *id, mybot_wifi_event_handler_t handler, void *arg) {
     notify_wifi = handler;
@@ -87,10 +92,12 @@ static int open_wifi(void **ctx, const char *id, mybot_wifi_event_handler_t hand
 }
 static const mybot_wifi_ops_t wifi_ops = {.init = open_wifi};
 
-static void initialize(bool reconnect) {
+static void initialize(bool reconnect, bool bound) {
     memset(&runtime, 0, sizeof(runtime));
     queued = consumed = 0;
     reconnect_during_init = reconnect;
+    bound_on_boot = bound;
+    codes_issued = prompts = 0;
     runtime.control_mpq = 1;
     runtime.lifecycle.network_generation = 42;
     strcpy(runtime.config.device_id, "fixture");
@@ -105,7 +112,7 @@ static void initialize(bool reconnect) {
 }
 
 static void test_reconnect_straddles_init(void) {
-    initialize(true);
+    initialize(true, true);
     dispatch(); /* Queued disconnect predates the reconnect, which is already published. */
     dispatch();
     assert(screen == MYBOT_LCD_SCREEN_READY);
@@ -124,7 +131,7 @@ static void test_reconnect_straddles_init(void) {
 }
 
 static void test_latest_disconnect_survives_init(void) {
-    initialize(false);
+    initialize(false, true);
     assert(!runtime.lifecycle.network_available && runtime.lifecycle.network_loss_pending);
     dispatch();
     assert(screen == MYBOT_LCD_SCREEN_WIFI_DISCONNECTED);
@@ -138,9 +145,61 @@ static void test_latest_disconnect_survives_init(void) {
     mybot_captions_destroy(runtime.captions);
 }
 
+static void change_wifi(mybot_wifi_event_t event) {
+    notify_wifi(event, wifi_context);
+    dispatch();
+}
+
+static void poll_result(const char *status) {
+    mybot_device_service_request_t *request =
+        new_request(&runtime.lifecycle, MYBOT_DEVICE_SERVICE_PAIR_POLL);
+    assert(request);
+    runtime.lifecycle.poll_pending = true;
+    runtime.lifecycle.poll_generation = request->request_generation;
+    strcpy(request->payload.binding.status, status);
+    strcpy(request->payload.binding.device_token, "synthetic");
+    mybot_device_lifecycle_service_result(&runtime.lifecycle, request);
+    aosl_hal_free(request);
+}
+
+static void test_redraw_pair_code_after_reconnect(const char *invalidation, bool finish_bound) {
+    initialize(true, false);
+    dispatch();
+    dispatch();
+    mybot_device_lifecycle_tick(&runtime.lifecycle);
+    assert(screen == MYBOT_LCD_SCREEN_PAIR_CODE && strcmp(visible_code, "654321") == 0);
+    assert(codes_issued == 1 && prompts == 1);
+    change_wifi(MYBOT_WIFI_EVENT_STA_DISCONNECTED);
+    assert(screen == MYBOT_LCD_SCREEN_WIFI_DISCONNECTED && !visible_code[0]);
+    change_wifi(MYBOT_WIFI_EVENT_STA_CONNECTED);
+    assert(screen == MYBOT_LCD_SCREEN_PAIR_CODE && strcmp(visible_code, "654321") == 0);
+    mybot_device_lifecycle_tick(&runtime.lifecycle);
+    poll_result("pending");
+    assert(strcmp(visible_code, "654321") == 0 && codes_issued == 1 && prompts == 1);
+
+    poll_result(invalidation);
+    assert(screen == MYBOT_LCD_SCREEN_PAIRING && !visible_code[0]);
+    mybot_device_lifecycle_tick(&runtime.lifecycle);
+    assert(screen == MYBOT_LCD_SCREEN_PAIR_CODE && strcmp(visible_code, "123456") == 0);
+    assert(codes_issued == 2 && prompts == 2);
+    if (finish_bound) {
+        poll_result("bound");
+        assert(screen == MYBOT_LCD_SCREEN_READY && !visible_code[0]);
+    }
+    mybot_presenter_deinit(&runtime.presenter);
+    assert(!runtime.presenter.pair_code[0]);
+    assert(mybot_presenter_init(&runtime.presenter) == 0);
+    assert(!runtime.presenter.pair_code[0]);
+    mybot_presenter_deinit(&runtime.presenter);
+    mybot_captions_destroy(runtime.captions);
+}
+
 int main(void) {
     test_reconnect_straddles_init();
     test_latest_disconnect_survives_init();
+    test_redraw_pair_code_after_reconnect("expired", true);
+    test_redraw_pair_code_after_reconnect("failed", false);
+    puts("Wi-Fi pairing: reconnect redraws the current code without repeating the prompt");
     puts("Wi-Fi initialization: queued reconnect admission and retained disconnect passed");
     return 0;
 }
@@ -176,10 +235,12 @@ void mybot_key_deinit(mybot_key_t *key) {
 void mybot_kv_store_deinit(mybot_kv_store_t *store) {
 }
 int mybot_kv_store_set(mybot_kv_store_t *store, const char *key, const void *value, size_t size) {
-    abort();
+    assert(strcmp(key, DEVICE_AUTH_KEY) == 0);
+    return 0;
 }
 int mybot_kv_store_erase(mybot_kv_store_t *store, const char *key) {
-    abort();
+    assert(strcmp(key, DEVICE_AUTH_KEY) == 0);
+    return 0;
 }
 void mybot_media_pipeline_init(mybot_media_pipeline_t *pipeline) {
 }
@@ -207,7 +268,11 @@ int mybot_agora_rtc_join(const mybot_device_translation_route_t *routes, size_t 
 }
 int mybot_device_client_create_pair_code(const char *base, const char *id, const char *fw,
                                          const char *model, mybot_device_pair_code_t *response) {
-    abort();
+    ++codes_issued;
+    strcpy(response->code, codes_issued == 1 ? "654321" : "123456");
+    strcpy(response->pair_token, "synthetic-pair-token");
+    response->poll_after_seconds = 30;
+    return 0;
 }
 int mybot_device_client_get_binding_status(const char *base, const char *id, const char *auth,
                                            mybot_device_binding_t *response) {
@@ -234,7 +299,9 @@ int mybot_media_pipeline_flush_session(mybot_media_pipeline_t *pipeline) {
 }
 int mybot_media_pipeline_play_prompt(mybot_media_pipeline_t *pipeline, mybot_prompt_type_t type,
                                      const void *args) {
-    abort();
+    assert(type == MYBOT_PROMPT_PAIR_CODE);
+    ++prompts;
+    return 0;
 }
 void mybot_media_pipeline_push_remote_audio(mybot_media_pipeline_t *pipeline, const void *data,
                                             size_t len) {

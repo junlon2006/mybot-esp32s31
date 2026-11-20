@@ -810,14 +810,12 @@ static void dev_on_pair_code(const char *code, void *user_data) {
         return;
     }
     mybot_state_t state = runtime_get_state(runtime);
-    if (state == MYBOT_STATE_STOPPING || state == MYBOT_STATE_FAILED ||
-        state == MYBOT_STATE_WIFI_DISCONNECTED) {
+    if (state == MYBOT_STATE_STOPPING || state == MYBOT_STATE_FAILED) {
         return;
     }
-
-    AOSL_LOG_NTC("pair code: %s", code);
-    mybot_presenter_show_pair_code(&runtime->presenter, code);
-    (void)mybot_media_pipeline_play_prompt(&runtime->media, MYBOT_PROMPT_PAIR_CODE, code);
+    mybot_presenter_set_pair_code(&runtime->presenter, code);
+    if (state != MYBOT_STATE_WIFI_DISCONNECTED)
+        (void)mybot_media_pipeline_play_prompt(&runtime->media, MYBOT_PROMPT_PAIR_CODE, code);
 }
 
 static void dev_on_conversation_start(const mybot_device_conversation_t *params, void *user_data) {
@@ -1235,6 +1233,7 @@ static void dev_on_state_changed(mybot_device_state_t state, void *user_data) {
     refresh_translation_view(runtime);
 
     if (state != MYBOT_DEVICE_STATE_AWAITING_CLAIM) {
+        mybot_presenter_set_pair_code(&runtime->presenter, NULL);
         mybot_media_pipeline_stop_prompt(&runtime->media);
     }
     sync_wake_words(runtime);

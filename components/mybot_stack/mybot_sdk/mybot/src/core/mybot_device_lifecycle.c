@@ -645,13 +645,17 @@ static void poll_binding(mybot_device_lifecycle_t *lifecycle,
 
 static void apply_pair_binding(mybot_device_lifecycle_t *lifecycle,
                                const mybot_device_service_request_t *request) {
-    if (request->result == 401) {
+    const mybot_device_binding_t *response = &request->payload.binding;
+    if (request->result == 401 ||
+        (request->result == 0 &&
+         (strcmp(response->status, "expired") == 0 || strcmp(response->status, "unbound") == 0 ||
+          strcmp(response->status, "failed") == 0))) {
         lifecycle->pairing_requested = true;
+        set_state(lifecycle, MYBOT_DEVICE_STATE_PAIRING);
         return;
     }
     if (request->result != 0)
         return;
-    const mybot_device_binding_t *response = &request->payload.binding;
     if (strcmp(response->status, "pending") == 0) {
         lifecycle->pair_poll_interval = poll_interval(response->poll_after_seconds);
     } else if (strcmp(response->status, "bound") == 0) {
@@ -668,10 +672,6 @@ static void apply_pair_binding(mybot_device_lifecycle_t *lifecycle,
         lifecycle->runtime_poll_interval = poll_interval(response->poll_after_seconds);
         lifecycle->runtime_tick_counter = 0;
         set_state(lifecycle, MYBOT_DEVICE_STATE_RUNTIME);
-    } else if (strcmp(response->status, "expired") == 0 ||
-               strcmp(response->status, "unbound") == 0 ||
-               strcmp(response->status, "failed") == 0) {
-        lifecycle->pairing_requested = true;
     }
 }
 
