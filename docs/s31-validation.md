@@ -1744,3 +1744,22 @@ The 10 USB driver cases and 27 media lifecycle cases in each AEC build passed
 under UBSan. The direct Chinese ESP-IDF v6.1 build and config/binary/map checks
 passed with Local AEC and 448,128 bytes free in the smallest OTA slot. Hardware
 pause/resume and live RTC reconnect remain to be verified.
+
+## 2026-11-20 Wi-Fi reconnect during SDK initialization
+
+The SDK prepares an offline lifecycle before registering its Wi-Fi callback.
+Ordered link notifications update session availability immediately, including
+during service initialization. Queued notifications drive the control worker's
+state transitions without writing the link status a second time. Each link loss
+still invalidates earlier service requests and remains pending for cleanup.
+
+Two host regressions exercise SDK startup, Wi-Fi notification delivery, the LCD
+state and translation start admission. A disconnect during service setup followed
+by a reconnect after lifecycle initialization reaches READY and admits a start
+after pending loss is processed. A disconnect without that reconnect keeps the
+lifecycle offline across initialization. A later loss rejects a start even
+before control processes the screen change.
+
+The Chinese ESP-IDF v6.1 Local AEC build and config/binary/map checks passed
+with 448,208 bytes free in the smallest OTA slot. Startup reconnect on the
+physical board remains to be verified.

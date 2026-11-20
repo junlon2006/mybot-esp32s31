@@ -260,6 +260,8 @@ static void initialize(fixture_t *fixture, bool preserve, const char *base, cons
         .submit_service_request = submit,
         .user_data = fixture,
     };
+    mybot_device_lifecycle_prepare(&fixture->lifecycle);
+    mybot_device_lifecycle_set_network_available(&fixture->lifecycle, true);
     assert(mybot_device_lifecycle_init(&fixture->lifecycle, &fixture->store, base, device, "test",
                                        "test-board", "en-US", "zh-CN", &callbacks) == 0);
 }

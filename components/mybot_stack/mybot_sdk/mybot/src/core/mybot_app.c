@@ -1504,7 +1504,7 @@ static void handle_wifi_event(const aosl_ts_t *queued_ts, aosl_refobj_t robj, ui
                               uintptr_t argv[]) {
     (void)queued_ts;
     (void)robj;
-    if (argc != 3) {
+    if (argc != 2) {
         return;
     }
 
@@ -1513,18 +1513,9 @@ static void handle_wifi_event(const aosl_ts_t *queued_ts, aosl_refobj_t robj, ui
         return;
     }
     mybot_wifi_event_t event = (mybot_wifi_event_t)argv[1];
-    bool network_published = argv[2] != 0;
     mybot_state_t state = runtime_get_state(runtime);
     if (state == MYBOT_STATE_STOPPING || state == MYBOT_STATE_FAILED) {
         return;
-    }
-
-    if (runtime->lifecycle_initialized && !network_published) {
-        if (event == MYBOT_WIFI_EVENT_STA_CONNECTED) {
-            mybot_device_lifecycle_set_network_available(&runtime->lifecycle, true);
-        } else if (event == MYBOT_WIFI_EVENT_STA_DISCONNECTED || event == MYBOT_WIFI_EVENT_FAILED) {
-            mybot_device_lifecycle_set_network_available(&runtime->lifecycle, false);
-        }
     }
 
     if (event == MYBOT_WIFI_EVENT_FAILED && state == MYBOT_STATE_WIFI_PROVISIONING) {
@@ -1587,20 +1578,23 @@ static void on_wifi_event(mybot_wifi_event_t event, void *user_data) {
         return;
     }
 
-    bool network_published = false;
-    if (runtime->lifecycle_initialized) {
-        if (event == MYBOT_WIFI_EVENT_STA_CONNECTED) {
-            mybot_device_lifecycle_set_network_available(&runtime->lifecycle, true);
-            network_published = true;
-        } else if (event == MYBOT_WIFI_EVENT_STA_DISCONNECTED || event == MYBOT_WIFI_EVENT_FAILED) {
-            mybot_device_lifecycle_set_network_available(&runtime->lifecycle, false);
-            network_published = true;
-        }
+    /* The platform delivers link transitions in order. Publish once here so a
+     * busy control worker cannot replay an older link state into the lifecycle. */
+    switch (event) {
+    case MYBOT_WIFI_EVENT_STA_CONNECTED:
+        mybot_device_lifecycle_set_network_available(&runtime->lifecycle, true);
+        break;
+    case MYBOT_WIFI_EVENT_STA_DISCONNECTED:
+    case MYBOT_WIFI_EVENT_FAILED:
+        mybot_device_lifecycle_set_network_available(&runtime->lifecycle, false);
+        break;
+    default:
+        return;
     }
 
     if (aosl_mpq_queue(runtime->control_mpq, AOSL_MPQ_INVALID, AOSL_REF_INVALID,
-                       "handle_wifi_event", handle_wifi_event, 3, (uintptr_t)runtime,
-                       (uintptr_t)event, (uintptr_t)network_published) < 0) {
+                       "handle_wifi_event", handle_wifi_event, 2, (uintptr_t)runtime,
+                       (uintptr_t)event) < 0) {
         fail_control_queue(runtime, "Wi-Fi");
     }
 }
@@ -1701,6 +1695,7 @@ static void handle_control_start(const aosl_ts_t *queued_ts, aosl_refobj_t robj,
     }
     mybot_presenter_show_screen(&runtime->presenter, MYBOT_LCD_SCREEN_STARTING);
     mybot_presenter_show_screen(&runtime->presenter, MYBOT_LCD_SCREEN_WIFI_PROVISIONING);
+    mybot_device_lifecycle_prepare(&runtime->lifecycle);
     if (mybot_wifi_init(&runtime->wifi, runtime->config.device_id, on_wifi_event, runtime) < 0) {
         AOSL_LOG_ERR("failed to initialize Wi-Fi platform");
         goto fail;

@@ -2,6 +2,9 @@
 
 ## Unreleased — standalone S31 translation
 
+- Restore translation startup after Wi-Fi disconnects and reconnects while the
+  SDK is initializing.
+
 - Discard buffered PC audio across meeting pauses and RTC reconnects so LISTEN
   resumes with fresh USB input.
 
