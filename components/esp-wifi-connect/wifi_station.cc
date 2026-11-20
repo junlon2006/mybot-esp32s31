@@ -15,7 +15,6 @@
 #define TAG "WifiStation"
 #define WIFI_EVENT_CONNECTED BIT0
 #define WIFI_EVENT_STOPPED BIT1
-#define WIFI_EVENT_SCAN_DONE_BIT BIT2
 #define MAX_RECONNECT_COUNT 5
 
 WifiStation::WifiStation() {
@@ -115,9 +114,7 @@ void WifiStation::Start() {
     // Note: esp_netif_init() and esp_wifi_init() should be called once before calling this method
     // WiFi driver is initialized by WifiManager::Initialize() and kept alive
     
-    // Clear stopped event bit so WaitForConnected works properly
-    // Clear scan done bit so Stop() can wait for scan to complete
-    xEventGroupClearBits(event_group_, WIFI_EVENT_STOPPED | WIFI_EVENT_SCAN_DONE_BIT);
+    xEventGroupClearBits(event_group_, WIFI_EVENT_STOPPED);
     
     // Create the default WiFi station interface
     station_netif_ = esp_netif_create_default_wifi_sta();
@@ -345,7 +342,6 @@ void WifiStation::WifiEventHandler(void* arg, esp_event_base_t event_base, int32
             this_->on_scan_begin_();
         }
     } else if (event_id == WIFI_EVENT_SCAN_DONE) {
-        xEventGroupSetBits(this_->event_group_, WIFI_EVENT_SCAN_DONE_BIT);
         this_->HandleScanResult();
     } else if (event_id == WIFI_EVENT_STA_DISCONNECTED) {
         xEventGroupClearBits(this_->event_group_, WIFI_EVENT_CONNECTED);

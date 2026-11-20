@@ -702,32 +702,7 @@ bool WifiConfigurationAp::ConnectToWifi(const std::string &ssid, const std::stri
     
     is_connecting_ = true;
 
-    // Upper-level retry loop with delay between attempts.
-    //
-    // Background: in APSTA mode the captive-portal session is on the AP
-    // beacon channel (typically 1), and the target home AP is on some
-    // other channel (e.g. 10). When ConnectToWifi triggers, esp-wifi
-    // performs a Channel Switch Announcement to move both AP and STA to
-    // the home AP's channel, then immediately issues an association
-    // request. The home AP frequently responds with "Association
-    // Response status=30 (Refused Temporarily)" + a Comeback Time in
-    // TUs (= ~1.1s for Buffalo routers, observed) because its own
-    // state hasn't settled yet for the new station.
-    //
-    // The ESP-IDF wifi driver's failure_retry_cnt issues re-association
-    // attempts back-to-back (within a few ms) and does not honor the
-    // 802.11 Comeback Time, so every driver-internal retry is refused
-    // the same way and the first ConnectToWifi() call returns failure.
-    // By the time the user clicks "submit" a second time (~8s later)
-    // the AP has fully settled and association succeeds on the first
-    // try — which is why users observe "it always fails the first
-    // time, then works".
-    //
-    // Fix: when an attempt fails, wait long enough for the comeback
-    // timer + AP state settle (~3s is safe), then retry once. This
-    // produces a single user-visible success path instead of forcing
-    // the user to resubmit. The driver-internal retries (set below
-    // via failure_retry_cnt) are kept as a secondary safety net.
+    // After the APSTA channel switch, allow the target AP time to accept reassociation.
     constexpr int kMaxAttempts = 2;
     constexpr int kRetryDelayMs = 3000;
     bool connected = false;
