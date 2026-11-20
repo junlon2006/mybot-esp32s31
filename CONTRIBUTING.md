@@ -23,8 +23,17 @@ test "$(idf.py --preview --version)" = "ESP-IDF v6.1"
 idf.py --preview -B build/mosaico-v1.2 \
   -DMYBOT_MOSAICO_UAC_TEST=OFF \
   -DSDKCONFIG=build/mosaico-v1.2/sdkconfig \
-  -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;ci/ptime60.defaults" build size
-python3 scripts/check_s31_build.py --build-dir build/mosaico-v1.2 --language zh-CN
+  -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;ci/ptime60.defaults" menuconfig
+```
+
+In the `mybot` menu select `Chinese (zh-CN)` under `Product language` and
+`Local software AEC (ESP-SR)` under `Echo cancellation`, then save and exit.
+An existing configuration takes precedence over defaults. A default bilingual
+build leaves English selected.
+
+```sh
+idf.py --preview -B build/mosaico-v1.2 build size
+python3 scripts/check_s31_build.py --build-dir build/mosaico-v1.2 --language zh-CN --aec-mode local
 git diff --check
 ```
 
