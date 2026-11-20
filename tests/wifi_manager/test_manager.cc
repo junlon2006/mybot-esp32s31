@@ -2,11 +2,18 @@
 #include "wifi_configuration_ap.h"
 #include "wifi_manager.h"
 
+#include "esp_mac.h"
+#include "network/wifi_control.h"
+#include "ssid_manager.h"
+
+#include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <functional>
 #include <mutex>
 #include <signal.h>
@@ -16,6 +23,9 @@
 #include <unistd.h>
 
 using namespace std::chrono_literals;
+
+uint8_t test_wifi_mac[6] = {0, 1, 2, 3, 4, 5};
+esp_err_t test_wifi_mac_error = ESP_OK;
 
 namespace {
 
@@ -48,6 +58,9 @@ struct Harness {
     std::atomic<bool> ap_active{false};
     std::atomic<int> callbacks{0};
     std::atomic<int> power_calls{0};
+    bool station_auto_connect = false;
+    int provisioning_calls = 0;
+    std::string expected_provisioning_ssid;
     std::function<void()> scan_callback;
     std::function<void(const std::string &)> connecting_callback;
     std::function<void(const std::string &)> connected_callback;
@@ -315,6 +328,100 @@ void TransitionNotificationDoesNotSplitLifecycle() {
     Require(!manager.IsConfigMode(), "manager state agrees with serialized transition order");
 }
 
+void CheckProvisioningIdentity() {
+    auto &manager = WifiManager::GetInstance();
+    const auto &expected = harness.expected_provisioning_ssid;
+    Require(manager.IsConfigMode(), "provisioning callback observes an active AP");
+    Require(manager.GetConfig().ap_ssid == expected, "manager uses the short MAC-derived SSID");
+    Require(manager.GetApSsid() == expected, "driver advertises the configured SSID");
+    Require(manager.GetConfig().station_hostname == "regression-device",
+            "SSID naming preserves the station hostname");
+    Require(manager.GetConfig().language == "zh-CN", "SSID naming preserves the portal language");
+    char ssid[MYBOT_WIFI_PROVISIONING_SSID_CAPACITY]{};
+    Require(mybot_wifi_get_provisioning_ssid(ssid, sizeof(ssid)) == 0 && ssid == expected,
+            "the UI receives the complete active AP identity");
+    char exact[11]{};
+    Require(mybot_wifi_get_provisioning_ssid(exact, sizeof(exact)) == 0 && exact == expected,
+            "the complete SSID fits its exact capacity including the terminator");
+    char short_buffer[10] = "stale";
+    Require(mybot_wifi_get_provisioning_ssid(short_buffer, sizeof(short_buffer)) == -1 &&
+                short_buffer[0] == '\0',
+            "a short buffer is cleared instead of exposing a partial SSID");
+    ++harness.provisioning_calls;
+    // This is the platform's UI callback, after StartConfigAp has released its
+    // lifecycle lock. Model the user finishing setup without waiting 30 seconds.
+    manager.StopConfigAp();
+}
+
+void ProvisioningIdentity(const std::array<uint8_t, 6> &mac, const char *expected,
+                          bool repeat_provisioning = false) {
+    std::copy(mac.begin(), mac.end(), test_wifi_mac);
+    harness.expected_provisioning_ssid = expected;
+    harness.station_auto_connect = true;
+    Require(std::strlen(expected) == 10, "the expected identity retains the four-digit suffix");
+    Require(mybot_wifi_ensure_network("regression-device", CheckProvisioningIdentity) == 0,
+            "initial provisioning completes through the real platform and manager");
+    Require(harness.provisioning_calls == 1 && mybot_wifi_is_connected(),
+            "initial provisioning announces the SSID and establishes connectivity");
+    if (repeat_provisioning) {
+        Require(mybot_wifi_run_provisioning(CheckProvisioningIdentity) == 0,
+                "entering provisioning again completes");
+        Require(harness.provisioning_calls == 2 && mybot_wifi_is_connected(),
+                "repeated provisioning preserves the device AP identity");
+    }
+    char inactive[MYBOT_WIFI_PROVISIONING_SSID_CAPACITY] = "stale";
+    Require(mybot_wifi_get_provisioning_ssid(inactive, sizeof(inactive)) == -1 &&
+                inactive[0] == '\0',
+            "the AP identity is unavailable after provisioning exits");
+    mybot_wifi_shutdown_network();
+    Require(!mybot_wifi_is_connected() && !harness.station_active.load() &&
+                !harness.ap_active.load(),
+            "shutdown clears connectivity and both driver modes");
+}
+
+void MacReadFailureDoesNotCreateAp() {
+    test_wifi_mac_error = ESP_ERR_INVALID_STATE;
+    Require(mybot_wifi_ensure_network("regression-device", CheckProvisioningIdentity) == -1,
+            "MAC read failure rejects network initialization");
+    Require(!WifiManager::GetInstance().IsInitialized() && harness.provisioning_calls == 0 &&
+                !harness.station_active.load() && !harness.ap_active.load(),
+            "MAC read failure never creates a shared or empty-name AP");
+    char inactive[MYBOT_WIFI_PROVISIONING_SSID_CAPACITY] = "stale";
+    Require(mybot_wifi_get_provisioning_ssid(inactive, sizeof(inactive)) == -1 &&
+                inactive[0] == '\0',
+            "MAC read failure does not publish a stale identity");
+    test_wifi_mac_error = ESP_OK;
+    ProvisioningIdentity({0, 1, 2, 3, 4, 5}, "mybot-8c18");
+}
+
+void ShortIdUsesEveryMacByte() {
+    const std::array<uint8_t, 6> original = {0x24, 0x6f, 0x28, 0x01, 0x02, 0x01};
+    // Independent vectors from Python binascii.crc_hqx(mac, 0xffff), including
+    // the original and each one-byte mutation. No CRC implementation is mocked.
+    const std::array<uint16_t, 6> expected = {0xf7c2, 0x1833, 0xc4d6, 0x8552, 0x8153, 0xa243};
+    const uint16_t original_id = mybot_wifi_provisioning_id(original.data());
+    Require(original_id == 0xb262, "the short ID matches the independent CRC vector");
+    for (size_t i = 0; i < original.size(); ++i) {
+        auto changed = original;
+        changed[i] ^= 1;
+        const uint16_t changed_id = mybot_wifi_provisioning_id(changed.data());
+        Require(changed_id == expected[i] && changed_id != original_id,
+                "each MAC byte contributes to the short provisioning identity");
+    }
+}
+
+void ShortIdCoversSequentialDevices() {
+    std::array<uint8_t, 6> mac = {0x24, 0x6f, 0x28, 0x01, 0, 0};
+    std::array<bool, 1u << 16> seen{};
+    for (unsigned value = 0; value < seen.size(); ++value) {
+        mac[4] = static_cast<uint8_t>(value >> 8);
+        mac[5] = static_cast<uint8_t>(value);
+        const uint16_t id = mybot_wifi_provisioning_id(mac.data());
+        Require(!seen[id], "all 65,536 trailing MAC combinations have different short IDs");
+        seen[id] = true;
+    }
+}
+
 struct TestCase {
     const char *name;
     void (*run)();
@@ -367,6 +474,8 @@ void WifiStation::Start() {
     harness.BlockStationStart();
     Require(!harness.ap_active.load(), "station cannot start while AP is active");
     harness.station_active.store(true);
+    if (harness.station_auto_connect)
+        on_connected_(ssid_);
 }
 void WifiStation::Stop() {
     DriverOperation operation;
@@ -438,6 +547,9 @@ std::string WifiConfigurationAp::GetWebServerUrl() {
     return "http://192.0.2.1";
 }
 
+SsidManager::SsidManager() = default;
+SsidManager::~SsidManager() = default;
+
 int main() {
     const TestCase tests[] = {
         {"station stop drains in-flight event", [] { StationStopWithEvent(false); }},
@@ -449,6 +561,23 @@ int main() {
         {"power save waits for station start", PowerSaveWaitsForStationStart},
         {"transition notification preserves lifecycle order",
          TransitionNotificationDoesNotSplitLifecycle},
+        {"same-prefix device 1 has its own AP identity",
+         [] { ProvisioningIdentity({0x24, 0x6f, 0x28, 0x01, 0x02, 0x01}, "mybot-b262"); }},
+        {"same-prefix device 2 has its own AP identity",
+         [] { ProvisioningIdentity({0x24, 0x6f, 0x28, 0x01, 0x02, 0x02}, "mybot-8201"); }},
+        {"same-prefix device 3 has its own AP identity",
+         [] { ProvisioningIdentity({0x24, 0x6f, 0x28, 0x01, 0x02, 0x03}, "mybot-9220"); }},
+        {"same-prefix device 4 has its own AP identity",
+         [] { ProvisioningIdentity({0x24, 0x6f, 0x28, 0x01, 0x02, 0x04}, "mybot-e2c7"); }},
+        {"middle MAC byte remains part of AP identity",
+         [] { ProvisioningIdentity({0x24, 0x6f, 0x29, 0x01, 0x02, 0x01}, "mybot-c4d6"); }},
+        {"leading zeroes and lowercase hex survive AP publication",
+         [] { ProvisioningIdentity({0x00, 0x01, 0x02, 0x0a, 0x0b, 0x14}, "mybot-00a7"); }},
+        {"repeated provisioning preserves AP identity",
+         [] { ProvisioningIdentity({0x24, 0x6f, 0x28, 0x01, 0x02, 0x01}, "mybot-b262", true); }},
+        {"MAC read failure prevents AP creation and permits retry", MacReadFailureDoesNotCreateAp},
+        {"short provisioning ID uses every MAC byte", ShortIdUsesEveryMacByte},
+        {"short provisioning IDs distinguish sequential devices", ShortIdCoversSequentialDevices},
     };
     bool passed = true;
     for (const auto &test : tests)

@@ -112,9 +112,11 @@ S16LE in the build directory.
 ## Provisioning and Controls
 
 When NVS contains no Wi-Fi credentials, the device creates a configuration AP named
-`mybot-xxxx` and serves provisioning at `http://192.168.4.1`. MyBot starts only after the
-station has a usable IP address. A provisioning request stops MyBot first and restarts it after
-reconnection.
+`mybot-xxxx`, using CRC-16 of all six STA MAC bytes for a stable four-digit lowercase
+hexadecimal suffix that reduces shared-prefix collisions. Select the actual name
+shown on the screen; provisioning is served at `http://192.168.4.1`. MyBot starts
+only after the station has a usable IP address. A provisioning request stops MyBot
+first and restarts it after reconnection.
 
 Open Media translation, select input/output languages and use its start/stop controls. Pause
 retains the cloud session; empty screen taps have no action. The Mosaico AI key is a maintenance
