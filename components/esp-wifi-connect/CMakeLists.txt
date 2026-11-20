@@ -8,6 +8,7 @@ if(IDF_VERSION_MAJOR GREATER_EQUAL 6)
         SRCS
             "wifi_manager.cc"
             "wifi_configuration_ap.cc"
+            "wifi_portal_submit.cc"
             "wifi_station.cc"
             "ssid_manager.cc"
             "dns_server.cc"
@@ -15,7 +16,6 @@ if(IDF_VERSION_MAJOR GREATER_EQUAL 6)
             "include"
         EMBED_TXTFILES
             "assets/wifi_configuration.html"
-            "assets/wifi_configuration_done.html"
         REQUIRES "esp_timer" "esp_http_server" "esp_wifi" "nvs_flash"
         PRIV_REQUIRES espressif__cjson
     )
@@ -27,6 +27,7 @@ else()
         SRCS
             "wifi_manager.cc"
             "wifi_configuration_ap.cc"
+            "wifi_portal_submit.cc"
             "wifi_station.cc"
             "ssid_manager.cc"
             "dns_server.cc"
@@ -34,7 +35,6 @@ else()
             "include"
         EMBED_TXTFILES
             "assets/wifi_configuration.html"
-            "assets/wifi_configuration_done.html"
         REQUIRES "esp_timer" "esp_http_server" "esp_wifi" "nvs_flash" "json"
     )
 endif()

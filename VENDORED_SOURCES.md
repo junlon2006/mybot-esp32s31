@@ -134,7 +134,9 @@ on a separate lock, while callbacks and published-state queries use a short stat
 lock. Driver teardown never holds the state lock while joining IDF event handlers
 or the provisioning HTTP server. The AP, station and credential store use the IDF fixed-field sizes for Wi-Fi
 credentials, including full-width SSIDs and keys. Wi-Fi profile updates commit a
-single ordered NVS blob and load the legacy SSID/password keys on first migration. See `tests/wifi_manager` for deterministic host regressions.
+single ordered NVS blob and load the legacy SSID/password keys on first migration.
+The portal uses cJSON for network lists. A successful submit notifies the platform
+control task to stop the AP and try the saved credentials. See `tests/wifi_manager` for deterministic host regressions.
 
 ## Mosaico V1.2 translation board
 

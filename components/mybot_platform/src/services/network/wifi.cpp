@@ -44,6 +44,7 @@ struct WifiControl {
     bool stopping = false;
     bool network_connected = false;
     bool config_mode = false;
+    bool config_exit_requested = false;
     bool sdk_active = false;
     bool sdk_connected = false;
     char provisioning_ssid[MYBOT_WIFI_PROVISIONING_SSID_CAPACITY] = {};
@@ -95,6 +96,9 @@ void handle_wifi_event(WifiEvent event, const std::string &data) {
         case WifiEvent::Disconnected:
             control.network_connected = false;
             break;
+        case WifiEvent::ConfigModeExitRequested:
+            control.config_exit_requested = true;
+            break;
         case WifiEvent::ConfigModeEnter:
             control.config_mode = true;
             control.network_connected = false;
@@ -134,6 +138,7 @@ int run_provisioning_locked(mybot_wifi_provisioning_handler_t on_provisioning) {
                 return -1;
             }
             control.network_connected = false;
+            control.config_exit_requested = false;
             control.provisioning_ssid[0] = '\0';
         }
 
@@ -168,8 +173,10 @@ int run_provisioning_locked(mybot_wifi_provisioning_handler_t on_provisioning) {
 
         {
             std::unique_lock<std::mutex> lock(control.state_mutex);
-            control.state_changed.wait(lock,
-                                       [] { return !control.config_mode || !control.initialized; });
+            control.state_changed.wait(lock, [] {
+                return control.config_exit_requested || !control.config_mode ||
+                       !control.initialized;
+            });
             if (!control.initialized) {
                 return -1;
             }

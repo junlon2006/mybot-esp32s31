@@ -32,7 +32,7 @@ The bundled S31 RTSA header/configuration/static library are retained from the u
 
 The esp-wifi-connect 3.2.2 manifest declares MIT, but its archive omitted the license file. The retained `LICENSE` is byte-identical to the MIT text later published upstream in commit `347682fa013b52f863052ad4b1a793ca3cabff17`.
 
-The local Wi-Fi manager implementation and header include project-maintained
+The local Wi-Fi manager, provisioning portal and credential storage include project-maintained
 lifecycle/state-lock corrections and retain that MIT license. The upstream
 component license and copyright notice remain unchanged.
 

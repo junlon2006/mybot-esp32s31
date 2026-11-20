@@ -38,12 +38,13 @@ class WifiConfigurationAp;
 
 // WiFi events
 enum class WifiEvent {
-    Scanning,        // Started scanning for networks
-    Connecting,      // Connecting to network (call GetSsid() for target)
-    Connected,       // Successfully connected
-    Disconnected,    // Disconnected from network
-    ConfigModeEnter, // Entered config AP mode
-    ConfigModeExit,  // Exited config AP mode
+    Scanning,                // Started scanning for networks
+    Connecting,              // Connecting to network (call GetSsid() for target)
+    Connected,               // Successfully connected
+    Disconnected,            // Disconnected from network
+    ConfigModeEnter,         // Entered config AP mode
+    ConfigModeExit,          // Exited config AP mode
+    ConfigModeExitRequested, // Control owner can now switch from AP to station
 };
 
 // Configuration

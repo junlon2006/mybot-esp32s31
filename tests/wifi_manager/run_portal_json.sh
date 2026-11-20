@@ -11,3 +11,7 @@ trap 'rm -r -- "$work"' EXIT HUP INT TERM
     -I"$root/components/esp-wifi-connect/include" "$test_dir/test_portal_json.cc" \
     "$work/cjson.o" -o "$work/test_json"
 "$work/test_json"
+"${CXX:-c++}" -std=c++17 -Wall -Wextra -Werror -I"$test_dir/mocks" -I"$cjson" \
+    -I"$root/components/esp-wifi-connect/include" "$test_dir/test_portal_submit.cc" \
+    "$root/components/esp-wifi-connect/wifi_portal_submit.cc" "$work/cjson.o" -o "$work/test_submit"
+"$work/test_submit"

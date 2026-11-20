@@ -28,7 +28,6 @@
 #define WIFI_FAIL_BIT      BIT1
 
 extern const char index_html_start[] asm("_binary_wifi_configuration_html_start");
-extern const char done_html_start[] asm("_binary_wifi_configuration_done_html_start");
 
 WifiConfigurationAp::WifiConfigurationAp()
 {
@@ -349,122 +348,25 @@ void WifiConfigurationAp::StartWebServer()
     };
     ESP_ERROR_CHECK(httpd_register_uri_handler(server_, &scan));
 
-    // Register the form submission
     httpd_uri_t form_submit = {
         .uri = "/submit",
         .method = HTTP_POST,
-        .handler = [](httpd_req_t *req) -> esp_err_t {
-            char *buf;
-            size_t buf_len = req->content_len;
-            if (buf_len > 1024) { // 限制最大请求体大小
-                httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Payload too large");
-                return ESP_FAIL;
-            }
-
-            buf = (char *)malloc(buf_len + 1);
-            if (!buf) {
-                httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to allocate memory");
-                return ESP_FAIL;
-            }
-
-            int ret = httpd_req_recv(req, buf, buf_len);
-            if (ret <= 0) {
-                free(buf);
-                if (ret == HTTPD_SOCK_ERR_TIMEOUT) {
-                    httpd_resp_send_408(req);
-                } else {
-                    httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Failed to receive request");
-                }
-                return ESP_FAIL;
-            }
-            buf[ret] = '\0';
-
-            // 解析 JSON 数据
-            cJSON *json = cJSON_Parse(buf);
-            free(buf);
-            if (!json) {
-                httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
-                return ESP_FAIL;
-            }
-
-            cJSON *ssid_item = cJSON_GetObjectItemCaseSensitive(json, "ssid");
-            cJSON *password_item = cJSON_GetObjectItemCaseSensitive(json, "password");
-
-            const char *ssid = cJSON_GetStringValue(ssid_item);
-            const char *password = password_item ? cJSON_GetStringValue(password_item) : "";
-            if (!ssid || !password || !wifi_credentials::Valid(ssid, password)) {
-                cJSON_Delete(json);
-                httpd_resp_send(req, "{\"success\":false,\"error\":\"Invalid Wi-Fi credentials\"}", HTTPD_RESP_USE_STRLEN);
-                return ESP_OK;
-            }
-            std::string ssid_str(ssid);
-            std::string password_str(password);
-
-            // 获取当前对象
-            auto *this_ = static_cast<WifiConfigurationAp *>(req->user_ctx);
-            if (!this_->ConnectToWifi(ssid_str, password_str)) {
-                cJSON_Delete(json);
-                httpd_resp_send(req, "{\"success\":false,\"error\":\"Failed to connect to the Access Point\"}", HTTPD_RESP_USE_STRLEN);
-                return ESP_OK;
-            }
-
-            cJSON_Delete(json);
-            if (!this_->Save(ssid_str, password_str)) {
-                httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to save Wi-Fi credentials");
-                return ESP_FAIL;
-            }
-            // 设置成功响应
-            httpd_resp_set_type(req, "application/json");
-            httpd_resp_set_hdr(req, "Connection", "close");
-            httpd_resp_send(req, "{\"success\":true}", HTTPD_RESP_USE_STRLEN);
-            return ESP_OK;
-        },
+        .handler = WifiConfigurationAp::HandleSubmit,
         .user_ctx = this
     };
     ESP_ERROR_CHECK(httpd_register_uri_handler(server_, &form_submit));
 
-    // Register the done.html page
-    httpd_uri_t done_html = {
-        .uri = "/done.html",
-        .method = HTTP_GET,
-        .handler = [](httpd_req_t *req) -> esp_err_t {
-            httpd_resp_set_hdr(req, "Connection", "close");
-            httpd_resp_send(req, done_html_start, strlen(done_html_start));
-            return ESP_OK;
-        },
-        .user_ctx = NULL
-    };
-    ESP_ERROR_CHECK(httpd_register_uri_handler(server_, &done_html));
-
-    // Register the exit endpoint - exits config mode without rebooting
+    // An explicit exit is optional. The normal submit path signals the same owner.
     httpd_uri_t exit_config = {
         .uri = "/exit",
         .method = HTTP_POST,
         .handler = [](httpd_req_t *req) -> esp_err_t {
-            auto* this_ = static_cast<WifiConfigurationAp*>(req->user_ctx);
-            
-            // 设置响应头，防止浏览器缓存
+            auto *ap = static_cast<WifiConfigurationAp *>(req->user_ctx);
             httpd_resp_set_type(req, "application/json");
-            httpd_resp_set_hdr(req, "Cache-Control", "no-store");
-            httpd_resp_set_hdr(req, "Connection", "close");
-            // 发送响应
-            httpd_resp_send(req, "{\"success\":true}", HTTPD_RESP_USE_STRLEN);
-            
-            // 延迟调用回调，确保HTTP响应完全发送
-            ESP_LOGI(TAG, "Exiting config mode...");
-            xTaskCreate([](void *ctx) {
-                // 等待200ms确保HTTP响应完全发送
-                vTaskDelay(pdMS_TO_TICKS(200));
-                
-                auto* self = static_cast<WifiConfigurationAp*>(ctx);
-                // 通知回调退出配网模式
-                if (self->on_exit_requested_) {
-                    self->on_exit_requested_();
-                }
-                vTaskDelete(NULL);
-            }, "exit_config_task", 4096, this_, 5, NULL);
-            
-            return ESP_OK;
+            const esp_err_t sent = httpd_resp_sendstr(req, "{\"success\":true}");
+            if (ap->on_exit_requested_)
+                ap->on_exit_requested_();
+            return sent;
         },
         .user_ctx = this
     };
@@ -844,16 +746,8 @@ void WifiConfigurationAp::SmartConfigEventHandler(void *arg, esp_event_base_t ev
             if (!self->Save(std::string(ssid, strnlen(ssid, sizeof(evt->ssid))),
                             std::string(password, strnlen(password, sizeof(evt->password)))))
                 break;
-            // 延迟退出配网模式
-            xTaskCreate([](void *ctx){
-                ESP_LOGI(TAG, "Exiting config mode in 1 second");
-                vTaskDelay(pdMS_TO_TICKS(1000));
-                auto* self = static_cast<WifiConfigurationAp*>(ctx);
-                if (self->on_exit_requested_) {
-                    self->on_exit_requested_();
-                }
-                vTaskDelete(NULL);
-            }, "exit_config_task", 4096, self, 5, NULL);
+            if (self->on_exit_requested_)
+                self->on_exit_requested_();
             break;
         }
         case SC_EVENT_SEND_ACK_DONE:

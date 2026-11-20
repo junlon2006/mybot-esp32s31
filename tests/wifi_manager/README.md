@@ -35,3 +35,11 @@ no mock manager header is provided.
 
 These host tests establish synchronization and AP identity generation/publication
 behavior. IDF driver shutdown latency and radio behavior require hardware results.
+
+
+The suite also exercises full-width STA fields and NVS profile migration, write/commit
+failure and retry. The platform provisioning case delivers the completion callback
+from an HTTP thread, then lets the control owner switch the real manager to station mode.
+After IDF resolves cJSON, `sh tests/wifi_manager/run_portal_json.sh` tests both list
+encoders and the production HTTP submission handler with fragmented bodies, failed
+persistence, and a client disconnect during the success response.
