@@ -26,15 +26,9 @@
 
 ## 构建和烧录
 
-开发只构建中文，所有本地增量编译固定使用 `build/mosaico-v1.2`，生成配置固定为
-`build/mosaico-v1.2/sdkconfig`：
+按[中文固件开发步骤](../CONTRIBUTING.zh-CN.md#验证)完成配置和构建，在同一个 IDF 环境中烧录：
 
 ```sh
-. /path/to/esp-idf/export.sh
-idf.py --preview -B build/mosaico-v1.2 \
-  -DMYBOT_MOSAICO_UAC_TEST=OFF \
-  -DSDKCONFIG=build/mosaico-v1.2/sdkconfig \
-  -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;ci/ptime60.defaults" build
 idf.py --preview -B build/mosaico-v1.2 -p DOWNLOAD_PORT flash
 # 启动后使用运行时 CDC 端口查看日志
 idf.py --preview -B build/mosaico-v1.2 -p RUNTIME_PORT monitor

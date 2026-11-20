@@ -47,9 +47,7 @@ Cloud AEC；该模式保留原有麦克风/播放参考交错上传逻辑。端�
 
 ## 构建与烧录
 
-开发只构建中文版本，目录固定为 `build/mosaico-v1.2`。本次生成的是
-Mosaico 固件。从其他板型或独立诊断切换时，先备份需要保留的生成固件，再通过 IDF
-`fullclean` 清理旧构建；不要混用旧 `sdkconfig`，不要手改生成配置。
+本地中文 Local AEC 生产固件的配置、构建和校验步骤见[开发指南](../CONTRIBUTING.zh-CN.md#验证)。
 
 中日韩英字幕使用压缩的 2 bpp 字库。`partitions/v2/16m.csv` 的两个 OTA 槽均为
 `0x500000` 字节（5 MiB），起点分别是 `0x20000`、`0x520000`；未使用的 `assets` 分区为
@@ -57,14 +55,6 @@ Mosaico 固件。从其他板型或独立诊断切换时，先备份需要保留
 `0x470000` 布局增加 576 KiB，仍要求至少 300 KiB
 固件余量。从旧布局升级需使用下方完整的 `idf.py flash`，同时写入分区表和初始 OTA
 状态，不能只写应用 BIN；NVS 的位置和大小未变，可保留配网、绑定和音量。
-
-```sh
-. /path/to/esp-idf/export.sh
-idf.py --preview -B build/mosaico-v1.2 \
-  -DMYBOT_MOSAICO_UAC_TEST=OFF \
-  -DSDKCONFIG=build/mosaico-v1.2/sdkconfig \
-  -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;ci/ptime60.defaults" build
-```
 
 首次从 UAC 固件烧录：关机，按住 BOOT，开机后松开 BOOT。检查 Mac 的实际下载端口，
 用它替换下面的端口（之前用户的端口为 `/dev/cu.usbmodem144101`）：

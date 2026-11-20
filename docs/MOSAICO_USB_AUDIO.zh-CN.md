@@ -82,13 +82,7 @@ Mosaico V1.2 固件采用固定的 USB 2.0 总线供电策略：FS/HS 配置描�
 
 ## 构建与烧录
 
-```sh
-idf.py --preview -B build/mosaico-v1.2 \
-  -DMYBOT_MOSAICO_UAC_TEST=OFF \
-  -DSDKCONFIG=build/mosaico-v1.2/sdkconfig \
-  -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;ci/ptime60.defaults" build
-```
-
+按[中文固件开发步骤](../CONTRIBUTING.zh-CN.md#验证)选择语言和 Local AEC，构建并校验翻译固件。
 固件仍为 `build/mosaico-v1.2/mybot_esp32s31.bin`。按住 BOOT 开机进入下载模式，使用实际
 下载端口烧录：
 
