@@ -17,3 +17,6 @@ trap 'rm -r -- "$test_build_dir"' EXIT HUP INT TERM
     "${PLATFORM_WIFI_SOURCE:-$repo_root/components/mybot_platform/src/services/network/wifi.cpp}" \
     "$test_dir/test_manager.cc" -o "$test_build_dir/test_wifi_manager"
 "$test_build_dir/test_wifi_manager"
+"${CXX:-c++}" -std=c++17 -Wall -Wextra -Werror -I"$test_dir/mocks" \
+    "$test_dir/test_credentials.cc" -o "$test_build_dir/test_credentials"
+"$test_build_dir/test_credentials"

@@ -1,4 +1,6 @@
+/* SPDX-License-Identifier: MIT */
 #include "ssid_manager.h"
+#include "wifi_credentials.h"
 
 #include <algorithm>
 #include <esp_log.h>
@@ -53,7 +55,8 @@ void SsidManager::LoadFromNvs() {
         if (nvs_get_str(nvs_handle, password_key.c_str(), password, &length) != ESP_OK) {
             continue;
         }
-        ssid_list_.push_back({ssid, password});
+        if (wifi_credentials::Valid(ssid, password))
+            ssid_list_.push_back({ssid, password});
     }
     nvs_close(nvs_handle);
 }
@@ -84,6 +87,8 @@ void SsidManager::SaveToNvs() {
 }
 
 void SsidManager::AddSsid(const std::string& ssid, const std::string& password) {
+    if (!wifi_credentials::Valid(ssid, password))
+        return;
     for (auto& item : ssid_list_) {
         ESP_LOGI(TAG, "compare [%s:%d] [%s:%d]", item.ssid.c_str(), item.ssid.size(), ssid.c_str(), ssid.size());
         if (item.ssid == ssid) {

@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: MIT */
 #include "wifi_configuration_ap.h"
 #include <cstdio>
 #include <memory>
@@ -17,6 +18,7 @@
 #include <esp_smartconfig.h>
 #endif
 #include "ssid_manager.h"
+#include "wifi_credentials.h"
 #include "sdkconfig.h"
 
 #define TAG "WifiConfigurationAp"
@@ -403,17 +405,15 @@ void WifiConfigurationAp::StartWebServer()
             cJSON *ssid_item = cJSON_GetObjectItemCaseSensitive(json, "ssid");
             cJSON *password_item = cJSON_GetObjectItemCaseSensitive(json, "password");
 
-            if (!cJSON_IsString(ssid_item) || (ssid_item->valuestring == NULL) || (strlen(ssid_item->valuestring) >= 33)) {
+            const char *ssid = cJSON_GetStringValue(ssid_item);
+            const char *password = password_item ? cJSON_GetStringValue(password_item) : "";
+            if (!ssid || !password || !wifi_credentials::Valid(ssid, password)) {
                 cJSON_Delete(json);
-                httpd_resp_send(req, "{\"success\":false,\"error\":\"Invalid SSID\"}", HTTPD_RESP_USE_STRLEN);
+                httpd_resp_send(req, "{\"success\":false,\"error\":\"Invalid Wi-Fi credentials\"}", HTTPD_RESP_USE_STRLEN);
                 return ESP_OK;
             }
-
-            std::string ssid_str = ssid_item->valuestring;
-            std::string password_str = "";
-            if (cJSON_IsString(password_item) && (password_item->valuestring != NULL) && (strlen(password_item->valuestring) < 65)) {
-                password_str = password_item->valuestring;
-            }
+            std::string ssid_str(ssid);
+            std::string password_str(password);
 
             // 获取当前对象
             auto *this_ = static_cast<WifiConfigurationAp *>(req->user_ctx);
@@ -685,21 +685,12 @@ void WifiConfigurationAp::StartWebServer()
 
 bool WifiConfigurationAp::ConnectToWifi(const std::string &ssid, const std::string &password)
 {
-    if (ssid.empty()) {
-        ESP_LOGE(TAG, "SSID cannot be empty");
+    wifi_config_t wifi_config = {};
+    if (!wifi_credentials::CopyToStation(wifi_config.sta, ssid, password))
         return false;
-    }
-    
-    if (ssid.length() > 32) {  // WiFi SSID 最大长度
-        ESP_LOGE(TAG, "SSID too long");
-        return false;
-    }
+    wifi_config.sta.scan_method = WIFI_ALL_CHANNEL_SCAN;
+    wifi_config.sta.failure_retry_cnt = 1;
 
-    if (password.length() > 64) {
-        ESP_LOGE(TAG, "Password too long");
-        return false;
-    }
-    
     is_connecting_ = true;
 
     // After the APSTA channel switch, allow the target AP time to accept reassociation.
@@ -718,13 +709,6 @@ bool WifiConfigurationAp::ConnectToWifi(const std::string &ssid, const std::stri
 
         xEventGroupClearBits(event_group_, WIFI_CONNECTED_BIT | WIFI_FAIL_BIT);
         esp_wifi_scan_stop();
-
-        wifi_config_t wifi_config;
-        bzero(&wifi_config, sizeof(wifi_config));
-        strlcpy((char *)wifi_config.sta.ssid, ssid.c_str(), 32);
-        strlcpy((char *)wifi_config.sta.password, password.c_str(), 64);
-        wifi_config.sta.scan_method = WIFI_ALL_CHANNEL_SCAN;
-        wifi_config.sta.failure_retry_cnt = 1;
 
         ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
         auto ret = esp_wifi_connect();
@@ -867,12 +851,10 @@ void WifiConfigurationAp::SmartConfigEventHandler(void *arg, esp_event_base_t ev
             ESP_LOGI(TAG, "Got SmartConfig credentials");
             smartconfig_event_got_ssid_pswd_t *evt = (smartconfig_event_got_ssid_pswd_t *)event_data;
 
-            char ssid[32], password[64];
-            memcpy(ssid, evt->ssid, sizeof(evt->ssid));
-            memcpy(password, evt->password, sizeof(evt->password));
-            ESP_LOGI(TAG, "SmartConfig SSID: %s, Password: %s", ssid, password);
-            // 尝试连接WiFi会失败，故不连接
-            self->Save(ssid, password);
+            const char *ssid = reinterpret_cast<const char *>(evt->ssid);
+            const char *password = reinterpret_cast<const char *>(evt->password);
+            self->Save(std::string(ssid, strnlen(ssid, sizeof(evt->ssid))),
+                       std::string(password, strnlen(password, sizeof(evt->password))));
             // 延迟退出配网模式
             xTaskCreate([](void *ctx){
                 ESP_LOGI(TAG, "Exiting config mode in 1 second");

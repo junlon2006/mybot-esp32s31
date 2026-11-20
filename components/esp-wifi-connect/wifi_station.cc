@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: MIT */
 #include "wifi_station.h"
 #include <cstring>
 #include <algorithm>
@@ -11,6 +12,7 @@
 #include <esp_netif.h>
 #include <esp_system.h>
 #include "ssid_manager.h"
+#include "wifi_credentials.h"
 
 #define TAG "WifiStation"
 #define WIFI_EVENT_CONNECTED BIT0
@@ -226,10 +228,11 @@ void WifiStation::StartConnect() {
         on_connect_(ssid_);
     }
 
-    wifi_config_t wifi_config;
-    bzero(&wifi_config, sizeof(wifi_config));
-    strcpy((char *)wifi_config.sta.ssid, ap_record.ssid.c_str());
-    strcpy((char *)wifi_config.sta.password, ap_record.password.c_str());
+    wifi_config_t wifi_config = {};
+    if (!wifi_credentials::CopyToStation(wifi_config.sta, ap_record.ssid, ap_record.password)) {
+        ESP_LOGE(TAG, "Invalid saved Wi-Fi credentials");
+        return;
+    }
 
     if (remember_bssid_) {
         // Explicit opt-in: pin to this exact AP (BSSID + channel) for the fastest

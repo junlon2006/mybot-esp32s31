@@ -132,8 +132,8 @@ manager disabled. The project also maintains `wifi_manager.cc` and its public
 header under the retained MIT license: synchronous lifecycle operations serialize
 on a separate lock, while callbacks and published-state queries use a short state
 lock. Driver teardown never holds the state lock while joining IDF event handlers
-or the provisioning HTTP server. Other component application sources remain at the
-pinned baseline. See `tests/wifi_manager` for deterministic host regressions.
+or the provisioning HTTP server. The AP, station and credential store use the IDF fixed-field sizes for Wi-Fi
+credentials, including full-width SSIDs and keys. See `tests/wifi_manager` for deterministic host regressions.
 
 ## Mosaico V1.2 translation board
 
