@@ -120,9 +120,10 @@ def parse_partition_table(data: bytes, table_offset: int) -> list[dict]:
     return entries
 
 
-def verify_ota_capacity(build_dir: Path, description: dict, flash: dict, segments: list[dict]) -> dict:
+def verify_flash_layout(build_dir: Path, description: dict, config: dict,
+                        flash: dict, segments: list[dict]) -> dict:
     records = {}
-    for role in ("partition-table", "app"):
+    for role in ("bootloader", "partition-table", "otadata", "app"):
         record = flash.get(role)
         if not isinstance(record, dict):
             raise RuntimeError(f"missing {role} flash record")
@@ -130,14 +131,26 @@ def verify_ota_capacity(build_dir: Path, description: dict, flash: dict, segment
             offset, name = int(record["offset"], 0), record["file"]
         except (KeyError, TypeError, ValueError) as error:
             raise RuntimeError(f"invalid {role} flash record") from error
-        if not any(int(segment["offset"], 0) == offset and segment["file"] == name for segment in segments):
+        segment = next((s for s in segments if int(s["offset"], 0) == offset and s["file"] == name), None)
+        if not segment or "role" in segment:
             raise RuntimeError(f"{role} flash record does not match flash_files")
+        segment["role"] = role
         records[role] = (offset, name)
+    if len(records) != len(segments) or len({name for _, name in records.values()}) != len(records):
+        raise RuntimeError("expected four distinct Mosaico flash segments")
+    boot_offset, _ = records["bootloader"]
     table_offset, table_name = records["partition-table"]
+    if (boot_offset != int(config["CONFIG_BOOTLOADER_OFFSET_IN_FLASH"], 0) or
+            table_offset != int(config["CONFIG_PARTITION_TABLE_OFFSET"], 0) or boot_offset >= table_offset):
+        raise RuntimeError("bootloader or partition-table flash offset differs from board configuration")
     app_offset, app_name = records["app"]
     if app_name != description["app_bin"]:
         raise RuntimeError("app flash record does not name the built application")
     entries = parse_partition_table(build_file(build_dir, table_name).read_bytes(), table_offset)
+    ota_offset, ota_name = records["otadata"]
+    ota = [entry for entry in entries if entry["type"] == 1 and entry["subtype"] == 0]
+    if len(ota) != 1 or ota[0]["offset"] != ota_offset or ota[0]["size"] != build_file(build_dir, ota_name).stat().st_size:
+        raise RuntimeError("otadata image must cover the OTA data partition")
     flashed = next((entry for entry in entries if entry["offset"] == app_offset), None)
     if not flashed or flashed["type"] != 0:
         raise RuntimeError("flashed application offset must match an application partition start")
@@ -393,7 +406,7 @@ def verify_build(build_dir: Path, language: str, aec_mode: str = "local") -> dic
         segments.append({"offset": hex(start), "file": name, "size": size, "sha256": sha256(source)})
     if not segments or description["app_bin"] not in {segment["file"] for segment in segments}:
         raise RuntimeError("flash files must include the application")
-    ota_capacity = verify_ota_capacity(build_dir, description, flash, segments)
+    ota_capacity = verify_flash_layout(build_dir, description, config, flash, segments)
     provenance = verify_build_provenance(build_dir)
     return {
         "schema_version": 1,
