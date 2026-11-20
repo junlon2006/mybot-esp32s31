@@ -11,6 +11,7 @@ images and metadata are written to releases/ by default. Python 3.10 is supporte
 from __future__ import annotations
 
 import argparse
+import fcntl
 import json
 import os
 import re
@@ -20,6 +21,8 @@ import stat
 import subprocess
 import sys
 import time
+import uuid
+from contextlib import contextmanager
 from pathlib import Path
 
 
@@ -325,10 +328,112 @@ def configure_local_variant(
         raise RuntimeError("ESP-IDF did not save the requested language, AEC mode and 60 ms configuration")
 
 
+DELIVERY_SUFFIXES = (".bin", ".manifest.json", ".sha256", ".flash.txt", ".licenses.txt")
+
+
+def _delivery_store(output_root: Path, name: str) -> Path:
+    return output_root / f".{name}.versions"
+
+
+def _current_directory(store: Path) -> Path | None:
+    """Accept only a direct, builder-named directory as the publication target."""
+    if not store.exists() and not store.is_symlink():
+        return None
+    os.close(_open_directory(store))
+    current = store / "current"
+    if not current.is_symlink():
+        if current.exists():
+            raise RuntimeError(f"invalid delivery pointer: {current}")
+        return None
+    target = os.readlink(current)
+    if not re.fullmatch(r"version-[0-9a-f]{32}", target):
+        raise RuntimeError(f"invalid delivery pointer: {current}")
+    directory = store / target
+    os.close(_open_directory(directory))
+    return directory
+
+
 def validate_variant_outputs(output_root: Path, name: str) -> None:
-    """Reject output aliases before merge-bin or the metadata writer can follow them."""
-    for suffix in (".bin", ".manifest.json", ".sha256", ".flash.txt", ".licenses.txt"):
-        validate_writable_generated_file(output_root / (name + suffix), "firmware output")
+    store = _delivery_store(output_root, name)
+    current = _current_directory(store)
+    for suffix in DELIVERY_SUFFIXES:
+        path = output_root / (name + suffix)
+        if path.is_symlink():
+            if os.readlink(path) != str(Path(store.name) / "current" / path.name):
+                raise RuntimeError(f"refusing linked firmware output: {path}")
+        else:
+            validate_writable_generated_file(path, "firmware output")
+        if current:
+            validate_writable_generated_file(current / path.name, "published firmware")
+
+
+def _set_link(target: Path, link: Path) -> None:
+    # Rename within the destination directory so a reader observes one complete link.
+    temp = link.with_name(".mybot-link-" + uuid.uuid4().hex)
+    temp.symlink_to(target)
+    try:
+        os.replace(temp, link)
+    finally:
+        temp.unlink(missing_ok=True)
+
+
+def _publish_delivery(output_root: Path, name: str, version: Path) -> None:
+    store = version.parent
+    outputs = [output_root / (name + suffix) for suffix in DELIVERY_SUFFIXES]
+    for path in outputs:
+        validate_writable_generated_file(version / path.name, "staged firmware")
+        if not (version / path.name).is_file():
+            raise RuntimeError(f"incomplete staged firmware: {path.name}")
+
+    # Local processes publishing separate builds can finish in either order.
+    # Serialize only migration and the final switch (the build can take minutes).
+    fd = _open_directory(store)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        validate_variant_outputs(output_root, name)
+        current = _current_directory(store)
+        legacy = [path for path in outputs if not path.is_symlink() and path.exists()]
+        if legacy and current is None:
+            # Each flat file continues to resolve to the old bytes throughout migration.
+            previous = store / ("version-" + uuid.uuid4().hex)
+            previous.mkdir(mode=0o700)
+            for path in legacy:
+                shutil.copyfile(path, previous / path.name)
+            _set_link(Path(previous.name), store / "current")
+            current = previous
+        for path in outputs:
+            if path.is_symlink():
+                continue
+            if path in legacy and (not (current / path.name).is_file() or
+                                   path.read_bytes() != (current / path.name).read_bytes()):
+                raise RuntimeError(f"flat firmware changed during migration: {path}")
+            _set_link(Path(store.name) / "current" / path.name, path)
+        _set_link(Path(version.name), store / "current")
+    finally:
+        os.close(fd)
+
+
+@contextmanager
+def _staged_delivery(output_root: Path, name: str, dry_run: bool):
+    store = _delivery_store(output_root, name)
+    if dry_run:
+        yield store / "stage-STAGING"
+        return
+    token = uuid.uuid4().hex
+    stage = store / ("stage-" + token)
+    version = store / ("version-" + token)
+    fd = _open_directory(store, create=True)
+    try:
+        os.mkdir(stage.name, mode=0o700, dir_fd=fd)
+        try:
+            yield stage
+        except BaseException:
+            _remove_generated_entry(fd, stage.name)
+            raise
+        os.rename(stage.name, version.name, src_dir_fd=fd, dst_dir_fd=fd)
+        _publish_delivery(output_root, name, version)
+    finally:
+        os.close(fd)
 
 
 def build_variant(
@@ -369,17 +474,19 @@ def build_variant(
             configure_local_variant(idf, execution_args, sdkconfig, language, aec_mode, dry_run)
         run(idf, [*execution_args, "build"], dry_run)
         run(idf, [*execution_args, "size"], dry_run)
-        # idf.py invokes merge-bin from build_dir: -o must be absolute.
-        run(idf, [*execution_args, "merge-bin", "-o", str(output_path)], dry_run)
-        command = [
-            sys.executable, str(PROJECT_ROOT / "scripts/check_s31_build.py"),
-            "--build-dir", str(build_dir), "--language", language,
-            "--aec-mode", aec_mode,
-            "--merged", str(output_path),
-        ]
-        print(">>>", shlex.join(command))
-        if not dry_run:
-            subprocess.run(command, cwd=PROJECT_ROOT, check=True)
+        with _staged_delivery(output_root, name, dry_run) as stage:
+            staged_image = stage / output_path.name
+            # idf.py invokes merge-bin from build_dir: -o must be absolute.
+            run(idf, [*execution_args, "merge-bin", "-o", str(staged_image)], dry_run)
+            command = [
+                sys.executable, str(PROJECT_ROOT / "scripts/check_s31_build.py"),
+                "--build-dir", str(build_dir), "--language", language,
+                "--aec-mode", aec_mode,
+                "--merged", str(staged_image),
+            ]
+            print(">>>", shlex.join(command))
+            if not dry_run:
+                subprocess.run(command, cwd=PROJECT_ROOT, check=True)
     except Exception:
         print(f"[FAIL] {name} elapsed={format_elapsed(time.perf_counter() - started_at)}")
         raise
@@ -436,7 +543,7 @@ def main() -> int:
         prepare_local_directory(output_root, "output", args.dry_run)
     else:
         prepare_generated_root(build_root, "build", args.dry_run, clean=not args.no_clean)
-        prepare_generated_root(output_root, "output", args.dry_run, clean=not args.no_clean)
+        prepare_generated_root(output_root, "output", args.dry_run, clean=False)
 
     outputs: list[Path] = []
     batch_started_at = time.perf_counter()

@@ -521,6 +521,21 @@ class S31DeliveryTests(unittest.TestCase):
             self.merged.with_suffix(".licenses.txt").name,
         })
 
+    def test_verify_merged_checks_published_image_and_sidecars_without_writing(self) -> None:
+        import build_all as builder
+        with builder._staged_delivery(self.root, self.merged.stem, False) as stage:
+            image = stage / self.merged.name
+            image.write_bytes(self.merged.read_bytes())
+            checker.package(self.build, image, "zh-CN")
+        checker.package(self.build, self.merged, "zh-CN", verify_only=True)
+        with self.assertRaisesRegex(RuntimeError, "read-only"):
+            checker.package(self.build, self.merged.resolve(), "zh-CN")
+        checksum = self.merged.with_suffix(".sha256").resolve()
+        checksum.write_bytes(b"stale")
+        with self.assertRaisesRegex(RuntimeError, "metadata mismatch"):
+            checker.package(self.build, self.merged, "zh-CN", verify_only=True)
+        self.assertEqual(checksum.read_bytes(), b"stale")
+
     def test_delivery_keeps_complete_original_license_and_notice_bytes(self) -> None:
         checker.package(self.build, self.merged, "zh-CN")
         payload = self.merged.with_suffix(".licenses.txt").read_bytes()
@@ -907,9 +922,10 @@ class WorkflowDeliveryTests(unittest.TestCase):
         self.assertNotIn("scripts/check_s31_build.py --build-dir", build_job)
         self.assertIn("python3 scripts/build_all.py", build_job)
         upload = workflow.split("      - name: Upload firmware", 1)[1]
+        self.assertIn('dirname "$(realpath "releases/$name.bin")"', workflow)
         for suffix in (".bin", ".manifest.json", ".sha256", ".flash.txt", ".licenses.txt"):
             self.assertIn(
-                'releases/esp-mosaico-v1.2-${{ matrix.language }}' + suffix,
+                '${{ steps.delivery.outputs.directory }}/esp-mosaico-v1.2-${{ matrix.language }}' + suffix,
                 upload,
             )
         self.assertNotIn(".map", upload)

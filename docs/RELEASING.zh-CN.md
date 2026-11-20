@@ -46,11 +46,9 @@ Local AEC 还检查有效 AEC 符号及 map 中的 S31 ESP-SR archive 路径。�
 从上述构建生成中文 Local AEC 交付文件：
 
 ```sh
-mkdir -p releases
-idf.py --preview -B build/mosaico-v1.2 merge-bin \
-  -o "$PWD/releases/esp-mosaico-v1.2-zh-CN.bin"
+python3 scripts/build_all.py --language zh-CN --aec-mode local
 python3 scripts/check_s31_build.py --build-dir build/mosaico-v1.2 \
-  --language zh-CN --aec-mode local --merged releases/esp-mosaico-v1.2-zh-CN.bin
+  --language zh-CN --aec-mode local --verify-merged releases/esp-mosaico-v1.2-zh-CN.bin
 ```
 
 `--language` 和 `--aec-mode` 应与实际构建配置一致。检查器与 CI builder 接受
@@ -59,7 +57,13 @@ python3 scripts/check_s31_build.py --build-dir build/mosaico-v1.2 \
 
 ## 交付文件
 
-每种语言在所选输出目录中对应五个文件，例如：
+构建器在暂存目录验证全部五个文件，然后一次切换该语言的当前版本。输出根目录沿用原文件名，
+通过同一个版本链接读取。复制或上传整组文件时，先解析 BIN 的真实路径，再从同一版本目录
+取其余四项。`--verify-merged` 可用匹配的构建执行只读校验。结束所有构建和读取后，可清理
+`.<板型>-<语言>.versions/` 中未由 `current` 指向的旧 `version-*` 目录及中断遗留的
+`stage-*` 目录。
+
+每种语言交付以下五个文件：
 
 ```text
 esp-mosaico-v1.2-zh-CN.bin
@@ -77,8 +81,8 @@ manifest 记录项目／IDF 版本、绑定构建的源码版本及 dirty 状态
 
 push/PR 执行源码检查、host 测试，并构建三个固件组合：中文 Local AEC、英文 Local AEC、
 中文 Cloud AEC。各 job 通过 `scripts/build_all.py --language LANGUAGE --aec-mode MODE`
-使用随工程的固定 RTSA，并使用临时独立构建／配置和输出根目录。生成目录只有在所有权
-标记校验通过后才会清理，非空且无标记的目录会被拒绝。各 job 上传上述五项交付文件，
+使用随工程的固定 RTSA，并使用临时独立构建／配置和输出根目录。非空目录须通过所有权
+标记校验。CI 清理构建根目录，输出根目录保留已发布版本。各 job 上传上述五项交付文件，
 artifact 名称包含 AEC 模式。不上传原 tgz、sdkconfig、link map 或 NVS，不自动创建 GitHub Release。
 
 显式 `--build-root` 选择上述隔离流程。其清理在 Python 3.10+ 上使用目录描述符和
