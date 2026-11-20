@@ -101,6 +101,17 @@ typedef struct {
      *         stop()/start() before media readiness can be restored.
      */
     int (*reset)(void *ctx);
+
+    /**
+     * Control whether a buffered capture source may retain incoming PCM.
+     * The meeting pipeline disables input before start and on the capture
+     * worker before reset. Control enables it after the session can publish.
+     * The operation must be bounded and safe alongside read and incoming I/O.
+     *
+     * @param ctx     device context from init()
+     * @param enabled true to accept fresh PCM, false to discard incoming PCM
+     */
+    void (*set_input_enabled)(void *ctx, bool enabled);
 } mybot_audio_capture_ops_t;
 
 /**

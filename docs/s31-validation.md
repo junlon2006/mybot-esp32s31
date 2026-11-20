@@ -1727,3 +1727,20 @@ and no video runtime. Both merged images and their four metadata/license files
 are refreshed in `releases/`, use flash offset `0x0` and share the same source-input
 snapshot. Manifests mark the source changes as uncommitted. Saved configuration
 and the active build remain Chinese.
+
+## 2026-11-20 Meeting USB capture across pause and RTC readiness
+
+A host integration check exercised the production USB capture driver, resampler
+and SDK media pipeline with simulated USB transfers and worker scheduling. With
+the previous driver, 348 of the 960 samples in the first LISTEN frame were
+nonzero when PC audio was supplied during a pause and only silence followed
+resume. The fixed pipeline discarded all old samples on resume, initial RTC
+readiness, reconnect and reconnect while paused, in both Local and Cloud AEC
+configurations. Input injected between the capture reset and final readiness was
+also discarded. A new signal sent immediately after resume appeared in the
+first 60 ms frame.
+
+The 10 USB driver cases and 27 media lifecycle cases in each AEC build passed
+under UBSan. The direct Chinese ESP-IDF v6.1 build and config/binary/map checks
+passed with Local AEC and 448,128 bytes free in the smallest OTA slot. Hardware
+pause/resume and live RTC reconnect remain to be verified.

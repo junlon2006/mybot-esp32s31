@@ -2,6 +2,9 @@
 
 ## Unreleased — standalone S31 translation
 
+- Discard buffered PC audio across meeting pauses and RTC reconnects so LISTEN
+  resumes with fresh USB input.
+
 - Add a one-tap language-pair swap in media, face-to-face and meeting setup using
   the existing acknowledged language selection command.
 

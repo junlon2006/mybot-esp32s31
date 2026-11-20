@@ -25,6 +25,7 @@ static char logs[4096];
 static int16_t fifo[960];
 static unsigned fifo_bytes, fifo_offset;
 static bool fail_fifo;
+static void *reset_on_fifo_read;
 static _Thread_local bool pause_next_unlock;
 static pthread_mutex_t barrier_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t barrier_cond = PTHREAD_COND_INITIALIZER;
@@ -78,6 +79,11 @@ uint16_t tud_audio_n_read(uint8_t function, void *buffer, uint16_t bytes) {
         return 0;
     memcpy(buffer, (uint8_t *)fifo + fifo_offset, bytes);
     fifo_offset += bytes;
+    if (reset_on_fifo_read) {
+        /* Model a capture-owner fence after FIFO copy, before the ISR publishes this chunk. */
+        assert(mosaico_usb_audio_capture_ops()->reset(reset_on_fifo_read) == 0);
+        reset_on_fifo_read = NULL;
+    }
     return bytes;
 }
 bool tud_audio_n_clear_ep_out_ff(uint8_t function) {
@@ -141,17 +147,24 @@ static void interface(bool open) {
     tusb_control_request_t request = {.wIndex = MYBOT_USB_ITF_SPEAKER, .wValue = open};
     assert(open ? tud_audio_set_itf_cb(0, &request) : tud_audio_set_itf_close_ep_cb(0, &request));
 }
+static void fill_out_fifo(unsigned frames, int16_t left, int16_t right) {
+    assert(frames * 2 <= sizeof(fifo) / sizeof(fifo[0]));
+    for (unsigned i = 0; i < frames; ++i) {
+        fifo[i * 2] = left;
+        fifo[i * 2 + 1] = right;
+    }
+    fifo_bytes = frames * 4;
+    fifo_offset = 0;
+}
+static void deliver_out_fifo(void) {
+    assert(tud_audio_rx_done_isr(0, fifo_bytes, 0, MYBOT_USB_EP_AUDIO_OUT, 1));
+    assert(fifo_offset == fifo_bytes);
+}
 static void feed(unsigned frames, int16_t left, int16_t right) {
     while (frames) {
         unsigned amount = frames < 480 ? frames : 480;
-        for (unsigned i = 0; i < amount; ++i) {
-            fifo[i * 2] = left;
-            fifo[i * 2 + 1] = right;
-        }
-        fifo_bytes = amount * 4;
-        fifo_offset = 0;
-        assert(tud_audio_rx_done_isr(0, fifo_bytes, 0, MYBOT_USB_EP_AUDIO_OUT, 1));
-        assert(fifo_bytes == fifo_offset);
+        fill_out_fifo(amount, left, right);
+        deliver_out_fifo();
         frames -= amount;
     }
 }
@@ -354,8 +367,12 @@ static void test_capture(void) {
     value[1] = 1;
     assert(!tud_audio_set_req_entity_cb(0, &bad, value)); /* Unsupported positive dB. */
     /* Consumer stalls: ring bound and fresh-data recovery, never slow stale draining. */
+    stats = mosaico_usb_audio_stats();
     feed(16000, -12000, -12000);
-    assert(mosaico_usb_audio_stats().queued_frames == 7680);
+    mosaico_usb_audio_stats_t full = mosaico_usb_audio_stats();
+    assert(full.queued_frames == 7680);
+    assert(full.capture_dropped_frames - stats.capture_dropped_frames ==
+           stats.queued_frames + 16000 - 7680);
     assert(ops->read(capture, output + 1, 960) == 960);
     assert(output[960] <= -11999 && output[960] >= -12001);
     assert(mosaico_usb_audio_stats().queued_frames == 960);
@@ -433,6 +450,57 @@ static void test_concurrency(void) {
     ops->destroy(capture);
     puts(
         "PASS USB capture concurrent stop/stream-close invalidates in-flight PCM without blocking");
+}
+
+static void test_capture_reset(void) {
+    const mybot_audio_capture_ops_t *ops = mosaico_usb_audio_capture_ops();
+    void *capture;
+    int16_t output[960];
+    mosaico_usb_audio_prepare();
+    mounted = true;
+    interface(true);
+    assert(ops->init(&capture, 16000, 1, 16) == 0);
+    assert(ops->start(capture) == 0);
+
+    /* The SDK reads and discards while paused, leaving 20 ms of voice and a live FIR. */
+    feed(2880, 12000, 12000);
+    assert(ops->read(capture, output, 960) == 960 && output[959] == 12000);
+    assert(mosaico_usb_audio_stats().queued_frames == 960);
+    if (ops->reset)
+        assert(ops->reset(capture) == 0);
+    feed(2880, 0, 0);
+    assert(ops->read(capture, output, 960) == 960);
+    silent(output, 960);
+
+    /* TinyUSB already has the last OUT packet, but its completion callback is pending. */
+    fill_out_fifo(48, 12000, 12000);
+    assert(ops->reset && ops->reset(capture) == 0);
+    deliver_out_fifo();
+    assert(mosaico_usb_audio_stats().queued_frames == 0);
+
+    /* The entire batch already in the RX callback belongs to the old audio interval. */
+    reset_on_fifo_read = capture;
+    feed(480, 18000, 18000);
+    assert(!reset_on_fifo_read && mosaico_usb_audio_stats().queued_frames == 0);
+    feed(2880, -12000, -12000);
+    assert(ops->read(capture, output, 960) == 960 && output[959] == -12000);
+
+    /* USB continues receiving between the capture fence and the SDK reopening LISTEN. */
+    assert(ops->set_input_enabled);
+    ops->set_input_enabled(capture, false);
+    assert(ops->reset(capture) == 0);
+    feed(5760, 12000, 12000);
+    assert(mosaico_usb_audio_stats().queued_frames == 0);
+    fill_out_fifo(48, 12000, 12000);
+    ops->set_input_enabled(capture, true);
+    deliver_out_fifo();
+    feed(2880, 0, 0);
+    assert(ops->read(capture, output, 960) == 960);
+    silent(output, 960);
+    feed(2880, 9000, 9000);
+    assert(ops->read(capture, output, 960) == 960 && output[959] == 9000);
+    ops->destroy(capture);
+    puts("PASS USB capture fence clears queued PCM, filter history and in-flight OUT audio");
 }
 static int16_t dsp_input[48000 * 2], dsp_output[16000], fragmented_output[16000];
 static double response(double frequency) {
@@ -524,6 +592,8 @@ static void test_playback(void) {
     assert(capture_ops->start(capture) == 0);
     feed(2880, 2000, 2000);
     unsigned before = mosaico_usb_audio_stats().playback_queued_frames;
+    assert(capture_ops->reset(capture) == 0);
+    assert(mosaico_usb_audio_stats().playback_queued_frames == before);
     interface(false);
     assert(mosaico_usb_audio_stats().playback_queued_frames == before);
     assert(host_microphone(10, false) >= 17990);
@@ -830,6 +900,8 @@ int main(int argc, char **argv) {
         test_controls();
     } else if (!strcmp(argv[1], "capture")) {
         test_capture();
+    } else if (!strcmp(argv[1], "capture_reset")) {
+        test_capture_reset();
     } else if (!strcmp(argv[1], "concurrency")) {
         test_concurrency();
     } else if (!strcmp(argv[1], "playback")) {
