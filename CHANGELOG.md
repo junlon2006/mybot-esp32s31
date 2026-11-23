@@ -2,6 +2,10 @@
 
 ## Unreleased — standalone S31 translation
 
+- Synchronize the translation SDK through upstream `8bae576`. Finish framed HTTP responses
+  without waiting for the peer to close, restore the pairing code after Wi-Fi reconnect,
+  retain the control worker for shutdown retries, and validate RTC downlink PCM before queueing.
+
 - Add a one-tap language-pair swap in media, face-to-face and meeting setup using
   the existing acknowledged language selection command.
 

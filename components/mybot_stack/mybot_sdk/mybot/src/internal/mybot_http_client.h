@@ -13,7 +13,7 @@ extern "C" {
  * Each call initializes it. Release owned body storage with
  * mybot_http_client_response_free() before reuse. */
 typedef struct {
-    int status_code; /* HTTP status code (200, 404, etc.), 0 if parse failed */
+    int status_code; /* HTTP status code when available, including framing failures */
     char *body;      /* response body (NUL-terminated), NULL if empty */
     size_t body_len; /* body length in bytes */
     /* False proves no transport write was attempted. True remains conservative

@@ -20,6 +20,7 @@ static unsigned notification_count, language_sets, volume_sets, pause_sets, rend
 static unsigned conversation_starts, session_ends, rtc_finalizations, rtc_joins, mode_sets;
 static unsigned conversation_stops;
 static unsigned recovery_confirmations;
+static unsigned pairing_prompts;
 static bool fail_queue, fail_volume, fail_pause, fail_end_session, fail_mode, paused;
 static bool fail_recovery;
 static int hardware_volume, rtc_fini_result;
@@ -253,6 +254,11 @@ int mybot_lcd_show_content(mybot_lcd_t *lcd, const mybot_lcd_content_t *content)
     renders++;
     return 0;
 }
+int mybot_media_pipeline_play_pair_code(mybot_media_pipeline_t *pipeline, const char *code) {
+    assert(pipeline == &runtime.media && strcmp(code, "123456") == 0);
+    pairing_prompts++;
+    return 0;
+}
 
 static void reset(void) {
     free(runtime.usb_media);
@@ -272,7 +278,7 @@ static void reset(void) {
         mode_sets = 0;
     fail_queue = fail_volume = fail_pause = fail_end_session = fail_mode = paused = false;
     fail_recovery = false;
-    recovery_confirmations = 0;
+    recovery_confirmations = pairing_prompts = 0;
     hardware_volume = 40;
     rtc_fini_result = 0;
     s_lifecycle_gate = s_exit_generation = s_run_exit_generation = 0;
@@ -1029,7 +1035,35 @@ static void test_stop_during_start_still_stops_active_session(void) {
     tests++;
 }
 
+static void test_pair_code_restored_after_reconnect(void) {
+    reset();
+    assert(mybot_state_model_set_device_state(&runtime.state_model, MYBOT_DEVICE_STATE_PAIRING));
+    char code[] = "123456";
+    dev_on_pair_code(code, &runtime);
+    memset(code, 0, sizeof(code));
+    assert(mybot_state_model_set_device_state(&runtime.state_model,
+                                              MYBOT_DEVICE_STATE_AWAITING_CLAIM));
+    mybot_presenter_render_state(&runtime.presenter, &runtime.state_model);
+    assert(displayed.screen == MYBOT_LCD_SCREEN_PAIR_CODE);
+    assert(strcmp(displayed.pair_code, "123456") == 0 && pairing_prompts == 1);
+
+    assert(mybot_state_model_network_lost(&runtime.state_model));
+    mybot_presenter_render_state(&runtime.presenter, &runtime.state_model);
+    assert(displayed.screen == MYBOT_LCD_SCREEN_WIFI_DISCONNECTED);
+    assert(mybot_state_model_network_restored(&runtime.state_model));
+    mybot_presenter_render_state(&runtime.presenter, &runtime.state_model);
+    assert(displayed.screen == MYBOT_LCD_SCREEN_PAIR_CODE);
+    assert(strcmp(displayed.pair_code, "123456") == 0 && pairing_prompts == 1);
+
+    assert(mybot_state_model_set_device_state(&runtime.state_model, MYBOT_DEVICE_STATE_RUNTIME));
+    mybot_presenter_render_state(&runtime.presenter, &runtime.state_model);
+    assert(displayed.screen == MYBOT_LCD_SCREEN_READY && !displayed.pair_code[0]);
+    assert(!runtime.presenter.pair_code[0]);
+    tests++;
+}
+
 int main(void) {
+    test_pair_code_restored_after_reconnect();
     test_unknown_recovery_is_explicit_async_and_acknowledged();
     test_unknown_recovery_rejects_active_local_routes();
     test_unknown_recovery_rechecks_state_and_acknowledges_failure();

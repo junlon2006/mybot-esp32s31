@@ -26,7 +26,6 @@ int mybot_lcd_init(mybot_lcd_t *lcd);
 int mybot_lcd_show_content(mybot_lcd_t *lcd, const mybot_lcd_content_t *content);
 
 /** Render the pairing screen from the control owner. */
-int mybot_lcd_show_pair_code(mybot_lcd_t *lcd, const char *pair_code);
 
 /** Release the LCD implementation from the control owner. Idempotent. */
 void mybot_lcd_deinit(mybot_lcd_t *lcd);

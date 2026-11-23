@@ -10,21 +10,32 @@
 
 static unsigned allocations, delivered, http_starts, http_stops, notifications, shutdowns;
 static unsigned tests, finished, kv_deinitialized, service_joins;
-static bool fail_queue, disable_during_start, fail_first_service_join, run_control_finalizer;
+static bool fail_queue, disable_during_start, fail_first_service_join, control_worker_active;
 static bool fail_control_join, fail_service_join, fail_physical_stop, fail_physical_destroy;
 static bool fail_usb_stop, fail_usb_destroy, fail_rtc_fini, rtc_pending;
 static unsigned physical_stops, physical_destroys, usb_stops, usb_destroys, rtc_finalizations;
-static unsigned aosl_releases;
+static unsigned aosl_releases, stop_submission_failures, stop_submissions;
 #define runtime s_default_runtime
 static mybot_device_service_request_t last_result;
 static aosl_mpq_func_t pending_notification;
+static aosl_mpq_func_t pending_control_stop;
 static uintptr_t notification_argument;
+int aosl_errno;
 
 void test_log(const char *format, ...) {
     (void)format;
 }
 void aosl_msleep(unsigned milliseconds) {
     (void)milliseconds;
+    if (pending_control_stop) {
+        assert(!control_worker_active);
+        aosl_mpq_func_t callback = pending_control_stop;
+        pending_control_stop = NULL;
+        control_worker_active = true;
+        uintptr_t argument = (uintptr_t)&runtime;
+        callback(NULL, NULL, 1, &argument);
+        control_worker_active = false;
+    }
 }
 void *aosl_hal_malloc(size_t size) {
     void *memory = malloc(size);
@@ -42,27 +53,40 @@ int aosl_mpq_queue(aosl_mpq_t target, aosl_mpq_t source, aosl_ref_t ref, const c
     (void)source;
     (void)ref;
     assert(target == runtime.control_mpq);
-    assert(strcmp(name, "handle_service_result") == 0);
-    assert(argc == 1); /* Notifications may own the runtime pointer, never a freed request. */
-    if (fail_queue)
-        return -1;
+    assert(argc == 1); /* Queued work holds only the runtime pointer. */
     va_list arguments;
     va_start(arguments, argc);
-    notification_argument = va_arg(arguments, uintptr_t);
+    uintptr_t argument = va_arg(arguments, uintptr_t);
     va_end(arguments);
-    assert(notification_argument == (uintptr_t)&runtime);
+    assert(argument == (uintptr_t)&runtime);
+    if (strcmp(name, "handle_control_stop") == 0) {
+        assert(!control_worker_active && !pending_control_stop);
+        assert(!runtime_is_running(&runtime));
+        stop_submissions++;
+        if (stop_submission_failures > 0) {
+            stop_submission_failures--;
+            aosl_errno = AOSL_EAGAIN;
+            return -1;
+        }
+        pending_control_stop = callback;
+        return 0;
+    }
+    assert(strcmp(name, "handle_service_result") == 0);
+    if (fail_queue)
+        return -1;
+    notification_argument = argument;
     pending_notification = callback;
     notifications++;
     return 0;
 }
 int aosl_mpq_destroy_wait(aosl_mpq_t queue) {
-    if (queue == runtime.control_mpq && run_control_finalizer) {
+    if (queue == runtime.control_mpq) {
+        assert(!control_worker_active && runtime.control_stop_result == 1);
         if (fail_control_join)
             return -1;
-        control_worker_fini(&runtime);
         return 0;
     }
-    assert(queue == runtime.service_mpq);
+    assert(queue == runtime.service_mpq && control_worker_active);
     service_joins++;
     if (fail_service_join || (fail_first_service_join && service_joins == 1))
         return -1;
@@ -116,6 +140,7 @@ int mybot_agora_rtc_fini(void) {
     return 0;
 }
 void mybot_kv_store_deinit(mybot_kv_store_t *store) {
+    assert(control_worker_active);
     if (store->ctx) {
         kv_deinitialized++;
         store->ctx = NULL;
@@ -139,18 +164,21 @@ void aosl_dtor(void) {
     aosl_releases++;
 }
 void mybot_device_lifecycle_shutdown(mybot_device_lifecycle_t *lifecycle) {
-    assert(lifecycle == &runtime.lifecycle);
+    assert(lifecycle == &runtime.lifecycle && control_worker_active);
     assert(!runtime.service_results_enabled);
+    lifecycle->shutting_down = true;
     shutdowns++;
 }
 void mybot_device_lifecycle_finish_shutdown(mybot_device_lifecycle_t *lifecycle) {
-    assert(lifecycle == &runtime.lifecycle);
+    assert(lifecycle == &runtime.lifecycle && control_worker_active);
     assert(!runtime.completed_results);
     finished++;
 }
 void mybot_device_lifecycle_service_result(mybot_device_lifecycle_t *lifecycle,
                                            const mybot_device_service_request_t *request) {
     assert(lifecycle == &runtime.lifecycle);
+    if (mybot_get_state() == MYBOT_STATE_STOPPING)
+        assert(control_worker_active);
     last_result = *request;
     delivered++;
 }
@@ -207,13 +235,16 @@ static void reset(void) {
     delivered = http_starts = http_stops = notifications = shutdowns = finished = 0;
     kv_deinitialized = service_joins = 0;
     fail_queue = disable_during_start = false;
-    fail_first_service_join = run_control_finalizer = false;
+    fail_first_service_join = control_worker_active = false;
     fail_control_join = fail_service_join = fail_physical_stop = fail_physical_destroy = false;
     fail_usb_stop = fail_usb_destroy = fail_rtc_fini = rtc_pending = false;
     physical_stops = physical_destroys = usb_stops = usb_destroys = rtc_finalizations = 0;
     aosl_releases = 0;
     pending_notification = NULL;
+    pending_control_stop = NULL;
     notification_argument = 0;
+    stop_submission_failures = stop_submissions = 0;
+    aosl_errno = 0;
 }
 static mybot_device_service_request_t *request(mybot_device_service_request_type_t type) {
     mybot_device_service_request_t *result = aosl_hal_malloc(sizeof(*result));
@@ -267,7 +298,9 @@ static void test_disabled_after_start(void) {
     disable_during_start = true;
     execute(request(MYBOT_DEVICE_SERVICE_START));
     assert(http_starts == 1 && notifications == 0 && runtime.completed_results);
-    cleanup_services(&runtime);
+    control_worker_active = true;
+    assert(cleanup_services(&runtime));
+    control_worker_active = false;
     assert(shutdowns == 1 && finished == 1 && delivered == 1 && allocations == 0);
     assert(strcmp(last_result.payload.start.response.conversation_id,
                   "cloud-parent-returned-during-stop") == 0);
@@ -287,7 +320,9 @@ static void test_late_notification(void) {
     reset();
     execute(request(MYBOT_DEVICE_SERVICE_START));
     assert(pending_notification && allocations == 1);
-    cleanup_services(&runtime);
+    control_worker_active = true;
+    assert(cleanup_services(&runtime));
+    control_worker_active = false;
     assert(delivered == 1 && allocations == 0 && !runtime.lifecycle_initialized);
     notify(); /* Cleanup already freed the request; notification owns only runtime. */
     assert(delivered == 1 && allocations == 0 && !runtime.completed_results);
@@ -310,8 +345,11 @@ static void test_service_join_retry(void) {
     execute(request(MYBOT_DEVICE_SERVICE_START));
     assert(runtime.completed_results && allocations == 1 && notifications == 0);
     fail_first_service_join = true;
-    run_control_finalizer = true;
-    assert(destroy_control_queue(&runtime));
+    assert(mybot_stop() < 0);
+    assert(runtime.control_mpq == 1 && runtime.service_mpq == 2);
+    assert(runtime.aosl_ref_held && mybot_get_state() == MYBOT_STATE_STOPPING);
+    assert(runtime.completed_results && delivered == 0 && finished == 0 && kv_deinitialized == 0);
+    assert(mybot_stop() == 0);
     assert(service_joins == 2 && shutdowns == 1);
     assert(delivered == 1 && finished == 1 && kv_deinitialized == 1);
     assert(strcmp(last_result.payload.start.response.conversation_id,
@@ -331,7 +369,6 @@ static void retain_physical_media(void) {
     runtime.media.send_mpq = 13;
     runtime.silent_audio = aosl_hal_malloc(16);
     assert(runtime.silent_audio);
-    run_control_finalizer = true;
 }
 
 static void assert_stop_retained(void) {
@@ -345,7 +382,6 @@ static void test_stop_before_media_initialization(void) {
     runtime.lifecycle_initialized = false;
     runtime.kv_store.ctx = NULL;
     runtime.service_mpq = AOSL_MPQ_INVALID;
-    run_control_finalizer = true;
     assert(mybot_stop() == 0);
     assert(aosl_releases == 1 && !runtime.aosl_ref_held && !allocations);
     assert(!physical_stops && !physical_destroys && !usb_stops && !usb_destroys);
@@ -363,7 +399,7 @@ static void test_physical_stop_and_destroy_retry(void) {
         assert_stop_retained();
         assert(runtime.silent_audio == retained && !runtime.usb_media);
         assert(failure ? runtime.media.stop_complete : runtime.media.cap_mpq == 11);
-        assert(runtime.control_mpq == AOSL_MPQ_INVALID);
+        assert(runtime.control_mpq == 1);
         fail_physical_stop = fail_physical_destroy = false;
         assert(mybot_stop() == 0);
         assert(aosl_releases == 1 && !runtime.aosl_ref_held && !allocations);
@@ -378,7 +414,7 @@ static void test_standalone_rtc_cleanup_retry(void) {
     fail_rtc_fini = rtc_pending = true;
     assert(mybot_stop() < 0);
     assert_stop_retained();
-    assert(!physical_destroys && rtc_finalizations >= 2 && rtc_pending);
+    assert(!physical_destroys && rtc_finalizations == 1 && rtc_pending);
     assert(mybot_stop() < 0);
     assert_stop_retained(); /* A terminal vendor failure must remain blocked. */
     fail_rtc_fini = false;  /* A retryable forwarding-queue failure can instead clear. */
@@ -429,18 +465,18 @@ static void test_pending_service_and_control_join(void) {
     retain_physical_media();
     fail_control_join = true;
     assert(mybot_stop() < 0);
-    assert(runtime.aosl_ref_held && !aosl_releases && runtime.media.initialized);
-    assert(runtime.control_mpq != AOSL_MPQ_INVALID && !physical_stops);
+    assert(runtime.aosl_ref_held && !aosl_releases && !runtime.media.initialized);
+    assert(runtime.control_mpq == 1 && physical_destroys == 1);
+    assert(mybot_get_state() == MYBOT_STATE_STOPPING && stop_submissions == 1);
     fail_control_join = false;
     assert(mybot_stop() == 0);
-    assert(aosl_releases == 1 && !runtime.aosl_ref_held && !allocations);
+    assert(aosl_releases == 1 && !runtime.aosl_ref_held && !allocations && stop_submissions == 1);
     tests++;
 }
 
 static void test_pending_service_after_lifecycle_init_failure(void) {
     reset();
     runtime.lifecycle_initialized = false;
-    run_control_finalizer = true;
     fail_service_join = true;
     assert(mybot_stop() < 0);
     assert(runtime.aosl_ref_held && !aosl_releases && runtime.kv_store.ctx);
@@ -449,6 +485,14 @@ static void test_pending_service_after_lifecycle_init_failure(void) {
     assert(mybot_stop() == 0);
     assert(aosl_releases == 1 && !runtime.aosl_ref_held && !runtime.kv_store.ctx);
     assert(kv_deinitialized == 1 && !allocations);
+    tests++;
+}
+
+static void test_saturated_control_queue_drains_for_stop(void) {
+    reset();
+    stop_submission_failures = 2;
+    assert(mybot_stop() == 0);
+    assert(stop_submissions == 3 && aosl_releases == 1);
     tests++;
 }
 
@@ -466,6 +510,7 @@ int main(void) {
     test_usb_and_physical_shutdown_retry();
     test_pending_service_and_control_join();
     test_pending_service_after_lifecycle_init_failure();
+    test_saturated_control_queue_drains_for_stop();
     printf("translation control: %u source-level result-mailbox/shutdown scenarios passed\n",
            tests);
     return 0;

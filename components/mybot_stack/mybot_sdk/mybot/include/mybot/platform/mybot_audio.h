@@ -190,9 +190,8 @@ typedef struct {
  * Real device volume operations (optional implementation).
  *
  * The implementation owns the hardware volume control (codec register, amplifier or
- * mixer). init, set_volume and destroy are required; get_volume is optional
- * and may be NULL. When no implementation is registered the SDK simply disables
- * device volume control — playback and media volume keep working.
+ * mixer). init, set_volume and destroy are required. get_volume is optional.
+ * Playback uses SDK software gain when no device volume control is registered.
  */
 typedef struct {
     /**
@@ -214,6 +213,10 @@ typedef struct {
 
     /**
      * Get the current real device volume. Optional; may be NULL.
+     *
+     * When provided, the SDK reads it after init, for UI volume updates and before
+     * relative adjustments. A failure or out-of-range value causes the relative
+     * adjustment to fail.
      *
      * @param ctx    volume control context from init()
      * @param volume [out] current volume, 0 .. MYBOT_AUDIO_VOLUME_MAX

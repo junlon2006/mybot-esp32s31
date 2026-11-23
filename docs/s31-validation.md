@@ -1692,3 +1692,25 @@ minimum OTA free 367,632 bytes. Both preserve 60 ms, pinned RTSA, local RISC-V A
 and no video runtime. Each produced the five local delivery files in `releases/`;
 the saved configuration and active build are English after the batch. No device
 was flashed and no remote CI run is claimed.
+
+## 2026-11-23 MyBot SDK synchronization
+
+Applied the shared SDK changes through `8bae576` to the S31 translation fork.
+The pairing screen restores the current code after Wi-Fi reconnect. The HTTP
+client finishes framed responses as soon as the body arrives and preserves
+write-attempt information for the pending-start journal. The control worker
+owns shutdown retries and late HTTP results. The RTC worker receives validated
+60 ms PCM and drains copied callback payloads before retiring its queue.
+
+Host HTTP framing/trace, time sync, protocol, pairing state, lifecycle, RTC,
+control, caption, volume, audio pause, codec, USB transport, AOSL task, bootstrap
+and KV tests passed. Lifecycle fault injection covered late HTTP results, a
+saturated control queue, incomplete worker joins and repeated stop. The media
+and routing host tests exercised both Cloud AEC settings. Changed sources and
+headers passed clang-format, SPDX and `git diff --check`.
+
+Direct ESP-IDF v6.1 preview `build` and `size` passed in `build/mosaico-v1.2` for
+Chinese Local AEC. Configuration, binary provenance and link-map checks verified
+60 ms audio, RISC-V, local AOSL, pinned RTSA, video disabled and four flash
+segments. The application is 4,793,872 bytes with 449,008 bytes minimum OTA free.
+This revision has no new device test results.
