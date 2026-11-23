@@ -15,9 +15,11 @@ typedef struct {
 static queued_callback_t queue[64];
 static unsigned queued, allocations, audio_callbacks, errors, unmute_calls, leave_calls;
 static unsigned init_calls, fini_calls, destroy_calls, queue_creates, queue_destroys;
+static unsigned fini_commands;
 static unsigned tests;
 static int allocation_fail_after = -1;
 static bool reject_next_queue;
+static bool reject_fini_barrier;
 static int init_result;
 static unsigned create_calls, join_calls, rtm_login_calls, rtm_logout_calls;
 static unsigned subscribe_calls, unsubscribe_calls, send_calls;
@@ -126,7 +128,12 @@ int aosl_mpq_call_argv(aosl_mpq_t q, aosl_ref_t ref, const char *name, aosl_mpq_
                        uintptr_t argc, uintptr_t argv[]) {
     assert(q == live_queue);
     (void)ref;
-    (void)name;
+    if (strcmp(name, "rtc_fini") == 0) {
+        ++fini_commands;
+    }
+    if (reject_fini_barrier && strcmp(name, "rtc_fini_barrier") == 0) {
+        return -1;
+    }
     /* Synchronous calls run after earlier callback work on the same worker. */
     drain();
     callback(NULL, NULL, argc, argv);
@@ -346,6 +353,7 @@ static user_info_t user(uint32_t uid, const char *account) {
 static void reset(void) {
     allocation_fail_after = -1;
     reject_next_queue = false;
+    reject_fini_barrier = false;
     drain();
     memset(&s_rtc, 0, sizeof(s_rtc));
     s_rtc.state = MYBOT_RTC_STATE_INITIALIZED;
@@ -355,6 +363,7 @@ static void reset(void) {
     s_rtc.callbacks.on_remote_audio = audio_received;
     s_rtc.callbacks.on_state_changed = state_changed;
     s_rtc_mpq_id = 1;
+    s_fini_completed = false;
     live_queue = 1;
     s_rtc_callbacks_enabled = 1;
     s_rtc_callback_gate = 0;
@@ -364,6 +373,7 @@ static void reset(void) {
     memset(&direct_message, 0, sizeof(direct_message));
     memset(&channel_message, 0, sizeof(channel_message));
     init_calls = fini_calls = destroy_calls = queue_creates = queue_destroys = 0;
+    fini_commands = 0;
     init_result = 0;
     unmute_result = join_result = destroy_result = fini_result = queue_destroy_result = 0;
     initialized_app_id[0] = '\0';
@@ -452,6 +462,25 @@ static void test_whitelist(void) {
     assert(audio_callbacks == 1 && last_audio == 1234);
     tests++;
 }
+static void test_invalid_downlink_pcm(void) {
+    reset();
+    lookup_ready = true;
+    join();
+    connection_id_t conn = s_rtc.routes[0].conn_id;
+    int16_t samples[MYBOT_RTC_PCM_FRAME_BYTES / sizeof(int16_t)] = {1234};
+    audio_frame_info_t pcm = {.data_type = AUDIO_DATA_TYPE_PCM};
+    audio_frame_info_t encoded = {.data_type = AUDIO_DATA_TYPE_G722};
+    on_audio_data(conn, 900, 0, samples, sizeof(samples), &encoded);
+    on_audio_data(conn, 900, 0, samples, sizeof(samples) - 1, &pcm);
+    on_audio_data(conn, 900, 0, samples, sizeof(samples) - sizeof(int16_t), &pcm);
+    on_audio_data(conn, 900, 0, samples, sizeof(samples), NULL);
+    on_audio_data(conn, 900, 0, NULL, sizeof(samples), &pcm);
+    assert(queued == 0 && allocations == 0 && audio_callbacks == 0);
+    send_audio(conn, 900);
+    drain();
+    assert(audio_callbacks == 1 && last_audio == 1234);
+    tests++;
+}
 static void test_lookup(void) {
     reset();
     lookup_ready = true;
@@ -508,7 +537,10 @@ static void test_disabled_callbacks(void) {
     reset();
     lookup_ready = true;
     join();
+    send_audio(s_rtc.routes[0].conn_id, 900);
+    assert(queued == 1 && allocations == 2);
     set_callbacks_enabled(false);
+    drain();
     user_info_t target = user(900, publisher);
     send_audio(s_rtc.routes[0].conn_id, 900);
     on_user_offline(s_rtc.routes[0].conn_id, &target, 0);
@@ -673,17 +705,34 @@ static void test_forwarding_queue_destroy_retry(void) {
     assert(mybot_agora_rtc_fini() < 0);
     assert(s_rtc.state == MYBOT_RTC_STATE_IDLE);
     assert(s_rtc_mpq_id != AOSL_MPQ_INVALID && !s_rtc_callbacks_enabled);
-    assert(fini_calls == 1 && queue_destroys == 1);
+    assert(fini_calls == 1 && fini_commands == 1 && queue_destroys == 1);
     assert(mybot_agora_rtc_init("project-B", NULL) < 0);
     assert(init_calls == 1 && queue_creates == 1 && !s_rtc_callbacks_enabled);
     queue_destroy_result = 0;
     assert(mybot_agora_rtc_fini() == 0);
-    assert(fini_calls == 1 && queue_destroys == 2);
+    assert(fini_calls == 1 && fini_commands == 1 && queue_destroys == 2);
     assert(s_rtc_mpq_id == AOSL_MPQ_INVALID);
     init_public("project-B");
     join_public();
     assert(mybot_agora_rtc_fini() == 0);
     tests++;
+}
+static void test_forwarding_queue_barrier_retry(void) {
+    for (unsigned vendor_failure = 0; vendor_failure < 2; ++vendor_failure) {
+        reset_public();
+        init_public("project-A");
+        join_public();
+        fini_result = vendor_failure ? -1 : 0;
+        reject_fini_barrier = true;
+        assert(mybot_agora_rtc_fini() < 0);
+        assert(fini_calls == 1 && fini_commands == 1 && queue_destroys == 0);
+        assert(s_rtc_mpq_id != AOSL_MPQ_INVALID && !s_rtc_callbacks_enabled);
+        reject_fini_barrier = false;
+        assert(mybot_agora_rtc_fini() == fini_result);
+        assert(fini_calls == 1 && fini_commands == 1 && queue_destroys == 1);
+        assert(s_rtc_mpq_id == AOSL_MPQ_INVALID);
+        tests++;
+    }
 }
 static const char caption_json[] =
     "{\"object\":\"user.translation\",\"text\":\"你好，world\",\"final\":true}";
@@ -1359,6 +1408,7 @@ int main(void) {
     test_route_contract_validation();
     test_options();
     test_whitelist();
+    test_invalid_downlink_pcm();
     test_lookup();
     test_offline();
     test_late_callbacks();
@@ -1371,6 +1421,7 @@ int main(void) {
     test_failed_fini_is_terminal();
     test_fini_drains_old_session_callbacks();
     test_forwarding_queue_destroy_retry();
+    test_forwarding_queue_barrier_retry();
     test_rtm_copied_payload(RTM_MESSAGE_TYPE_STRING);
     test_rtm_copied_payload(RTM_MESSAGE_TYPE_BINARY);
     test_rtm_binary_bytes();

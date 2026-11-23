@@ -8,7 +8,7 @@ License terms are recorded in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). 
 
 | Path | Source | Pinned baseline |
 | --- | --- | --- |
-| `components/mybot_stack/mybot_sdk/mybot` | [junlon2006/mybot](https://github.com/junlon2006/mybot) | project-maintained V2VT media/face-to-face/meeting translation fork of v1.3.0 / `baf41bac3b6ca25bad9820f9fc857c94698607d8` |
+| `components/mybot_stack/mybot_sdk/mybot` | [junlon2006/mybot](https://github.com/junlon2006/mybot) | project-maintained V2VT translation fork, originally based on v1.3.0 / `baf41bac3b6ca25bad9820f9fc857c94698607d8` and synchronized through `8bae576ce12bd18c77b1aeea560ce2f9f9b7f836` |
 | `components/mybot_stack/aosl` | [AgoraIO-Community/aosl](https://github.com/AgoraIO-Community/aosl) | v1.0.4 plus fixes, `84e086084ebcd0ae2455a0ce5721950c5fe2e656` |
 | `components/esp-wifi-connect` | [78/esp-wifi-connect](https://github.com/78/esp-wifi-connect) | 3.2.2, `c24b97c194e6b4a1d7be0237b3c28980661cac1e` |
 | `components/esp_codec_dev` | ESP Component Registry / [espressif/esp-adf](https://github.com/espressif/esp-adf) | complete 1.5.9 source release, `df1182ab7ee63eb4e43304b526b59ed2d49b89f3`; registry file checksums verified |
@@ -16,6 +16,12 @@ License terms are recorded in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). 
 | `components/esp_lvgl_port` | [espressif/esp-bsp](https://github.com/espressif/esp-bsp), `components/esp_lvgl_port` | 2.8.0~1 runtime/display subset, `d14ff131266bf1392efff88db72cb4638897507c`; inherited integration corrections in `PATCHES.md`, local CMake source selection |
 
 MyBot maintains V2VT media, face-to-face and bidirectional USB meeting translation: device-selected languages, validated per-direction routes, publisher-only subscription, durable session cleanup and a dedicated UI contract. Local AEC defaults to cleaned mono PCM; optional Cloud AEC retains MIC/reference packing. G.722 and the 60 ms cadence remain unchanged. See `components/mybot_stack/mybot_sdk/TRANSLATION.md`. Original AOSL, codec and LVGL source snapshots remain unchanged. The inherited LVGL-port runtime/display subset and its existing lifecycle corrections are retained from the imported baseline; its `PATCHES.md` records those corrections. `components/mybot_stack/aosl` builds the portable ESP-IDF HAL from its retained `esp32-s3` source directory; the project wrapper and `s31_port/` supply S31 configuration, OS naming, audited PSRAM stacks and static task reclamation.
+
+The `8bae576` synchronization imports the shared HTTP framing and JSON node updates and adapts
+pairing-code recovery, control-worker shutdown, binding responses and RTC callback handling to
+V2VT. The fork continues to supply the translation request and routing code, the persisted
+cleanup journal and the Mosaico media paths. Upstream assistant, Linux and test build changes
+are outside the S31 SDK source selection. The SDK reports v1.3.0 with these post-release updates.
 
 ## Bundled RTSA
 

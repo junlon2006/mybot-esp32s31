@@ -2,6 +2,10 @@
 
 ## Unreleased — standalone S31 translation
 
+- Synchronize the translation SDK through upstream `8bae576`. Finish framed HTTP responses
+  without waiting for the peer to close, restore the pairing code after Wi-Fi reconnect,
+  retain the control worker for shutdown retries, and validate RTC downlink PCM before queueing.
+
 - Restore translation startup after Wi-Fi disconnects and reconnects while the
   SDK is initializing.
 

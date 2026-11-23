@@ -69,6 +69,8 @@ typedef struct {
 
 static mybot_agora_rtc_t s_rtc = {.ready_timer = AOSL_MPQ_TIMER_INVALID};
 static aosl_atomic_t s_rtc_mpq_id = AOSL_MPQ_INVALID;
+/* The control owner retains completed vendor teardown while the queue is retired. */
+static bool s_fini_completed;
 static aosl_atomic_t s_rtm_login_done;
 static aosl_atomic_t s_rtm_login_ok;
 static aosl_atomic_t s_rtm_login_generation;
@@ -110,8 +112,7 @@ static void process_connection_lost(connection_id_t);
 static void process_rejoin_channel_success(connection_id_t, uint32_t, int);
 static void process_user_joined(connection_id_t, const user_info_t *, int);
 static void process_user_offline(connection_id_t, const user_info_t *, int);
-static void process_audio_data(connection_id_t, uint32_t, uint16_t, const void *, size_t,
-                               const audio_frame_info_t *);
+static void process_audio_data(connection_id_t, uint32_t, const void *);
 #if MYBOT_ENABLE_VIDEO
 static void process_video_key_frame_request(connection_id_t, uint32_t, int);
 static void process_video_target_bitrate(connection_id_t, uint32_t);
@@ -195,12 +196,6 @@ typedef struct {
         struct {
             user_info_t user;
         } user;
-        struct {
-            uint16_t sent_ts;
-            audio_frame_info_t audio_info;
-            bool has_audio_info;
-            size_t len;
-        } audio;
 #if MYBOT_ENABLE_VIDEO
         struct {
             uint32_t target_bps;
@@ -288,12 +283,10 @@ static void rtc_event_process(const aosl_ts_t *ts, aosl_refobj_t ref, uintptr_t 
     (void)ts;
     (void)ref;
     if (argc != 1 || !argv[0]) {
-        if (argc == 1 && argv[0])
-            rtc_event_free((rtc_event_t *)argv[0]);
         return;
     }
     rtc_event_t *e = (rtc_event_t *)argv[0];
-    if (callback_delivery_failed()) {
+    if (!aosl_atomic_read(&s_rtc_callbacks_enabled) || callback_delivery_failed()) {
         rtc_event_free(e);
         return;
     }
@@ -339,9 +332,7 @@ static void rtc_event_process(const aosl_ts_t *ts, aosl_refobj_t ref, uintptr_t 
         process_user_offline(e->conn_id, &e->payload.user.user, e->value);
         break;
     case RTC_EVENT_AUDIO:
-        process_audio_data(e->conn_id, e->uid, e->payload.audio.sent_ts, e->data,
-                           e->payload.audio.len,
-                           e->payload.audio.has_audio_info ? &e->payload.audio.audio_info : NULL);
+        process_audio_data(e->conn_id, e->uid, e->data);
         break;
 #if MYBOT_ENABLE_VIDEO
     case RTC_EVENT_VIDEO_KEY_FRAME_REQUEST:
@@ -1078,23 +1069,16 @@ static void process_user_offline(connection_id_t conn_id, const user_info_t *use
     }
 }
 
-static void process_audio_data(connection_id_t conn_id, uint32_t uid, uint16_t sent_ts,
-                               const void *data, size_t len, const audio_frame_info_t *info) {
-    (void)sent_ts;
+static void process_audio_data(connection_id_t conn_id, uint32_t uid, const void *pcm) {
     mybot_rtc_route_t *route = route_for_connection(conn_id);
     if (!route || s_rtc.state != MYBOT_RTC_STATE_CONNECTED || !route->publisher_subscribed ||
-        uid != route->publisher_uid)
-        return;
-    /* One decoded 60 ms mono PCM frame per callback from the pinned RTSA build. */
-    if (!data || !info || info->data_type != AUDIO_DATA_TYPE_PCM || len == 0 ||
-        (len % MYBOT_RTC_PCM_BYTES_PER_SAMPLE) != 0 || len != MYBOT_RTC_PCM_FRAME_BYTES) {
-        AOSL_LOG_WRN("[RTC] dropped invalid downlink audio (len=%zu, expected=%u)", len,
-                     (unsigned int)MYBOT_RTC_PCM_FRAME_BYTES);
+        uid != route->publisher_uid) {
         return;
     }
-    if (s_rtc.callbacks.on_remote_audio)
-        s_rtc.callbacks.on_remote_audio(route->direction, uid, data, len,
+    if (s_rtc.callbacks.on_remote_audio) {
+        s_rtc.callbacks.on_remote_audio(route->direction, uid, pcm, MYBOT_RTC_PCM_FRAME_BYTES,
                                         s_rtc.callbacks.user_data);
+    }
 }
 
 #if MYBOT_ENABLE_VIDEO
@@ -1337,8 +1321,9 @@ static void on_user_offline(connection_id_t c, const user_info_t *u, int reason)
 }
 static void on_audio_data(connection_id_t c, uint32_t uid, uint16_t ts, const void *d, size_t len,
                           const audio_frame_info_t *i) {
-    if (!d || !i || i->data_type != AUDIO_DATA_TYPE_PCM || len == 0 ||
-        (len % MYBOT_RTC_PCM_BYTES_PER_SAMPLE) != 0 || len != MYBOT_RTC_PCM_FRAME_BYTES) {
+    (void)ts;
+    /* RTSA delivers one decoded frame of the configured PCM duration per callback. */
+    if (!d || !i || i->data_type != AUDIO_DATA_TYPE_PCM || len != MYBOT_RTC_PCM_FRAME_BYTES) {
         AOSL_LOG_WRN("[RTC] ignored invalid downlink audio callback (len=%zu, info=%s, type=%d, "
                      "expected=%u)",
                      len, i ? "present" : "missing", i ? (int)i->data_type : -1,
@@ -1349,10 +1334,6 @@ static void on_audio_data(connection_id_t c, uint32_t uid, uint16_t ts, const vo
     if (e) {
         e->conn_id = c;
         e->uid = uid;
-        e->payload.audio.sent_ts = ts;
-        e->payload.audio.audio_info = *i;
-        e->payload.audio.has_audio_info = true;
-        e->payload.audio.len = len;
         if (!rtc_event_copy_data(e, d, len)) {
             rtc_event_free(e);
             return;
@@ -1557,6 +1538,12 @@ static bool route_is_valid(const mybot_device_translation_route_t *route, size_t
            (!route->tts_enabled || mybot_agora_rtc_rtm_uid_is_valid(route->audio_publisher_uid));
 }
 
+static bool prepare_rtm_for_join(const mybot_device_translation_route_t *listen) {
+    return login_rtm(listen->rtc_uid, listen->rtc_token) == 0 &&
+           wait_for_rtm_login(listen->rtc_uid) == 0 && subscribe_rtm(listen->rtc_channel) == 0 &&
+           wait_for_rtm_subscription(listen->rtc_channel) == 0 && !callback_delivery_failed();
+}
+
 static int rtc_join_impl(const mybot_device_translation_route_t *routes, size_t route_count) {
     if (!routes || route_count < 1 || route_count > 2 ||
         s_rtc.state != MYBOT_RTC_STATE_INITIALIZED || s_rtc.route_count != 0)
@@ -1570,10 +1557,7 @@ static int rtc_join_impl(const mybot_device_translation_route_t *routes, size_t 
             return -1;
         }
     }
-    const mybot_device_translation_route_t *listen = &routes[0];
-    if (login_rtm(listen->rtc_uid, listen->rtc_token) < 0 ||
-        wait_for_rtm_login(listen->rtc_uid) < 0 || subscribe_rtm(listen->rtc_channel) < 0 ||
-        wait_for_rtm_subscription(listen->rtc_channel) < 0 || callback_delivery_failed()) {
+    if (!prepare_rtm_for_join(&routes[0])) {
         (void)rtc_logout_rtm_impl();
         set_state(MYBOT_RTC_STATE_ERROR);
         return -1;
@@ -1626,32 +1610,29 @@ failed:
     return -1;
 }
 
-static int rtc_fini_impl(void) {
+static void rtc_fini_impl(void) {
     /* Neither a failed init nor failed global fini is safely retryable in the
      * pinned RTSA. Retire only our forwarding queue until device restart. */
-    if (s_rtc.terminal_failure)
-        return -1;
-    if (s_rtc.state == MYBOT_RTC_STATE_IDLE) {
-        return 0;
+    if (s_rtc.terminal_failure || s_rtc.state == MYBOT_RTC_STATE_IDLE) {
+        return;
     }
 
     int leave_ret = rtc_leave_impl();
-    int rtm_ret = rtc_logout_rtm_impl();
     int ret = agora_rtc_fini();
     if (ret < 0) {
         AOSL_LOG_ERR("agora_rtc_fini failed; RTSA source does not guarantee retry: %s",
                      agora_rtc_err_2_str(ret));
         s_rtc.terminal_failure = true;
         s_rtc.state = MYBOT_RTC_STATE_ERROR;
-        return -1;
+        return;
     }
 
     clear_runtime_state();
     s_rtc.state = MYBOT_RTC_STATE_IDLE;
-    if (leave_ret < 0 || rtm_ret < 0)
+    if (leave_ret < 0) {
         AOSL_LOG_WRN("[RTC] intermediate teardown failed; global RTSA finalization completed");
+    }
     AOSL_LOG_NTC("[RTC] Agora RTSA finalized");
-    return 0;
 }
 
 #if MYBOT_ENABLE_VIDEO
@@ -1752,9 +1733,7 @@ static void cmd_fini(const aosl_ts_t *ts, aosl_refobj_t ref, uintptr_t argc, uin
     (void)argc;
     (void)argv;
     set_callbacks_enabled(false);
-    if (argc == 1) {
-        *(int *)argv[0] = rtc_fini_impl();
-    }
+    rtc_fini_impl();
 }
 static void cmd_barrier(const aosl_ts_t *ts, aosl_refobj_t ref, uintptr_t argc, uintptr_t argv[]) {
     (void)ts;
@@ -1792,6 +1771,7 @@ int mybot_agora_rtc_init(const char *app_id, const mybot_agora_rtc_callbacks_t *
                               AOSL_THRD_PRI_NORMAL, 8192, 1000, "mybot_rtc", NULL, NULL, NULL);
     if (q == AOSL_MPQ_INVALID)
         return -1;
+    s_fini_completed = false;
     aosl_atomic_set(&s_rtc_mpq_id, q);
     set_callbacks_enabled(true);
     int result = -1;
@@ -1808,29 +1788,27 @@ int mybot_agora_rtc_join(const mybot_device_translation_route_t *routes, size_t 
 }
 int mybot_agora_rtc_fini(void) {
     aosl_mpq_t q = (aosl_mpq_t)aosl_atomic_read(&s_rtc_mpq_id);
-    if (q == AOSL_MPQ_INVALID)
+    if (q == AOSL_MPQ_INVALID) {
         return s_rtc.terminal_failure ? -1 : 0;
-    int result = -1;
-    uintptr_t argv[] = {(uintptr_t)&result};
-    if (rtc_call("rtc_fini", cmd_fini, 1, argv) < 0)
-        return -1;
-    if (result < 0) {
-        /* Callbacks are disabled above. Retire our forwarding queue even when
-         * the vendor service has entered an unrecoverable init/fini state. */
-        if (aosl_mpq_destroy_wait(q) == 0) {
-            aosl_atomic_set(&s_rtc_mpq_id, AOSL_MPQ_INVALID);
+    }
+    if (!s_fini_completed) {
+        if (rtc_call("rtc_fini", cmd_fini, 0, NULL) < 0) {
+            return -1;
         }
+        s_fini_completed = true;
+    }
+    /* Drain copied callback payloads before destroying their queue, including
+     * when vendor shutdown failed and device restart is required. */
+    if (rtc_call("rtc_fini_barrier", cmd_barrier, 0, NULL) < 0) {
         return -1;
     }
-    if (rtc_call("rtc_fini_barrier", cmd_barrier, 0, NULL) < 0)
-        return -1;
     int destroy_ret = aosl_mpq_destroy_wait(q);
     if (destroy_ret < 0) {
         AOSL_LOG_ERR("failed to destroy RTC forwarding MPQ; resources retained");
         return -1;
     }
     aosl_atomic_set(&s_rtc_mpq_id, AOSL_MPQ_INVALID);
-    return 0;
+    return s_rtc.terminal_failure ? -1 : 0;
 }
 int mybot_agora_rtc_send_audio(mybot_translation_direction_t direction, const void *data,
                                size_t len) {

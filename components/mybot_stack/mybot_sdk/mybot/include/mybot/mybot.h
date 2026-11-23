@@ -51,9 +51,7 @@ typedef struct {
  * conversation activity, connectivity, and shutdown.
  */
 typedef enum {
-    /** Not started, or the application control runtime has stopped. This does
-     *  not prove every resource was reclaimed: failed teardown may retain
-     *  resources. Also reported before mybot_start(). */
+    /** The application has not started or has finished SDK shutdown. */
     MYBOT_STATE_STOPPED = 0,
     /** Waiting for the platform's initial MYBOT_WIFI_EVENT_STA_CONNECTED.
      *  Provisioning is owned by the host application. */
@@ -74,8 +72,8 @@ typedef enum {
     /** Unrecoverable failure during initial network readiness or service bring-up.
      *  The application should report the error and call mybot_stop(). */
     MYBOT_STATE_FAILED,
-    /** Application shutdown is in progress. Failed worker joins retain
-     *  resources for a later mybot_stop() attempt. */
+    /** Application shutdown is in progress. An incomplete device stop or
+     *  worker join retains SDK resources for a later mybot_stop() attempt. */
     MYBOT_STATE_STOPPING,
     /** The device service has accepted a translation session. Includes local
      *  RTC setup and the active session; local audio readiness is reported
@@ -177,8 +175,9 @@ MYBOT_API mybot_state_t mybot_get_state(void);
  *
  * Signals shutdown, waits for worker exits and releases resources whose shutdown
  * succeeds. Product-owned network connections and Wi-Fi credentials remain outside
- * SDK ownership. A failed worker join retains its resources and application AOSL
- * reference for a later call to retry. Failed driver teardown remains driver-owned.
+ * SDK ownership. Incomplete I/O and worker cleanup retains SDK resources and
+ * the application AOSL reference in MYBOT_STATE_STOPPING. Another call retries
+ * the retained cleanup. Failed driver teardown remains driver-owned.
  *
  * Safe to call when not running, after a failed mybot_start(), or repeatedly.
  * Cloud cleanup records survive shutdown until the service confirms the session

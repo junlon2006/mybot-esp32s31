@@ -297,9 +297,8 @@ int mybot_media_pipeline_end_session(mybot_media_pipeline_t *pipeline) {
 int mybot_media_pipeline_flush_session(mybot_media_pipeline_t *pipeline) {
     abort();
 }
-int mybot_media_pipeline_play_prompt(mybot_media_pipeline_t *pipeline, mybot_prompt_type_t type,
-                                     const void *args) {
-    assert(type == MYBOT_PROMPT_PAIR_CODE);
+int mybot_media_pipeline_play_pair_code(mybot_media_pipeline_t *pipeline, const char *code) {
+    assert(pipeline == &runtime.media && code && code[0]);
     ++prompts;
     return 0;
 }

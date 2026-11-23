@@ -1757,3 +1757,22 @@ before control processes the screen change.
 The Chinese ESP-IDF v6.1 Local AEC build and config/binary/map checks passed
 with 448,208 bytes free in the smallest OTA slot. Startup reconnect on the
 physical board remains to be verified.
+
+## 2026-11-23 MyBot SDK synchronization on current main
+
+Integrated the SDK changes through upstream `8bae576` with project `main`
+at `d4fb4f6`. The integration retains the main branch's ordered Wi-Fi startup
+events, pairing-code invalidation and USB input fences. Framed HTTP responses
+complete when their final bytes arrive. The control worker owns shutdown retries
+and late results, and the RTC worker admits validated 60 ms downlink PCM.
+
+Host tests passed for Wi-Fi startup and pairing reconnect, shutdown and late HTTP
+results, HTTP framing, translation lifecycle and routes, and USB input fencing
+with both Cloud AEC settings. All 127 builder and delivery tests passed.
+The SDK changes passed clang-format, SPDX and `git diff --check`.
+
+The direct ESP-IDF v6.1 preview Chinese Local AEC build and size check passed
+in `build/mosaico-v1.2`. Configuration, binary provenance and link-map checks
+verified 60 ms audio, RISC-V, local AOSL, pinned RTSA, video disabled and four
+flash segments. The application is 4,790,368 bytes with 452,512 bytes free in
+the smallest OTA slot. Hardware evidence remains in [VALIDATION.md](VALIDATION.md).

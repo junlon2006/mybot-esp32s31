@@ -261,7 +261,7 @@ static void test_error_and_chunked(void) {
                   "5;part=one\r\n{\"err\r\n6\r\nor\":\"x\r\n2\r\n\"}\r\n"
                   "0\r\nX-Private: synthetic-trailer\r\n\r\n",
                   1);
-    mybot_conversation_http_trace_finish(trace, true, false);
+    mybot_conversation_http_trace_finish(trace, false, false);
     check_body(first_id(), "response", "{\"error\":\"x\"}", true);
     CHECK(logged("status=500"));
     CHECK(!logged("part=one"));
