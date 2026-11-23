@@ -50,12 +50,7 @@ The fixed `esp-mosaico-v1.2` profile targets 16 MB NOR Flash, 16 MB Octal PSRAM,
 ES8311 audio and a 480×480 CO5300 / CST9220 display. It uses `partitions/v2/16m.csv`;
 the 128 MB NAND is unused. Video stays disabled.
 
-The user confirmed basic bidirectional USB meeting translation after the PSRAM-stack revision (`e279926`)
-and normal captions with 40-row partial buffers; touch/start requests have device logs.
-The standalone UAC microphone/speaker test is a separate passed baseline. Subsequent review fixes
-have host-test and Chinese-build results; they have not received a new hardware acceptance.
-Local/Cloud AEC quality, reconnect/endurance, USB current and the revised VCC ramp need separate results.
-See the [board guide](docs/esp-mosaico-v1.2.zh-CN.md) and [validation record](docs/s31-validation.md).
+See the [board guide](docs/esp-mosaico-v1.2.zh-CN.md) for setup and controls.
 
 ## Build
 
@@ -112,9 +107,11 @@ S16LE in the build directory.
 ## Provisioning and Controls
 
 When NVS contains no Wi-Fi credentials, the device creates a configuration AP named
-`mybot-xxxx` and serves provisioning at `http://192.168.4.1`. MyBot starts only after the
-station has a usable IP address. A provisioning request stops MyBot first and restarts it after
-reconnection.
+`mybot-xxxx`, using CRC-16 of all six STA MAC bytes for a stable four-digit lowercase
+hexadecimal suffix that reduces shared-prefix collisions. Select the actual name
+shown on the screen; provisioning is served at `http://192.168.4.1`. MyBot starts
+only after the station has a usable IP address. A provisioning request stops MyBot
+first and restarts it after reconnection.
 
 Open Media translation, select input/output languages and use its start/stop controls. Pause
 retains the cloud session; empty screen taps have no action. The Mosaico AI key is a maintenance
@@ -143,11 +140,7 @@ hardware DMA, kernel objects, and the flash-writing main stack retain internal R
 
 ## Validation
 
-Current build coverage, recorded real-device results, and unsupported areas are maintained in
-the [validation record](docs/s31-validation.md). Local development builds Chinese firmware;
-CI builds Chinese/English Local AEC and Chinese Cloud AEC, and verifies link and delivery metadata. The record distinguishes local builds
-from remote CI and hardware results. CI builds and host tests do not establish acoustic
-quality, panel behavior, power sequencing, Wi-Fi recovery, or long-duration results.
+The [validation matrix](docs/VALIDATION.md) lists the tested revisions and open hardware checks. CI builds Chinese and English Local AEC and Chinese Cloud AEC firmware.
 
 ## Documentation
 

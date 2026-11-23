@@ -110,8 +110,11 @@ bool mosaico_usb_audio_initialized() {
 }
 const mybot_audio_capture_ops_t *mosaico_usb_audio_capture_ops() {
     CHECK(usb_initialized);
-    static const mybot_audio_capture_ops_t ops{nullptr, usb_capture_start, nullptr,
-                                               nullptr, nullptr,           nullptr};
+    static const mybot_audio_capture_ops_t ops = [] {
+        mybot_audio_capture_ops_t capture{};
+        capture.start = usb_capture_start;
+        return capture;
+    }();
     return &ops;
 }
 MOCK_OPS(mosaico_usb_audio_playback_ops, mybot_audio_playback_ops_t)

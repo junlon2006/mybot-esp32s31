@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: MIT */
 #include "wifi_station.h"
 #include <cstring>
 #include <algorithm>
@@ -11,11 +12,11 @@
 #include <esp_netif.h>
 #include <esp_system.h>
 #include "ssid_manager.h"
+#include "wifi_credentials.h"
 
 #define TAG "WifiStation"
 #define WIFI_EVENT_CONNECTED BIT0
 #define WIFI_EVENT_STOPPED BIT1
-#define WIFI_EVENT_SCAN_DONE_BIT BIT2
 #define MAX_RECONNECT_COUNT 5
 
 WifiStation::WifiStation() {
@@ -115,9 +116,7 @@ void WifiStation::Start() {
     // Note: esp_netif_init() and esp_wifi_init() should be called once before calling this method
     // WiFi driver is initialized by WifiManager::Initialize() and kept alive
     
-    // Clear stopped event bit so WaitForConnected works properly
-    // Clear scan done bit so Stop() can wait for scan to complete
-    xEventGroupClearBits(event_group_, WIFI_EVENT_STOPPED | WIFI_EVENT_SCAN_DONE_BIT);
+    xEventGroupClearBits(event_group_, WIFI_EVENT_STOPPED);
     
     // Create the default WiFi station interface
     station_netif_ = esp_netif_create_default_wifi_sta();
@@ -229,10 +228,11 @@ void WifiStation::StartConnect() {
         on_connect_(ssid_);
     }
 
-    wifi_config_t wifi_config;
-    bzero(&wifi_config, sizeof(wifi_config));
-    strcpy((char *)wifi_config.sta.ssid, ap_record.ssid.c_str());
-    strcpy((char *)wifi_config.sta.password, ap_record.password.c_str());
+    wifi_config_t wifi_config = {};
+    if (!wifi_credentials::CopyToStation(wifi_config.sta, ap_record.ssid, ap_record.password)) {
+        ESP_LOGE(TAG, "Invalid saved Wi-Fi credentials");
+        return;
+    }
 
     if (remember_bssid_) {
         // Explicit opt-in: pin to this exact AP (BSSID + channel) for the fastest
@@ -345,7 +345,6 @@ void WifiStation::WifiEventHandler(void* arg, esp_event_base_t event_base, int32
             this_->on_scan_begin_();
         }
     } else if (event_id == WIFI_EVENT_SCAN_DONE) {
-        xEventGroupSetBits(this_->event_group_, WIFI_EVENT_SCAN_DONE_BIT);
         this_->HandleScanResult();
     } else if (event_id == WIFI_EVENT_STA_DISCONNECTED) {
         xEventGroupClearBits(this_->event_group_, WIFI_EVENT_CONNECTED);

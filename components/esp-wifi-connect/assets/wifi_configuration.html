@@ -1634,15 +1634,12 @@
                     throw new Error(data.error || 'Connection failed');
                 }
 
-                // Connection successful, redirect to done page with localized copy.
-                button.disabled = false;
+                // Render locally because the device can now close its access point.
                 const lang = document.getElementById('language').value;
                 const successMessage = (translations[lang] && translations[lang].config_success) ||
                     translations['en-US'].config_success;
-                const doneUrl = new URL('/done.html', window.location.href);
-                doneUrl.searchParams.set('lang', lang);
-                doneUrl.searchParams.set('message', successMessage);
-                window.location.href = doneUrl.pathname + doneUrl.search;
+                loadingOverlay.querySelector('.loading-spinner').hidden = true;
+                loadingOverlay.querySelector('.loading-text').textContent = successMessage;
             } catch (err) {
                 // Hide loading animation on error
                 loadingOverlay.classList.remove('show');

@@ -19,6 +19,6 @@ controls. Describe the gesture and screen state. Audio reports should include
 include the PC input/output selection and USB stream counters. For build reports
 include ffmpeg availability and RTSA package version/hash; omit the private archive itself.
 
-HTTP diagnostics print complete bodies and may contain authentication and device data. Remove those values before sharing logs. The [board guide](docs/esp-mosaico-v1.2.zh-CN.md) explains current controls. The [validation record](docs/s31-validation.md) distinguishes the user-passed meeting/caption baseline from later host/build fixes and outstanding quality, AEC, reconnect/endurance and power checks.
+HTTP diagnostics print complete bodies and may contain authentication and device data. Remove those values before sharing logs. The [board guide](docs/esp-mosaico-v1.2.zh-CN.md) explains current controls. See the [validation matrix](docs/VALIDATION.md) for tested revisions.
 
 This project has no support SLA. Agora SDK licensing and cloud-service issues belong in the applicable Agora support channel.

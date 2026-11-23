@@ -8,8 +8,8 @@
 int mybot_presenter_init(mybot_presenter_t *presenter) {
     if (!presenter)
         return -1;
-    presenter->pair_code[0] = '\0';
     presenter->volume = -1;
+    memset(presenter->pair_code, 0, sizeof(presenter->pair_code));
     if (!mybot_lcd_is_registered())
         return 0;
     if (mybot_lcd_init(&presenter->lcd) < 0)
@@ -19,6 +19,8 @@ int mybot_presenter_init(mybot_presenter_t *presenter) {
 }
 
 void mybot_presenter_deinit(mybot_presenter_t *presenter) {
+    if (presenter)
+        memset(presenter->pair_code, 0, sizeof(presenter->pair_code));
     if (presenter && presenter->active) {
         mybot_lcd_deinit(&presenter->lcd);
         presenter->active = false;
@@ -43,9 +45,8 @@ void mybot_presenter_show_screen(mybot_presenter_t *presenter, mybot_lcd_screen_
         return;
     mybot_lcd_content_t content = {0};
     content.screen = screen;
-    if (screen == MYBOT_LCD_SCREEN_PAIR_CODE) {
-        snprintf(content.pair_code, sizeof(content.pair_code), "%s", presenter->pair_code);
-    }
+    if (screen == MYBOT_LCD_SCREEN_PAIR_CODE)
+        memcpy(content.pair_code, presenter->pair_code, sizeof(content.pair_code));
     snprintf(content.source_language, sizeof(content.source_language), "%s",
              presenter->source_language);
     snprintf(content.target_language, sizeof(content.target_language), "%s",
@@ -71,25 +72,18 @@ void mybot_presenter_show_screen(mybot_presenter_t *presenter, mybot_lcd_screen_
 }
 
 void mybot_presenter_set_pair_code(mybot_presenter_t *presenter, const char *code) {
-    if (!presenter) {
+    if (!presenter)
         return;
-    }
-    size_t len = code ? strlen(code) : 0;
-    if (len == 0 || len >= sizeof(presenter->pair_code)) {
-        presenter->pair_code[0] = '\0';
-        return;
-    }
-    memcpy(presenter->pair_code, code, len + 1);
+    memset(presenter->pair_code, 0, sizeof(presenter->pair_code));
+    const size_t length = code ? strlen(code) : 0;
+    if (length && length < sizeof(presenter->pair_code))
+        memcpy(presenter->pair_code, code, length);
 }
 
 void mybot_presenter_render_state(mybot_presenter_t *presenter, const mybot_state_model_t *model) {
     if (!presenter || !model)
         return;
     mybot_state_view_t state = mybot_state_model_get_view(model);
-    bool awaiting_claim = state.device_state == MYBOT_DEVICE_STATE_AWAITING_CLAIM;
-    if (!awaiting_claim) {
-        presenter->pair_code[0] = '\0';
-    }
     mybot_lcd_screen_t screen;
     switch (state.app_state) {
     case MYBOT_STATE_READY:
@@ -118,8 +112,9 @@ void mybot_presenter_render_state(mybot_presenter_t *presenter, const mybot_stat
         screen = MYBOT_LCD_SCREEN_WIFI_DISCONNECTED;
         break;
     case MYBOT_STATE_PAIRING:
-        screen = awaiting_claim && presenter->pair_code[0] ? MYBOT_LCD_SCREEN_PAIR_CODE
-                                                           : MYBOT_LCD_SCREEN_PAIRING;
+        screen = state.device_state == MYBOT_DEVICE_STATE_AWAITING_CLAIM && presenter->pair_code[0]
+                     ? MYBOT_LCD_SCREEN_PAIR_CODE
+                     : MYBOT_LCD_SCREEN_PAIRING;
         break;
     default:
         return;

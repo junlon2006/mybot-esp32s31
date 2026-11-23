@@ -75,3 +75,8 @@ that both meeting pipelines drain before admission, and that newer connection
 states, session changes, pending stops and cleanup failures invalidate recovery.
 User pause survives the handoff. `tests/media_pause` checks the actual PCM queues
 and capture/reference contents across these worker barriers.
+
+The binding-code reconnect case uses the real Wi-Fi callbacks, lifecycle and LCD
+presenter. It checks the same code returns while the claim is pending, each newly
+issued code is announced once, and expiry, failed claims, successful binding and
+presenter teardown clear the old code.

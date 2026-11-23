@@ -121,7 +121,7 @@ class S31DryRunTests(unittest.TestCase):
             self.assertTrue(all("--aec-mode local" in line for line in packaging))
             for language in ("zh-CN", "en-US"):
                 variant = f"esp-mosaico-v1.2-{language}"
-                image = str(output / f"{variant}.bin")
+                image = str(output / f".{variant}.versions" / "stage-STAGING" / f"{variant}.bin")
                 config = str(build / f"build-{variant}" / "sdkconfig")
                 self.assertEqual(sum(f"-DSDKCONFIG={config} " in line for line in commands), 4)
                 self.assertTrue(any(f"merge-bin -o {image}" in line for line in commands))

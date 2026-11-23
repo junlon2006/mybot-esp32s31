@@ -2,6 +2,11 @@
 
 This is a project-maintained fork of the recorded MyBot SDK baseline. Media uses `v2vt/listen`; face-to-face and Mosaico meetings use `v2vt/listen_speak`. Media/face-to-face route the board microphone and speaker. Meetings send platform USB capture to LISTEN and physical MIC to SPEAK, play LISTEN on the board speaker and return SPEAK through platform USB playback. USB device ownership and resampling remain in the platform. There is no assistant backend.
 
+For buffered meeting input, the SDK uses the optional capture operation
+`set_input_enabled` to discard incoming PCM through pause and RTC readiness
+transitions. The platform resets its own queue and filter on the capture worker.
+Build the platform adapters and SDK together against the same audio ops header.
+
 - `mybot_config_t` provides initial source and target language codes. Device language selections persist in KV. In media mode these mean input/output (`remote_language`/`local_language`). In face-to-face mode they mean my/partner language (`local_language`/`remote_language`); listen translates partner to local, speak translates local to partner. Mode is volatile and defaults to listen after boot.
 - Start requests preserve G.722, 60 ms, the selected AEC mode and AI QoS settings and select `translation.mode=listen` or `listen_speak`. Returned routes are normalized to listen then speak, with separate credentials and four distinct device/Agent identities in face-to-face mode. Both directions must share the App ID, channel and expiry; the top-level RTC compatibility view is ignored. Caption-only listen is valid; speak always requires TTS.
 - AI QoS defaults to disabled in both firmware configuration and the SDK fallback. It can be enabled explicitly with `CONFIG_MYBOT_AI_QOS=y`; when disabled, start sends `ai_qos=false` without a fast-send multiplier and RTC leaves AI QoS disabled.

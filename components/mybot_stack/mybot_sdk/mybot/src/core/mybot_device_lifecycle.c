@@ -645,13 +645,17 @@ static void poll_binding(mybot_device_lifecycle_t *lifecycle,
 
 static void apply_pair_binding(mybot_device_lifecycle_t *lifecycle,
                                const mybot_device_service_request_t *request) {
-    if (request->result == 401) {
+    const mybot_device_binding_t *response = &request->payload.binding;
+    if (request->result == 401 ||
+        (request->result == 0 &&
+         (strcmp(response->status, "expired") == 0 || strcmp(response->status, "unbound") == 0 ||
+          strcmp(response->status, "failed") == 0))) {
         lifecycle->pairing_requested = true;
+        set_state(lifecycle, MYBOT_DEVICE_STATE_PAIRING);
         return;
     }
     if (request->result != 0)
         return;
-    const mybot_device_binding_t *response = &request->payload.binding;
     if (strcmp(response->status, "pending") == 0) {
         lifecycle->pair_poll_interval = poll_interval(response->poll_after_seconds);
     } else if (strcmp(response->status, "bound") == 0) {
@@ -668,10 +672,6 @@ static void apply_pair_binding(mybot_device_lifecycle_t *lifecycle,
         lifecycle->runtime_poll_interval = poll_interval(response->poll_after_seconds);
         lifecycle->runtime_tick_counter = 0;
         set_state(lifecycle, MYBOT_DEVICE_STATE_RUNTIME);
-    } else if (strcmp(response->status, "expired") == 0 ||
-               strcmp(response->status, "unbound") == 0 ||
-               strcmp(response->status, "failed") == 0) {
-        lifecycle->pairing_requested = true;
     }
 }
 
@@ -690,6 +690,10 @@ static void apply_runtime_binding(mybot_device_lifecycle_t *lifecycle,
     }
 }
 
+void mybot_device_lifecycle_prepare(mybot_device_lifecycle_t *lifecycle) {
+    memset(lifecycle, 0, sizeof(*lifecycle));
+}
+
 int mybot_device_lifecycle_init(mybot_device_lifecycle_t *lifecycle, mybot_kv_store_t *kv_store,
                                 const char *server_base, const char *device_id,
                                 const char *firmware_ver, const char *hw_model,
@@ -703,7 +707,6 @@ int mybot_device_lifecycle_init(mybot_device_lifecycle_t *lifecycle, mybot_kv_st
         !language_valid(source_language) || !language_valid(target_language) ||
         strcmp(source_language, target_language) == 0)
         return -1;
-    memset(lifecycle, 0, sizeof(*lifecycle));
     lifecycle->kv_store = kv_store;
     if (callbacks)
         lifecycle->cbs = *callbacks;
@@ -714,7 +717,6 @@ int mybot_device_lifecycle_init(mybot_device_lifecycle_t *lifecycle, mybot_kv_st
     snprintf(lifecycle->hw_model, sizeof(lifecycle->hw_model), "%s", hw_model ? hw_model : "");
     snprintf(lifecycle->source_language, sizeof(lifecycle->source_language), "%s", source_language);
     snprintf(lifecycle->target_language, sizeof(lifecycle->target_language), "%s", target_language);
-    aosl_atomic_set(&lifecycle->network_available, true);
     lifecycle->runtime_poll_interval = 30;
     int pending = load_pending(lifecycle);
     int auth = load_auth(lifecycle);

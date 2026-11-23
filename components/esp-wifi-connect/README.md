@@ -138,6 +138,9 @@ wifi_manager.SetEventCallback([](WifiEvent event, const std::string& data) {
         case WifiEvent::ConfigModeEnter:
             ESP_LOGI("WiFi", "Entered config mode");
             break;
+        case WifiEvent::ConfigModeExitRequested:
+            // Notify your control task to call StartStation().
+            break;
         case WifiEvent::ConfigModeExit:
             ESP_LOGI("WiFi", "Exited config mode");
             break;
@@ -145,7 +148,7 @@ wifi_manager.SetEventCallback([](WifiEvent event, const std::string& data) {
 });
 
 // Check if there are saved Wi-Fi credentials
-auto& ssid_list = SsidManager::GetInstance().GetSsidList();
+auto ssid_list = SsidManager::GetInstance().GetSsidList();
 if (ssid_list.empty()) {
     // No credentials saved, start config AP mode
     wifi_manager.StartConfigAp();

@@ -271,12 +271,21 @@ static void flush_playback_cb(const aosl_ts_t *ts, aosl_refobj_t ref, uintptr_t 
     aosl_atomic_set(&pipeline->announce_clear_pb, false);
 }
 
+static void set_usb_input_enabled(mybot_media_pipeline_t *pipeline, bool enabled) {
+    const mybot_audio_capture_ops_t *ops = pipeline->audio.capture_ops;
+    if (pipeline->usb && pipeline->cap_ctx && ops && ops->set_input_enabled)
+        ops->set_input_enabled(pipeline->cap_ctx, enabled);
+}
+
 static void reset_capture_dsp(mybot_media_pipeline_t *pipeline) {
     const mybot_audio_capture_ops_t *ops = pipeline->audio.capture_ops;
-    if (!pipeline->cap_ctx || !ops || !ops->reset || !aosl_atomic_read(&pipeline->running) ||
+    if (!pipeline->cap_ctx || !ops || !aosl_atomic_read(&pipeline->running) ||
         aosl_atomic_read(&pipeline->capture_fault))
         return;
-    if (ops->reset(pipeline->cap_ctx) < 0) {
+    /* OUT packets keep arriving while the playback and send workers finish
+     * their fences. Keep USB input closed through the readiness transition. */
+    set_usb_input_enabled(pipeline, false);
+    if (ops->reset && ops->reset(pipeline->cap_ctx) < 0) {
         aosl_atomic_set(&pipeline->capture_fault, true);
         if (pipeline->cbs.on_audio_error)
             pipeline->cbs.on_audio_error(pipeline->cbs.user_data);
@@ -478,6 +487,7 @@ static int start_pipeline(mybot_media_pipeline_t *pipeline,
     }
 #endif
 
+    set_usb_input_enabled(pipeline, false);
     if (cap_ops->start(pipeline->cap_ctx) < 0) {
         goto fail;
     }
@@ -621,6 +631,8 @@ void mybot_media_pipeline_set_rtc_connected(mybot_media_pipeline_t *pipeline, bo
         aosl_atomic_set(&pipeline->rtc_connected, connected);
         if (!connected) {
             aosl_atomic_set(&pipeline->announce_clear_pb, true);
+        } else if (!aosl_atomic_read(&pipeline->paused)) {
+            set_usb_input_enabled(pipeline, true);
         }
     }
 }
@@ -793,6 +805,7 @@ static int set_paused(mybot_media_pipeline_t *pipeline, bool paused, bool allow_
         }
         pipeline->playback_suspended = false;
         aosl_atomic_set(&pipeline->paused, false);
+        set_usb_input_enabled(pipeline, true);
     }
     result = 0;
 done:

@@ -52,11 +52,9 @@ requires rebuilding; reconfiguring or editing delivery metadata cannot establish
 For a Chinese Local AEC delivery from that build:
 
 ```sh
-mkdir -p releases
-idf.py --preview -B build/mosaico-v1.2 merge-bin \
-  -o "$PWD/releases/esp-mosaico-v1.2-zh-CN.bin"
+python3 scripts/build_all.py --language zh-CN --aec-mode local
 python3 scripts/check_s31_build.py --build-dir build/mosaico-v1.2 \
-  --language zh-CN --aec-mode local --merged releases/esp-mosaico-v1.2-zh-CN.bin
+  --language zh-CN --aec-mode local --verify-merged releases/esp-mosaico-v1.2-zh-CN.bin
 ```
 
 Set `--language` and `--aec-mode` to match the built configuration. The checker and
@@ -66,7 +64,16 @@ the board/language naming below.
 
 ## Delivery files
 
-Each language produces five files under the selected output root, for example:
+The builder verifies all five files before publishing the language variant. The
+usual filenames in the output root resolve through a single atomic version switch.
+For a multi-file copy or upload, resolve the BIN once and copy its sibling files
+from the same version directory. Use `--verify-merged` for a read-only check
+against the matching build. Keep old versions while any readers use them. After
+builds and readers finish, unused `version-*` directories other than the target
+of `current`, and abandoned `stage-*` directories, can be removed from
+`.<board>-<language>.versions/`.
+
+Each language publishes the following files:
 
 ```text
 esp-mosaico-v1.2-zh-CN.bin
@@ -86,8 +93,8 @@ Pushes and pull requests run source checks/host tests and three firmware jobs:
 Chinese Local AEC, English Local AEC and Chinese Cloud AEC. Each calls
 `scripts/build_all.py --language LANGUAGE --aec-mode MODE` using the bundled pinned
 RTSA input, with isolated temporary build/configuration and output roots. Generated
-roots are cleaned only after an ownership-marker check; an unowned nonempty directory
-is rejected. Each job uploads the five delivery files in an artifact whose name includes
+roots require an ownership marker when nonempty. CI cleans its build root and
+preserves published versions in the output root. Each job uploads the five delivery files in an artifact whose name includes
 its AEC mode. The workflow uploads no original tgz, sdkconfig, link map or NVS data and creates no GitHub
 Release automatically.
 

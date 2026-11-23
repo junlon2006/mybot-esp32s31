@@ -58,3 +58,14 @@ for cloud_aec in 0 1; do
         "$test_binary.json.o" -lm -o "$test_binary"
     "$test_binary"
 done
+
+"${CC:-cc}" -std=c99 -Wall -Wextra -Werror -Wno-unused-function -Wno-unused-parameter \
+    -fsanitize="${SANITIZERS:-undefined}" -fno-omit-frame-pointer \
+    -ffunction-sections -fdata-sections "$strip_flag" \
+    -I"$test_dir/mocks" -I"$repo_dir/tests/host_support/include" \
+    -I"$sdk_dir/src/internal" -I"$sdk_dir/include" \
+    "$test_dir/test_wifi.c" "$sdk_dir/src/core/mybot_ui.c" "$sdk_dir/src/core/mybot_captions.c" \
+    "$sdk_dir/src/core/mybot_presenter.c" "$sdk_dir/src/core/mybot_state_model.c" \
+    "$sdk_dir/src/platform/mybot_lcd.c" "$sdk_dir/src/platform/mybot_wifi.c" "$test_binary.json.o" \
+    -lm -o "$test_binary"
+"$test_binary"

@@ -5,13 +5,7 @@ the revision tested at that time; entries for removed profiles are retained only
 historical validation evidence and do not describe supported hardware. Use the
 build-bound manifests and checksums beside delivered images for their binary identity.
 
-This records local build/host validation and separately attributed hardware feedback.
-The user confirmed diagnostic USB microphone/speaker audio, normal 40-row caption
-display and basic bidirectional meeting translation after the PSRAM-stack revision.
-Touch navigation and start operation also have device-log evidence. These reports
-precede this review-fix series and do not validate its recovery, key, USB identity or
-power changes. Quantitative audio quality, AEC, enumeration/reconnect stability,
-power/current measurements and endurance still require separate hardware results.
+See the [current validation matrix](VALIDATION.md) for hardware results and open tests.
 
 ## 2026-11-08 single-board convergence — host only
 
@@ -1693,24 +1687,92 @@ and no video runtime. Each produced the five local delivery files in `releases/`
 the saved configuration and active build are English after the batch. No device
 was flashed and no remote CI run is claimed.
 
-## 2026-11-23 MyBot SDK synchronization
+## 2026-11-12 Short provisioning AP identity from the complete STA MAC
 
-Applied the shared SDK changes through `8bae576` to the S31 translation fork.
-The pairing screen restores the current code after Wi-Fi reconnect. The HTTP
-client finishes framed responses as soon as the body arrives and preserves
-write-attempt information for the pending-start journal. The control worker
-owns shutdown retries and late HTTP results. The RTC worker receives validated
-60 ms PCM and drains copied callback payloads before retiring its queue.
+The user reported identical provisioning AP names on four flashed devices. The
+platform previously formatted only the first two STA MAC bytes, so devices with
+the same vendor prefix received the same name. The requested `mybot-xxxx` format
+now uses CRC-16/CCITT-FALSE of all six bytes returned by
+`esp_read_mac(..., ESP_MAC_WIFI_STA)`: polynomial 0x1021, initial value 0xffff,
+no reflection or final XOR. The suffix is four lowercase hexadecimal digits,
+including leading zeroes. The same STA MAC retains its name across provisioning
+sessions. The 16-bit space reduces shared-prefix collisions without guaranteeing
+global uniqueness.
 
-Host HTTP framing/trace, time sync, protocol, pairing state, lifecycle, RTC,
-control, caption, volume, audio pause, codec, USB transport, AOSL task, bootstrap
-and KV tests passed. Lifecycle fault injection covered late HTTP results, a
-saturated control queue, incomplete worker joins and repeated stop. The media
-and routing host tests exercised both Cloud AEC settings. Changed sources and
-headers passed clang-format, SPDX and `git diff --check`.
+The production-source Wi-Fi suite passes all 18 cases with UBSan. It now compiles
+both the platform and manager and checks configuration, advertised AP name and UI
+getter together. Synthetic fixed vectors from Python `binascii.crc_hqx` cover four
+same-prefix devices, all six input-byte positions, lowercase/leading zeroes,
+repeated provisioning, insufficient output capacity and MAC-read failure/retry.
+With the first four MAC bytes fixed, all 65,536 trailing-byte combinations produce
+different IDs; this result is limited to that fixed-prefix domain. A countercheck
+using the old naming flow fails all eight AP-publication cases while preserving
+the eight lifecycle and two CRC-only results. Network/SNTP bootstrap, all seven
+application stop/reprovision fault scenarios and 19 input/board scenarios pass.
+Changed sources pass clang-format 18.1.8, SPDX, shell syntax and whitespace checks.
+These are host results; the new AP broadcasts, screen names and four-device
+behavior still need hardware confirmation. No device was flashed by the agent.
 
-Direct ESP-IDF v6.1 preview `build` and `size` passed in `build/mosaico-v1.2` for
-Chinese Local AEC. Configuration, binary provenance and link-map checks verified
-60 ms audio, RISC-V, local AOSL, pinned RTSA, video disabled and four flash
-segments. The application is 4,793,872 bytes with 449,008 bytes minimum OTA free.
-This revision has no new device test results.
+Direct English and Chinese ESP-IDF v6.1 preview builds, size and delivery/config/map
+checks pass in `build/mosaico-v1.2`. English application: 4,875,312 bytes, minimum
+OTA free 367,568 bytes. Chinese application: 4,794,368 bytes, minimum OTA free
+448,512 bytes. Both retain Local AEC, 60 ms, local RISC-V AOSL, the pinned RTSA
+and no video runtime. Both merged images and their four metadata/license files
+are refreshed in `releases/`, use flash offset `0x0` and share the same source-input
+snapshot. Manifests mark the source changes as uncommitted. Saved configuration
+and the active build remain Chinese.
+
+## 2026-11-20 Meeting USB capture across pause and RTC readiness
+
+A host integration check exercised the production USB capture driver, resampler
+and SDK media pipeline with simulated USB transfers and worker scheduling. With
+the previous driver, 348 of the 960 samples in the first LISTEN frame were
+nonzero when PC audio was supplied during a pause and only silence followed
+resume. The fixed pipeline discarded all old samples on resume, initial RTC
+readiness, reconnect and reconnect while paused, in both Local and Cloud AEC
+configurations. Input injected between the capture reset and final readiness was
+also discarded. A new signal sent immediately after resume appeared in the
+first 60 ms frame.
+
+The 10 USB driver cases and 27 media lifecycle cases in each AEC build passed
+under UBSan. The direct Chinese ESP-IDF v6.1 build and config/binary/map checks
+passed with Local AEC and 448,128 bytes free in the smallest OTA slot. Hardware
+pause/resume and live RTC reconnect remain to be verified.
+
+## 2026-11-20 Wi-Fi reconnect during SDK initialization
+
+The SDK prepares an offline lifecycle before registering its Wi-Fi callback.
+Ordered link notifications update session availability immediately, including
+during service initialization. Queued notifications drive the control worker's
+state transitions without writing the link status a second time. Each link loss
+still invalidates earlier service requests and remains pending for cleanup.
+
+Two host regressions exercise SDK startup, Wi-Fi notification delivery, the LCD
+state and translation start admission. A disconnect during service setup followed
+by a reconnect after lifecycle initialization reaches READY and admits a start
+after pending loss is processed. A disconnect without that reconnect keeps the
+lifecycle offline across initialization. A later loss rejects a start even
+before control processes the screen change.
+
+The Chinese ESP-IDF v6.1 Local AEC build and config/binary/map checks passed
+with 448,208 bytes free in the smallest OTA slot. Startup reconnect on the
+physical board remains to be verified.
+
+## 2026-11-23 MyBot SDK synchronization on current main
+
+Integrated the SDK changes through upstream `8bae576` with project `main`
+at `d4fb4f6`. The integration retains the main branch's ordered Wi-Fi startup
+events, pairing-code invalidation and USB input fences. Framed HTTP responses
+complete when their final bytes arrive. The control worker owns shutdown retries
+and late results, and the RTC worker admits validated 60 ms downlink PCM.
+
+Host tests passed for Wi-Fi startup and pairing reconnect, shutdown and late HTTP
+results, HTTP framing, translation lifecycle and routes, and USB input fencing
+with both Cloud AEC settings. All 127 builder and delivery tests passed.
+The SDK changes passed clang-format, SPDX and `git diff --check`.
+
+The direct ESP-IDF v6.1 preview Chinese Local AEC build and size check passed
+in `build/mosaico-v1.2`. Configuration, binary provenance and link-map checks
+verified 60 ms audio, RISC-V, local AOSL, pinned RTSA, video disabled and four
+flash segments. The application is 4,790,368 bytes with 452,512 bytes free in
+the smallest OTA slot. Hardware evidence remains in [VALIDATION.md](VALIDATION.md).

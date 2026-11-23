@@ -120,9 +120,10 @@ def parse_partition_table(data: bytes, table_offset: int) -> list[dict]:
     return entries
 
 
-def verify_ota_capacity(build_dir: Path, description: dict, flash: dict, segments: list[dict]) -> dict:
+def verify_flash_layout(build_dir: Path, description: dict, config: dict,
+                        flash: dict, segments: list[dict]) -> dict:
     records = {}
-    for role in ("partition-table", "app"):
+    for role in ("bootloader", "partition-table", "otadata", "app"):
         record = flash.get(role)
         if not isinstance(record, dict):
             raise RuntimeError(f"missing {role} flash record")
@@ -130,14 +131,26 @@ def verify_ota_capacity(build_dir: Path, description: dict, flash: dict, segment
             offset, name = int(record["offset"], 0), record["file"]
         except (KeyError, TypeError, ValueError) as error:
             raise RuntimeError(f"invalid {role} flash record") from error
-        if not any(int(segment["offset"], 0) == offset and segment["file"] == name for segment in segments):
+        segment = next((s for s in segments if int(s["offset"], 0) == offset and s["file"] == name), None)
+        if not segment or "role" in segment:
             raise RuntimeError(f"{role} flash record does not match flash_files")
+        segment["role"] = role
         records[role] = (offset, name)
+    if len(records) != len(segments) or len({name for _, name in records.values()}) != len(records):
+        raise RuntimeError("expected four distinct Mosaico flash segments")
+    boot_offset, _ = records["bootloader"]
     table_offset, table_name = records["partition-table"]
+    if (boot_offset != int(config["CONFIG_BOOTLOADER_OFFSET_IN_FLASH"], 0) or
+            table_offset != int(config["CONFIG_PARTITION_TABLE_OFFSET"], 0) or boot_offset >= table_offset):
+        raise RuntimeError("bootloader or partition-table flash offset differs from board configuration")
     app_offset, app_name = records["app"]
     if app_name != description["app_bin"]:
         raise RuntimeError("app flash record does not name the built application")
     entries = parse_partition_table(build_file(build_dir, table_name).read_bytes(), table_offset)
+    ota_offset, ota_name = records["otadata"]
+    ota = [entry for entry in entries if entry["type"] == 1 and entry["subtype"] == 0]
+    if len(ota) != 1 or ota[0]["offset"] != ota_offset or ota[0]["size"] != build_file(build_dir, ota_name).stat().st_size:
+        raise RuntimeError("otadata image must cover the OTA data partition")
     flashed = next((entry for entry in entries if entry["offset"] == app_offset), None)
     if not flashed or flashed["type"] != 0:
         raise RuntimeError("flashed application offset must match an application partition start")
@@ -393,7 +406,7 @@ def verify_build(build_dir: Path, language: str, aec_mode: str = "local") -> dic
         segments.append({"offset": hex(start), "file": name, "size": size, "sha256": sha256(source)})
     if not segments or description["app_bin"] not in {segment["file"] for segment in segments}:
         raise RuntimeError("flash files must include the application")
-    ota_capacity = verify_ota_capacity(build_dir, description, flash, segments)
+    ota_capacity = verify_flash_layout(build_dir, description, config, flash, segments)
     provenance = verify_build_provenance(build_dir)
     return {
         "schema_version": 1,
@@ -420,11 +433,25 @@ def verify_build(build_dir: Path, language: str, aec_mode: str = "local") -> dic
     }
 
 
-def package(build_dir: Path, merged: Path, language: str, aec_mode: str = "local") -> dict:
+def package(build_dir: Path, merged: Path, language: str, aec_mode: str = "local",
+            *, verify_only: bool = False) -> dict:
+    if verify_only and merged.is_symlink():
+        from build_all import _current_directory, _delivery_store
+        name = f"{SUPPORTED_BOARD}-{language}"
+        store = _delivery_store(merged.parent.absolute(), name)
+        if merged.name != name + ".bin" or merged.readlink() != Path(store.name) / "current" / merged.name:
+            raise RuntimeError("invalid published firmware link")
+        current = _current_directory(store)
+        if current is None:
+            raise RuntimeError("missing published firmware version")
+        merged = current / merged.name
     metadata = verify_build(build_dir, language, aec_mode)
     if merged.is_symlink() or not merged.is_file() or any(parent.is_symlink() for parent in merged.parents):
         raise RuntimeError("merged image must be a regular file without symlink ancestors")
     merged = merged.resolve()
+    if (not verify_only and merged.parent.name.startswith("version-") and
+            merged.parent.parent.name == f".{merged.stem}.versions"):
+        raise RuntimeError("published delivery is read-only; use --verify-merged")
     # merge-bin runs inside its build directory. Absolute output paths and byte
     # comparisons prevent a successful job from uploading an image from elsewhere.
     with merged.open("rb") as image:
@@ -465,20 +492,26 @@ def package(build_dir: Path, merged: Path, language: str, aec_mode: str = "local
                      "licenses/esp-dl-3.3.15.LICENSE", "licenses/esp_new_jpeg-1.0.2.LICENSE",
                      "components/mybot_platform/src/drivers/display/assets/licenses/LVGL_VIEW_FONT_LICENSE.txt")
     )
-    manifest.write_text(
-        json.dumps(metadata, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
-    checksum.write_text(f'{metadata["image"]["sha256"]}  {merged.name}\n', encoding="utf-8")
-    instructions.write_text(
+    flash_text = (
         f'Board: {metadata["board"]}\nLanguage: {language}\nAEC: {metadata["aec_mode"]}\nESP-IDF: v6.1\n'
         'Verify: ' + shlex.join(["shasum", "-a", "256", "-c", checksum.name]) + '\n'
         'Flash from this directory (replace PORT):\n'
         + shlex.join(flash_command) + '\n'
         'Merged image includes bootloader, partition table, OTA data and application.\n'
-        'Full-image flashing may reset stored Wi-Fi, pairing and volume settings.\n'
-        'Individual source offsets and hashes are recorded in the manifest.\n', encoding="utf-8",
+        'Full-image flashing overwrites NVS, including stored Wi-Fi, pairing and volume settings.\n'
+        'Individual source offsets and hashes are recorded in the manifest.\n'
     )
-    licenses.write_bytes(license_text)
+    files = {
+        manifest: (json.dumps(metadata, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode(),
+        checksum: f'{metadata["image"]["sha256"]}  {merged.name}\n'.encode(),
+        instructions: flash_text.encode(), licenses: license_text,
+    }
+    for path, content in files.items():
+        if verify_only:
+            if path.read_bytes() != content:
+                raise RuntimeError(f"published metadata mismatch: {path.name}")
+        else:
+            path.write_bytes(content)
     return metadata
 
 
@@ -491,18 +524,21 @@ def main() -> int:
     parser.add_argument(
         "--vendor-only", action="store_true", help="verify the bundled RTSA inputs without a build"
     )
-    parser.add_argument("--merged", type=Path, help="existing merge-bin image to verify and describe")
+    images = parser.add_mutually_exclusive_group()
+    images.add_argument("--merged", type=Path, help="verify an unpublished image and write its metadata")
+    images.add_argument("--verify-merged", type=Path, help="check an existing image and metadata read-only")
     args = parser.parse_args()
     verify_bundled_rtsa(Path(__file__).resolve().parent.parent)
     if args.vendor_only:
-        if args.build_dir or args.language or args.merged or args.aec_mode:
+        if args.build_dir or args.language or args.merged or args.verify_merged or args.aec_mode:
             parser.error("--vendor-only does not accept build or image arguments")
         print("Verified bundled ESP32-S31 RTSA v1.10.1 build 1366494 fingerprints")
         return 0
     if not args.build_dir or not args.language:
         parser.error("--build-dir and --language are required unless --vendor-only is used")
     metadata = (
-        package(args.build_dir, args.merged, args.language, args.aec_mode or "local") if args.merged
+        package(args.build_dir, args.merged or args.verify_merged, args.language, args.aec_mode or "local",
+                verify_only=args.verify_merged is not None) if args.merged or args.verify_merged
         else verify_build(args.build_dir, args.language, args.aec_mode or "local")
     )
     print(f'Validated {metadata["board"]} {args.language}: AEC={metadata["aec_mode"]}, '

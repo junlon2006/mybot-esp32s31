@@ -10,11 +10,7 @@ Cloud AEC keeps the legacy slot-zero microphone and SDK playback-reference path.
 
 Board wiring follows the official CoreBoard V1.2 schematic and the Mosaico BSP
 at `8ce87a7ef130f946de4f84f6a5a20db1d8982605`. Power and audio pin assignments are
-shared with the separately tested `diagnostics/mosaico_uac` image. Separate user feedback
-confirms normal 40-row caption display and basic bidirectional meeting translation
-after the PSRAM-stack revision (`e279926`); touch/start requests have device logs.
-Later recovery, identity, power and local-AEC changes have host/build coverage only.
-Acoustic AEC quality, reconnect/endurance, current and VCC ramp timing still need hardware results.
+shared with the standalone USB diagnostic. See the [validation matrix](../../../../docs/VALIDATION.md) for hardware results.
 
 - I2C0: SDA 56, SCL 3; owned by the board and shared by ES8311 and touch.
 - I2S0: MCU TX 52, RX 40, BCLK 37, WS 49, MCLK 54. PA 45 is active high.
