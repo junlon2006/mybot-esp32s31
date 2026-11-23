@@ -16,6 +16,7 @@ typedef struct {
 static notification_t notifications[32];
 static unsigned notification_count, language_sets, volume_sets, pause_sets, renders, tests;
 static unsigned conversation_starts, session_ends, rtc_finalizations;
+static unsigned pairing_prompts;
 static bool fail_queue, fail_volume, fail_pause, fail_end_session, paused;
 static int hardware_volume, rtc_fini_result;
 static mybot_lcd_content_t displayed;
@@ -108,13 +109,21 @@ int mybot_lcd_show_content(mybot_lcd_t *lcd, const mybot_lcd_content_t *content)
     renders++;
     return 0;
 }
+int mybot_media_pipeline_play_pair_code(mybot_media_pipeline_t *pipeline, const char *code) {
+    assert(pipeline == &runtime.media && strcmp(code, "123456") == 0);
+    pairing_prompts++;
+    return 0;
+}
+void mybot_media_pipeline_stop_prompt(mybot_media_pipeline_t *pipeline) {
+    assert(pipeline == &runtime.media);
+}
 
 static void reset(void) {
     memset(&runtime, 0, sizeof(runtime));
     memset(notifications, 0, sizeof(notifications));
     memset(&displayed, 0, sizeof(displayed));
     notification_count = language_sets = volume_sets = pause_sets = renders = 0;
-    conversation_starts = session_ends = rtc_finalizations = 0;
+    conversation_starts = session_ends = rtc_finalizations = pairing_prompts = 0;
     fail_queue = fail_volume = fail_pause = fail_end_session = paused = false;
     hardware_volume = 40;
     rtc_fini_result = 0;
@@ -417,7 +426,32 @@ static void test_rtc_cleanup_failure_preserves_real_error(void) {
     tests++;
 }
 
+static void test_pair_code_restored_after_reconnect(void) {
+    reset();
+    dev_on_state_changed(MYBOT_DEVICE_STATE_PAIRING, &runtime);
+    char code[] = "123456";
+    dev_on_pair_code(code, &runtime);
+    memset(code, 0, sizeof(code));
+    dev_on_state_changed(MYBOT_DEVICE_STATE_AWAITING_CLAIM, &runtime);
+    assert(displayed.screen == MYBOT_LCD_SCREEN_PAIR_CODE);
+    assert(strcmp(displayed.pair_code, "123456") == 0 && pairing_prompts == 1);
+
+    assert(mybot_state_model_network_lost(&runtime.state_model));
+    mybot_presenter_render_state(&runtime.presenter, &runtime.state_model);
+    assert(displayed.screen == MYBOT_LCD_SCREEN_WIFI_DISCONNECTED && !displayed.pair_code[0]);
+    assert(mybot_state_model_network_restored(&runtime.state_model));
+    mybot_presenter_render_state(&runtime.presenter, &runtime.state_model);
+    assert(displayed.screen == MYBOT_LCD_SCREEN_PAIR_CODE);
+    assert(strcmp(displayed.pair_code, "123456") == 0 && pairing_prompts == 1);
+
+    dev_on_state_changed(MYBOT_DEVICE_STATE_PAIRING, &runtime);
+    assert(displayed.screen == MYBOT_LCD_SCREEN_PAIRING && !displayed.pair_code[0]);
+    assert(!runtime.presenter.pair_code[0]);
+    tests++;
+}
+
 int main(void) {
+    test_pair_code_restored_after_reconnect();
     test_validation_and_language_table();
     test_copy_async_and_actual_volume();
     test_language_idle_and_busy();

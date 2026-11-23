@@ -12,6 +12,8 @@ static mybot_platform_descriptor_t platform;
 static mybot_lcd_content_t displayed;
 static int hardware_volume;
 static bool fail_init, fail_get, fail_set;
+static bool rtc_notification_failed;
+static unsigned notification_ends;
 static unsigned reads, sets, renders, tests;
 
 void aosl_msleep(unsigned milliseconds) {
@@ -108,6 +110,14 @@ int mybot_ringbuf_read(char *data, int bytes, mybot_ringbuf_t buffer) {
 int mybot_agora_rtc_fini(void) {
     abort();
 }
+bool mybot_agora_rtc_notification_failed(void) {
+    return rtc_notification_failed;
+}
+void mybot_device_lifecycle_notify_conversation_ended(mybot_device_lifecycle_t *lifecycle) {
+    assert(lifecycle == &runtime.lifecycle);
+    assert(runtime.media_cancel_requested && !runtime.media.rtc_connected);
+    notification_ends++;
+}
 void mybot_device_lifecycle_request_start(mybot_device_lifecycle_t *lifecycle) {
     (void)lifecycle;
     abort();
@@ -134,6 +144,10 @@ int mybot_device_lifecycle_set_languages(mybot_device_lifecycle_t *lifecycle, co
 }
 void mybot_device_lifecycle_tick(mybot_device_lifecycle_t *lifecycle) {
     assert(lifecycle == &runtime.lifecycle);
+    if (rtc_notification_failed && lifecycle->local_media_active) {
+        assert(notification_ends == 1);
+        lifecycle->local_media_active = false;
+    }
 }
 
 static void reset(int initial_volume, bool use_hardware, bool initialization_fails) {
@@ -143,6 +157,8 @@ static void reset(int initial_volume, bool use_hardware, bool initialization_fai
     hardware_volume = initial_volume;
     fail_init = initialization_fails;
     fail_get = fail_set = false;
+    rtc_notification_failed = false;
+    notification_ends = 0;
     reads = sets = renders = 0;
     platform.audio_volume = use_hardware ? &volume_ops : NULL;
     mybot_media_pipeline_init(&runtime.media);
@@ -305,6 +321,21 @@ static void test_unknown_read_recovers(void) {
     tests++;
 }
 
+static void test_critical_rtc_notification_closes_active_media(void) {
+    reset(40, true, false);
+    runtime.lifecycle.local_media_active = true;
+    runtime.media.rtc_connected = true;
+    refresh();
+    assert(runtime.presenter.media_ready);
+    rtc_notification_failed = true;
+    tick();
+    assert(notification_ends == 1 && displayed.screen == MYBOT_LCD_SCREEN_READY);
+    assert(!runtime.presenter.media_ready);
+    tick();
+    assert(notification_ends == 1);
+    tests++;
+}
+
 static void test_invalid_arguments(void) {
     reset(40, true, false);
     int output = -7;
@@ -328,6 +359,7 @@ int main(void) {
     test_unavailable_or_invalid_read();
     test_software_fallback();
     test_unknown_read_recovers();
+    test_critical_rtc_notification_closes_active_media();
     test_invalid_arguments();
     printf("translation volume: %u tests passed\n", tests);
     return 0;

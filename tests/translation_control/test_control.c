@@ -10,17 +10,31 @@
 
 static unsigned allocations, delivered, http_starts, http_stops, notifications, shutdowns;
 static unsigned tests, finished, kv_deinitialized, service_joins;
-static bool fail_queue, disable_during_start, fail_first_service_join, run_control_finalizer;
-static mybot_runtime_t runtime;
+static bool fail_queue, disable_during_start, fail_first_service_join, control_worker_active;
+static bool fail_media_stop, fail_control_join;
+static int rtc_result;
+static unsigned aosl_releases, control_submissions, saturation_attempts, media_destroys, rtc_calls;
+#define runtime s_default_runtime
 static mybot_device_service_request_t last_result;
 static aosl_mpq_func_t pending_notification;
+static aosl_mpq_func_t pending_control_stop;
 static uintptr_t notification_argument;
+int aosl_errno;
 
 void test_log(const char *format, ...) {
     (void)format;
 }
 void aosl_msleep(unsigned milliseconds) {
     (void)milliseconds;
+    if (pending_control_stop) {
+        assert(!control_worker_active);
+        aosl_mpq_func_t callback = pending_control_stop;
+        pending_control_stop = NULL;
+        uintptr_t argument = (uintptr_t)&runtime;
+        control_worker_active = true;
+        callback(NULL, NULL, 1, &argument);
+        control_worker_active = false;
+    }
 }
 void *aosl_hal_malloc(size_t size) {
     void *memory = malloc(size);
@@ -38,25 +52,37 @@ int aosl_mpq_queue(aosl_mpq_t target, aosl_mpq_t source, aosl_ref_t ref, const c
     (void)source;
     (void)ref;
     assert(target == runtime.control_mpq);
-    assert(strcmp(name, "handle_service_result") == 0);
-    assert(argc == 1); /* Notifications may own the runtime pointer, never a freed request. */
-    if (fail_queue)
-        return -1;
+    assert(argc == 1);
     va_list arguments;
     va_start(arguments, argc);
-    notification_argument = va_arg(arguments, uintptr_t);
+    uintptr_t argument = va_arg(arguments, uintptr_t);
     va_end(arguments);
-    assert(notification_argument == (uintptr_t)&runtime);
+    assert(argument == (uintptr_t)&runtime);
+    if (strcmp(name, "handle_control_stop") == 0) {
+        assert(!runtime_is_running(&runtime) && !pending_control_stop);
+        control_submissions++;
+        if (saturation_attempts) {
+            saturation_attempts--;
+            aosl_errno = AOSL_EAGAIN;
+            return -1;
+        }
+        pending_control_stop = callback;
+        return 0;
+    }
+    assert(strcmp(name, "handle_service_result") == 0);
+    if (fail_queue)
+        return -1;
+    notification_argument = argument;
     pending_notification = callback;
     notifications++;
     return 0;
 }
 int aosl_mpq_destroy_wait(aosl_mpq_t queue) {
-    if (queue == runtime.control_mpq && run_control_finalizer) {
-        cleanup_services(&runtime);
-        return 0;
+    if (queue == runtime.control_mpq) {
+        assert(!control_worker_active && runtime.control_stop_result == CONTROL_STOP_DONE);
+        return fail_control_join ? -1 : 0;
     }
-    assert(queue == runtime.service_mpq);
+    assert(queue == runtime.service_mpq && control_worker_active);
     service_joins++;
     if (fail_first_service_join && service_joins == 1)
         return -1;
@@ -70,22 +96,54 @@ void mybot_key_deinit(mybot_key_t *key) {
     (void)key;
 }
 int mybot_media_pipeline_stop(mybot_media_pipeline_t *media) {
-    (void)media;
-    assert(!runtime.service_results_enabled);
+    assert(media == &runtime.media && !runtime.service_results_enabled && control_worker_active);
+    if (fail_media_stop)
+        return -1;
+    media->stop_complete = true;
     return 0;
 }
+int mybot_media_pipeline_destroy(mybot_media_pipeline_t *media) {
+    assert(media == &runtime.media && media->stop_complete && control_worker_active);
+    assert(rtc_result != MYBOT_RTC_FINI_RETRY);
+    media_destroys++;
+    media->initialized = false;
+    return 0;
+}
+int mybot_agora_rtc_fini(void) {
+    assert(control_worker_active);
+    rtc_calls++;
+    return rtc_result;
+}
+void aosl_dtor(void) {
+    assert(!control_worker_active && !runtime.media.initialized);
+    assert(runtime.control_mpq == AOSL_MPQ_INVALID && runtime.service_mpq == AOSL_MPQ_INVALID);
+    aosl_releases++;
+}
+void mybot_wifi_deinit(mybot_wifi_t *wifi) {
+    assert(wifi == &runtime.wifi && control_worker_active);
+}
+void mybot_presenter_show_screen(mybot_presenter_t *presenter, mybot_lcd_screen_t screen) {
+    assert(presenter == &runtime.presenter && screen == MYBOT_LCD_SCREEN_STOPPING);
+}
+void mybot_presenter_deinit(mybot_presenter_t *presenter) {
+    assert(presenter == &runtime.presenter && control_worker_active);
+}
 void mybot_kv_store_deinit(mybot_kv_store_t *store) {
-    (void)store;
-    kv_deinitialized++;
+    assert(store == &runtime.kv_store && control_worker_active);
+    if (store->ctx) {
+        kv_deinitialized++;
+        store->ctx = NULL;
+    }
 }
 void mybot_device_lifecycle_shutdown(mybot_device_lifecycle_t *lifecycle) {
     assert(lifecycle == &runtime.lifecycle);
-    assert(!runtime.service_results_enabled);
+    assert(!runtime.service_results_enabled && control_worker_active);
+    lifecycle->shutting_down = true;
     shutdowns++;
 }
 void mybot_device_lifecycle_finish_shutdown(mybot_device_lifecycle_t *lifecycle) {
     assert(lifecycle == &runtime.lifecycle);
-    assert(!runtime.completed_results && allocations == 0);
+    assert(!runtime.completed_results && allocations == 0 && control_worker_active);
     finished++;
 }
 void mybot_device_lifecycle_service_result(mybot_device_lifecycle_t *lifecycle,
@@ -133,14 +191,22 @@ static void reset(void) {
     memset(&last_result, 0, sizeof(last_result));
     runtime.lifecycle_initialized = true;
     runtime.service_results_enabled = 1;
+    runtime.aosl_ref_held = true;
+    runtime.running = true;
+    runtime.kv_store.ctx = &runtime.kv_store;
+    assert(mybot_state_model_begin_start(&runtime.state_model));
     runtime.control_mpq = 1;
     runtime.service_mpq = 2;
     runtime.control_timer = AOSL_MPQ_TIMER_INVALID;
     delivered = http_starts = http_stops = notifications = shutdowns = finished = 0;
     kv_deinitialized = service_joins = 0;
     fail_queue = disable_during_start = false;
-    fail_first_service_join = run_control_finalizer = false;
+    fail_first_service_join = control_worker_active = false;
+    fail_media_stop = fail_control_join = false;
+    rtc_result = 0;
+    aosl_releases = control_submissions = saturation_attempts = media_destroys = rtc_calls = 0;
     pending_notification = NULL;
+    pending_control_stop = NULL;
     notification_argument = 0;
 }
 static mybot_device_service_request_t *request(mybot_device_service_request_type_t type) {
@@ -195,7 +261,9 @@ static void test_disabled_after_start(void) {
     disable_during_start = true;
     execute(request(MYBOT_DEVICE_SERVICE_START));
     assert(http_starts == 1 && notifications == 0 && runtime.completed_results);
-    cleanup_services(&runtime);
+    control_worker_active = true;
+    assert(cleanup_services(&runtime));
+    control_worker_active = false;
     assert(shutdowns == 1 && finished == 1 && delivered == 1 && allocations == 0);
     assert(strcmp(last_result.payload.start.response.conversation_id,
                   "cloud-parent-returned-during-stop") == 0);
@@ -215,7 +283,9 @@ static void test_late_notification(void) {
     reset();
     execute(request(MYBOT_DEVICE_SERVICE_START));
     assert(pending_notification && allocations == 1);
-    cleanup_services(&runtime);
+    control_worker_active = true;
+    assert(cleanup_services(&runtime));
+    control_worker_active = false;
     assert(delivered == 1 && allocations == 0 && !runtime.lifecycle_initialized);
     notify(); /* Cleanup already freed the request; notification owns only runtime. */
     assert(delivered == 1 && allocations == 0 && !runtime.completed_results);
@@ -238,8 +308,11 @@ static void test_service_join_retry(void) {
     execute(request(MYBOT_DEVICE_SERVICE_START));
     assert(runtime.completed_results && allocations == 1 && notifications == 0);
     fail_first_service_join = true;
-    run_control_finalizer = true;
-    assert(destroy_control_queue(&runtime));
+    mybot_stop();
+    assert(mybot_get_state() == MYBOT_STATE_STOPPING && runtime.aosl_ref_held);
+    assert(runtime.control_mpq == 1 && runtime.service_mpq == 2);
+    assert(!delivered && !kv_deinitialized && !aosl_releases && runtime.completed_results);
+    mybot_stop();
     assert(service_joins == 2 && shutdowns == 1);
     assert(delivered == 1 && finished == 1 && kv_deinitialized == 1);
     assert(strcmp(last_result.payload.start.response.conversation_id,
@@ -247,6 +320,38 @@ static void test_service_join_retry(void) {
     assert(runtime.control_mpq == AOSL_MPQ_INVALID);
     assert(runtime.service_mpq == AOSL_MPQ_INVALID);
     assert(!runtime.lifecycle_initialized && !runtime.completed_results && allocations == 0);
+    assert(mybot_get_state() == MYBOT_STATE_STOPPED && !runtime.aosl_ref_held &&
+           aosl_releases == 1);
+    tests++;
+}
+static void test_audio_stop_and_queue_retirement_retry(void) {
+    reset();
+    runtime.media.initialized = true;
+    fail_media_stop = true;
+    mybot_stop();
+    assert(mybot_get_state() == MYBOT_STATE_STOPPING && runtime.aosl_ref_held);
+    assert(!service_joins && !media_destroys && !rtc_calls && runtime.media.initialized);
+    fail_media_stop = false;
+    rtc_result = MYBOT_RTC_FINI_RETRY;
+    mybot_stop();
+    assert(mybot_get_state() == MYBOT_STATE_STOPPING && !media_destroys && rtc_calls == 1);
+    assert(runtime.media.initialized && runtime.control_mpq == 1 && !aosl_releases);
+    rtc_result = -1; /* Terminal RTSA failure after the forwarding worker joined. */
+    fail_control_join = true;
+    mybot_stop();
+    assert(mybot_get_state() == MYBOT_STATE_STOPPING && rtc_calls == 2 && media_destroys == 1);
+    assert(!runtime.media.initialized && runtime.aosl_ref_held && !aosl_releases);
+    fail_control_join = false;
+    mybot_stop();
+    assert(mybot_get_state() == MYBOT_STATE_STOPPED && rtc_calls == 2 && aosl_releases == 1);
+    tests++;
+}
+static void test_saturated_control_queue_drains_for_stop(void) {
+    reset();
+    saturation_attempts = 2;
+    mybot_stop();
+    assert(mybot_get_state() == MYBOT_STATE_STOPPED && control_submissions == 3 &&
+           aosl_releases == 1);
     tests++;
 }
 int main(void) {
@@ -257,6 +362,8 @@ int main(void) {
     test_late_notification();
     test_shutdown_stop_and_poll();
     test_service_join_retry();
+    test_audio_stop_and_queue_retirement_retry();
+    test_saturated_control_queue_drains_for_stop();
     printf("translation control: %u source-level result-mailbox/shutdown scenarios passed\n",
            tests);
     return 0;

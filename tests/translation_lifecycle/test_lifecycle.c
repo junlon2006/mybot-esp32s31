@@ -75,6 +75,7 @@ typedef struct {
     slot_t slots[4];
     char fail_set[20];
     char fail_get[20];
+    int fail_get_result;
     char fail_erase[20];
     bool reject_submit;
     bool callback_ends_session;
@@ -106,7 +107,7 @@ int mybot_kv_store_get(mybot_kv_store_t *store, const char *key, void *value, si
                        size_t *length) {
     fixture_t *fixture = store->ctx;
     if (strcmp(fixture->fail_get, key) == 0)
-        return -1;
+        return fixture->fail_get_result ? fixture->fail_get_result : -1;
     slot_t *entry = slot(fixture, key, false);
     if (!entry || !entry->present)
         return MYBOT_ERR_NOT_FOUND;
@@ -733,6 +734,28 @@ static void corrupt_and_unreadable_journal(void) {
     assert(fixture.lifecycle.state == MYBOT_DEVICE_STATE_ERROR && stored(&fixture, "tr_session"));
     dispose(&fixture);
 }
+static void unreadable_credential_survives_restart(void) {
+    fixture_t fixture;
+    bound(&fixture);
+    unsigned pair_attempts = pair_requests;
+    snprintf(fixture.fail_get, sizeof(fixture.fail_get), "device_auth");
+    for (int error = -1; error <= 1; error += 2) {
+        fixture.fail_get_result = error;
+        initialize(&fixture, true, SERVER, DEVICE);
+        assert(fixture.lifecycle.storage_fault &&
+               fixture.lifecycle.state == MYBOT_DEVICE_STATE_ERROR);
+        assert(stored_text(&fixture, "device_auth", "original-test-credential"));
+        mybot_device_lifecycle_request_pair(&fixture.lifecycle);
+        ticks(&fixture, 31);
+        assert(pair_requests == pair_attempts && fixture.queued_count == 0);
+    }
+    fixture.fail_get[0] = '\0';
+    initialize(&fixture, true, SERVER, DEVICE);
+    assert(fixture.lifecycle.state == MYBOT_DEVICE_STATE_RUNTIME &&
+           !fixture.lifecycle.storage_fault);
+    assert(strcmp(fixture.lifecycle.device_token, "original-test-credential") == 0);
+    dispose(&fixture);
+}
 static void duplicate_and_stale_results(void) {
     fixture_t fixture;
     bound(&fixture);
@@ -897,6 +920,7 @@ int main(void) {
     language_persistence();
     direct_language_selection();
     corrupt_and_unreadable_journal();
+    unreadable_credential_survives_restart();
     duplicate_and_stale_results();
     allocation_failure();
     binding_revocation_retains_cleanup_identity();
@@ -905,6 +929,6 @@ int main(void) {
     unsynchronized_start_allows_retry_after_sync();
     shutdown_confirmed_stop_does_not_duplicate();
     invalid_initial_configuration();
-    puts("translation lifecycle: 29 fault/lifecycle scenarios passed (UBSan)");
+    puts("translation lifecycle: 30 fault/lifecycle scenarios passed (UBSan)");
     return 0;
 }

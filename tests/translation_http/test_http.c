@@ -20,6 +20,7 @@
 
 typedef struct {
     const char *data;
+    size_t length;
     int delay_ms;
 } recv_step_t;
 
@@ -131,7 +132,7 @@ int mybot_https_transport_recv(void *connection, void *data, size_t capacity, in
         return -1;
     if (!steps[index].data)
         return 0;
-    size_t length = strlen(steps[index].data);
+    size_t length = steps[index].length;
     assert(length <= capacity);
     memcpy(data, steps[index].data, length);
     return (int)length;
@@ -157,9 +158,13 @@ static void reset(void) {
     memset(send_timeouts, 0, sizeof(send_timeouts));
 }
 
-static void receive_after(const char *data, int delay_ms) {
+static void receive_bytes_after(const char *data, size_t length, int delay_ms) {
     assert(step_count < MAX_STEPS);
-    steps[step_count++] = (recv_step_t){data, delay_ms};
+    steps[step_count++] = (recv_step_t){data, length, delay_ms};
+}
+
+static void receive_after(const char *data, int delay_ms) {
+    receive_bytes_after(data, data ? strlen(data) : 0, delay_ms);
 }
 
 static void finished(mybot_http_client_response_t *response) {
@@ -179,6 +184,28 @@ static void slow_complete_response(void) {
     assert(tick_ms == 7900 && connect_timeout == 30000);
     assert(send_timeouts[0] == 29700 && receive_timeouts[0] == 29600);
     assert(receives == 1); /* Complete Content-Length needs no EOF. */
+    finished(&response);
+}
+
+static void complete_chunked_response(void) {
+    static const char binary_body[] = "\0\r\n0\r\n\r\n";
+    static const char binary_chunk[] = "8\r\n\0\r\n0\r\n\r\n\r\n";
+    reset();
+    receive_after("HTTP/1.1 201 Cr", 10);
+    receive_after("eated\r\nContent-Length: 1\r\nTransfer-Encoding: chu", 10);
+    receive_after("nked\r\n\r\n", 10);
+    receive_bytes_after(binary_chunk, sizeof(binary_chunk) - 1, 10);
+    receive_after("4;note=ok\r\ntext\r", 10);
+    receive_after("\n0\r\nX-Confirmation: ok\r\n\r", 10);
+    receive_after("\n", 10);
+    receive_after(NULL, 5000); /* A read after the last trailer would time out. */
+
+    mybot_http_client_response_t response = {0};
+    assert(mybot_http_client_post_ex(URL, "application/json", "{}", NULL, &response) == 0);
+    assert(response.status_code == 201 && response.body_len == 12 && response.body[12] == '\0');
+    assert(memcmp(response.body, binary_body, sizeof(binary_body) - 1) == 0);
+    assert(strcmp(response.body + sizeof(binary_body) - 1, "text") == 0);
+    assert(receives == step_count - 1 && tick_ms == 1470);
     finished(&response);
 }
 
@@ -255,6 +282,7 @@ static void invalid_timeouts_never_connect(void) {
 
 int main(void) {
     slow_complete_response();
+    complete_chunked_response();
     default_deadlines();
     fragmented_response_cannot_renew_budget();
     short_sends_cannot_renew_budget();

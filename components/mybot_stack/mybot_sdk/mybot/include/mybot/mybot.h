@@ -50,9 +50,7 @@ typedef struct {
  * conversation activity, connectivity, and shutdown.
  */
 typedef enum {
-    /** Not started, or the application control runtime has stopped. This does
-     *  not prove every resource was reclaimed: failed teardown may retain
-     *  resources. Also reported before mybot_start(). */
+    /** Initial state and the state after SDK shutdown completes. */
     MYBOT_STATE_STOPPED = 0,
     /** Waiting for the platform's initial MYBOT_WIFI_EVENT_STA_CONNECTED.
      *  Provisioning is owned by the host application. */
@@ -73,7 +71,7 @@ typedef enum {
     /** Unrecoverable failure during initial network readiness or service bring-up.
      *  The application should report the error and call mybot_stop(). */
     MYBOT_STATE_FAILED,
-    /** Application shutdown is in progress. Failed worker joins retain
+    /** Application shutdown is in progress. An incomplete stop retains
      *  resources for a later mybot_stop() attempt. */
     MYBOT_STATE_STOPPING,
     /** The device service has accepted a translation session. Includes local
@@ -174,11 +172,13 @@ MYBOT_API mybot_state_t mybot_get_state(void);
  *
  * Signals shutdown, waits for worker exits and releases resources whose shutdown
  * succeeds. Product-owned network connections and Wi-Fi credentials remain outside
- * SDK ownership. A failed worker join retains its resources and application AOSL
- * reference for a later call to retry. Failed driver teardown remains driver-owned.
+ * SDK ownership. An incomplete device stop or worker shutdown retains the
+ * resources and the application AOSL reference. Driver destroy transfers
+ * ownership of any remaining teardown to the driver.
  *
  * Safe to call when not running, after a failed mybot_start(), or repeatedly.
- * Return does not guarantee complete reclamation or that a new start will succeed.
+ * Check mybot_get_state() after return. Retry in MYBOT_STATE_STOPPING. Wait for
+ * MYBOT_STATE_STOPPED before restarting the SDK or releasing the network.
  * Cloud cleanup records survive shutdown until the service confirms the session
  * ended. Terminal vendor RTC finalization failure is not retried; reboot is required
  * before starting another translation.

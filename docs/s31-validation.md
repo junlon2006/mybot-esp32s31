@@ -244,3 +244,24 @@ Merged image: `esp32-s31-listen-zh-CN.bin`, 2572064 bytes, SHA-256 `8c287ca15037
 - Direct ESP-IDF v6.1 preview Chinese `build`, `size`, absolute-path `merge-bin` and delivery checks passed in `build/korvo-s31`, preserving its existing sdkconfig. The checker verified RISC-V ELF, local AOSL ownership, unchanged pinned RTSA fingerprints, disabled video and all four flash segments. Chinese-to-English defaults, 60 ms audio, cloud AEC and disabled AI QoS remain configured. The application is 3,521,888 bytes, with 15% partition headroom reported by IDF.
 - Merged image: `build/korvo-s31/mybot_esp32s31-merged.bin`, 3,652,960 bytes, SHA-256 `052e5fb4ed005688c35de3510b89b0a4297c4febe2634c8c73935a6f94989bbe`. Adjacent manifest, checksum and flash instructions identify this build. Use segmented `idf.py --preview -B build/korvo-s31 -p PORT flash monitor` to retain NVS settings.
 - The agent did not flash a device or run remote CI. The user subsequently reported that this caption firmware passed testing. This is user-reported acceptance, separate from the local host/build results above; no detailed caption trace, per-page results, endurance or resource measurements were supplied.
+
+## 2026-11-23 MyBot SDK synchronization on v1
+
+Applied the shared SDK updates through upstream `8bae576` to `v1` at `360c213`.
+The SDK finishes framed HTTP responses on receipt, restores active pairing codes
+after reconnect, retains the control worker during shutdown retries, and ends the
+session when a critical RTC or RTM notification is lost. Korvo continues to use
+one V2VT listen route with Cloud AEC and 60 ms PCM frames.
+
+Host tests passed for HTTP, pairing and captions, translation lifecycle, RTC,
+control shutdown, volume, and the Korvo audio path. Fault tests covered a peer
+that keeps the HTTPS connection open, incomplete device and worker stops,
+credential read recovery, and loss of current-session notifications. All 52
+builder and delivery tests passed. The changed files passed clang-format, SPDX
+and `git diff --check`.
+
+The direct ESP-IDF v6.1 preview Chinese Korvo build and size check passed.
+Configuration and link checks verified Cloud AEC, 60 ms frames, RISC-V, source-built
+AOSL, pinned RTSA, video disabled and four flash segments. The application is
+3,521,568 bytes with 607,200 bytes free in the smallest OTA slot. This update
+has no additional hardware results.

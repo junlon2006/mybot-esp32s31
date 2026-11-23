@@ -12,6 +12,8 @@
 #include "esp_netif_sntp.h"
 #include "esp_psram.h"
 #include "esp_timer.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "nvs_flash.h"
 #include "psa/crypto.h"
 #include "mybot_platform/board.h"
@@ -25,9 +27,25 @@
 
 #define TAG "mybot_bootstrap"
 #define CONTROL_EVENT_WAIT_MS 100
+#define STOP_RETRY_ATTEMPTS 3
+#define STOP_RETRY_DELAY_MS 20
 #define DEVICE_ID_DIGEST_BYTES 12
 
 static const char k_device_id_hmac_key[] = "mybot-esp32-device-id-v1";
+
+static bool stop_mybot(void) {
+    for (unsigned attempt = 0; attempt < STOP_RETRY_ATTEMPTS; ++attempt) {
+        mybot_stop();
+        if (mybot_get_state() == MYBOT_STATE_STOPPED) {
+            return true;
+        }
+        if (attempt + 1 < STOP_RETRY_ATTEMPTS) {
+            vTaskDelay(pdMS_TO_TICKS(STOP_RETRY_DELAY_MS));
+        }
+    }
+    ESP_LOGE(TAG, "event=control state=stopping_mybot result=cleanup_incomplete");
+    return false;
+}
 
 static int build_device_id(char *device_id, size_t capacity, const uint8_t mac[6]) {
     uint8_t digest[32];
@@ -212,6 +230,9 @@ void app_main(void) {
 
             ESP_LOGE(TAG, "event=control state=starting_mybot elapsed_ms=%" PRId64 " result=error",
                      (esp_timer_get_time() - mybot_started_us) / 1000);
+            if (!stop_mybot()) {
+                return;
+            }
             break;
         }
 
@@ -234,7 +255,9 @@ void app_main(void) {
         ESP_LOGI(TAG, "event=control state=stopping_mybot sdk_state=%d running=%d reason=%s",
                  (int)mybot_get_state(), mybot_is_running() ? 1 : 0,
                  provisioning_requested ? "provision_request" : "sdk_stopped");
-        mybot_stop();
+        if (!stop_mybot()) {
+            return;
+        }
 
         if (!provisioning_requested) {
             provisioning_requested = mybot_board_wait_wifi_provisioning_request(0);

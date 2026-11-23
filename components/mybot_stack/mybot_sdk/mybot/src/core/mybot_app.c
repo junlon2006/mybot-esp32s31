@@ -19,6 +19,7 @@
 
 #include <api/aosl.h>
 #include <api/aosl_atomic.h>
+#include <api/aosl_errno.h>
 #include <api/aosl_log.h>
 #include <api/aosl_mpq.h>
 #include <api/aosl_mpq_timer.h>
@@ -35,6 +36,9 @@
 #define VOLUME_READ_RETRY_TICKS (1000 / STATE_TICK_MS)
 #define UI_COMMAND_CAPACITY 8
 #define CAPTION_INBOX_CAPACITY 8
+
+enum { CONTROL_STOP_IDLE, CONTROL_STOP_PENDING, CONTROL_STOP_DONE, CONTROL_STOP_RETRY };
+
 typedef struct {
     uint32_t generation;
     size_t length;
@@ -81,6 +85,7 @@ typedef struct {
     mybot_device_service_request_t *completed_results;
     bool lifecycle_initialized;
     int control_start_result;
+    aosl_atomic_t control_stop_result;
     /* Value-owned commands; notifications never own pointers into caller memory. */
     mybot_ui_command_t ui_commands[UI_COMMAND_CAPACITY];
     unsigned ui_head;
@@ -610,14 +615,13 @@ static void dev_on_pair_code(const char *code, void *user_data) {
         return;
     }
     mybot_state_t state = runtime_get_state(runtime);
-    if (state == MYBOT_STATE_STOPPING || state == MYBOT_STATE_FAILED ||
-        state == MYBOT_STATE_WIFI_DISCONNECTED) {
+    if (state == MYBOT_STATE_STOPPING || state == MYBOT_STATE_FAILED) {
         return;
     }
-
-    AOSL_LOG_NTC("pair code: %s", code);
-    mybot_presenter_show_pair_code(&runtime->presenter, code);
-    (void)mybot_media_pipeline_play_prompt(&runtime->media, MYBOT_PROMPT_PAIR_CODE, code);
+    mybot_presenter_set_pair_code(&runtime->presenter, code);
+    if (state != MYBOT_STATE_WIFI_DISCONNECTED) {
+        (void)mybot_media_pipeline_play_pair_code(&runtime->media, code);
+    }
 }
 
 static void dev_on_conversation_start(const mybot_device_conversation_t *params, void *user_data) {
@@ -855,6 +859,7 @@ static void dev_on_state_changed(mybot_device_state_t state, void *user_data) {
     refresh_translation_view(runtime);
 
     if (state != MYBOT_DEVICE_STATE_AWAITING_CLAIM) {
+        mybot_presenter_set_pair_code(&runtime->presenter, NULL);
         mybot_media_pipeline_stop_prompt(&runtime->media);
     }
     sync_wake_words(runtime);
@@ -932,6 +937,10 @@ static void control_tick_timer(aosl_timer_t id, const aosl_ts_t *now, uintptr_t 
 
     mybot_runtime_t *runtime = (mybot_runtime_t *)argv[0];
     if (runtime_is_running(runtime)) {
+        if (runtime->lifecycle.local_media_active && mybot_agora_rtc_notification_failed()) {
+            aosl_atomic_set(&runtime->media_cancel_requested, true);
+            rtc_on_state_changed(MYBOT_RTC_STATE_ERROR, runtime);
+        }
         mybot_device_lifecycle_tick(&runtime->lifecycle);
         bool captions_changed = drain_caption_inbox(runtime);
         bool ready = aosl_atomic_read(&runtime->media.rtc_connected) != 0;
@@ -949,7 +958,7 @@ static void control_tick_timer(aosl_timer_t id, const aosl_ts_t *now, uintptr_t 
     }
 }
 
-static void cleanup_services(mybot_runtime_t *runtime) {
+static bool cleanup_services(mybot_runtime_t *runtime) {
     close_caption_inbox(runtime, false);
     close_ui_commands(runtime);
     aosl_atomic_set(&runtime->service_results_enabled, false);
@@ -962,23 +971,25 @@ static void cleanup_services(mybot_runtime_t *runtime) {
         runtime->control_timer = AOSL_MPQ_TIMER_INVALID;
     }
 
-    if (mybot_media_pipeline_stop(&runtime->media) < 0) {
+    if (runtime->media.initialized && mybot_media_pipeline_stop(&runtime->media) < 0) {
         AOSL_LOG_ERR("media pipeline stop incomplete");
+        return false;
     }
 #if MYBOT_ENABLE_VIDEO
     if (mybot_video_stop(&runtime->video) < 0) {
         AOSL_LOG_ERR("video source stop incomplete");
+        return false;
     }
 #endif
     /* Stop audio I/O before the lifecycle callback performs network/RTC
      * shutdown. This guarantees a blocked capture or playback operation is
      * unblocked before the control worker waits on conversation teardown. */
-    if (runtime->lifecycle_initialized) {
+    if (runtime->lifecycle_initialized && !aosl_atomic_read(&runtime->lifecycle.shutting_down)) {
         mybot_device_lifecycle_shutdown(&runtime->lifecycle);
     }
     if (!destroy_service_queue(runtime)) {
         AOSL_LOG_ERR("HTTP teardown pending; retaining lifecycle storage");
-        return;
+        return false;
     }
     apply_completed_services(runtime);
     if (runtime->lifecycle_initialized) {
@@ -986,12 +997,14 @@ static void cleanup_services(mybot_runtime_t *runtime) {
         runtime->lifecycle_initialized = false;
     }
     mybot_kv_store_deinit(&runtime->kv_store);
+    return true;
 }
 
 static int start_services(mybot_runtime_t *runtime) {
+    /* Failed starts retain partial services for the control worker's stop path. */
     if (mybot_kv_store_init(&runtime->kv_store) < 0 ||
         mybot_key_init(&runtime->key, on_key_event, runtime) < 0) {
-        goto fail;
+        return -1;
     }
 
     mybot_media_pipeline_callbacks_t media_cbs;
@@ -1001,7 +1014,7 @@ static int start_services(mybot_runtime_t *runtime) {
     media_cbs.user_data = runtime;
     mybot_media_pipeline_init(&runtime->media);
     if (mybot_media_pipeline_start(&runtime->media, &media_cbs) < 0) {
-        goto fail;
+        return -1;
     }
     runtime->media_recovery_required = false;
     caption_lock(&runtime->caption_model_gate);
@@ -1013,7 +1026,7 @@ static int start_services(mybot_runtime_t *runtime) {
 #if MYBOT_ENABLE_VIDEO
     mybot_video_init(&runtime->video);
     if (!runtime->video.initialized) {
-        goto fail;
+        return -1;
     }
 #endif
 
@@ -1022,7 +1035,7 @@ static int start_services(mybot_runtime_t *runtime) {
                                                  "service_mpq", NULL, NULL, NULL);
     if (aosl_mpq_invalid(runtime->service_mpq)) {
         AOSL_LOG_ERR("failed to create background service queue");
-        goto fail;
+        return -1;
     }
     aosl_atomic_set(&runtime->service_results_enabled, true);
 
@@ -1039,7 +1052,7 @@ static int start_services(mybot_runtime_t *runtime) {
             &runtime->lifecycle, &runtime->kv_store, runtime->config.server_base,
             runtime->config.device_id, runtime->config.firmware_ver, runtime->config.hw_model,
             runtime->config.source_language, runtime->config.target_language, &lifecycle_cbs) < 0) {
-        goto fail;
+        return -1;
     }
     runtime->lifecycle_initialized = true;
 
@@ -1047,26 +1060,10 @@ static int start_services(mybot_runtime_t *runtime) {
         aosl_mpq_set_timer(STATE_TICK_MS, control_tick_timer, NULL, 1, (uintptr_t)runtime);
     if (aosl_mpq_timer_invalid(runtime->control_timer)) {
         AOSL_LOG_ERR("failed to create device lifecycle timer");
-        goto fail;
+        return -1;
     }
     aosl_atomic_set(&runtime->ui_accepting_commands, true);
     return 0;
-
-fail:
-    cleanup_services(runtime);
-#if MYBOT_ENABLE_VIDEO
-    if (mybot_video_destroy(&runtime->video) < 0) {
-        AOSL_LOG_ERR("video source destroy incomplete");
-    }
-#endif
-    if (mybot_media_pipeline_destroy(&runtime->media) < 0) {
-        AOSL_LOG_ERR("media pipeline destroy skipped because stop was incomplete");
-    }
-    caption_lock(&runtime->caption_model_gate);
-    mybot_captions_destroy(runtime->captions);
-    runtime->captions = NULL;
-    aosl_atomic_set(&runtime->caption_model_gate, 0);
-    return -1;
 }
 
 static void handle_wifi_event(const aosl_ts_t *queued_ts, aosl_refobj_t robj, uintptr_t argc,
@@ -1215,37 +1212,37 @@ static bool platform_requirements_are_met(const mybot_config_t *cfg) {
     return true;
 }
 
-static void control_stop_runtime(mybot_runtime_t *runtime) {
-    if (runtime_get_state(runtime) == MYBOT_STATE_STOPPED) {
-        return;
-    }
-
+static bool control_stop_runtime(mybot_runtime_t *runtime) {
     mybot_state_t previous = runtime_get_state(runtime);
+    if (previous == MYBOT_STATE_STOPPED) {
+        return true;
+    }
     AOSL_LOG_NTC("application control stopping");
     mybot_state_model_begin_stop(&runtime->state_model);
-    runtime_publish_exit(runtime);
-    if (previous != MYBOT_STATE_FAILED) {
+    if (previous != MYBOT_STATE_FAILED && previous != MYBOT_STATE_STOPPING) {
         mybot_presenter_show_screen(&runtime->presenter, MYBOT_LCD_SCREEN_STOPPING);
     }
 
-    cleanup_services(runtime);
-    mybot_wifi_deinit(&runtime->wifi);
-
-    mybot_presenter_show_screen(&runtime->presenter, previous == MYBOT_STATE_FAILED
-                                                         ? MYBOT_LCD_SCREEN_FAILED
-                                                         : MYBOT_LCD_SCREEN_STOPPING);
-    mybot_presenter_deinit(&runtime->presenter);
-
-    if (mybot_agora_rtc_fini() < 0) {
-        AOSL_LOG_ERR("RTC fini incomplete; RTSA reported terminal cleanup failure");
+    if (!cleanup_services(runtime)) {
+        return false;
+    }
+    int rtc_result = mybot_agora_rtc_fini();
+    if (rtc_result == MYBOT_RTC_FINI_RETRY) {
+        AOSL_LOG_ERR("RTC forwarding worker cleanup incomplete");
+        return false;
+    }
+    if (rtc_result < 0) {
+        AOSL_LOG_ERR("RTSA reported terminal cleanup failure");
     }
 #if MYBOT_ENABLE_VIDEO
     if (mybot_video_destroy(&runtime->video) < 0) {
         AOSL_LOG_ERR("video source destroy incomplete");
+        return false;
     }
 #endif
-    if (mybot_media_pipeline_destroy(&runtime->media) < 0) {
+    if (runtime->media.initialized && mybot_media_pipeline_destroy(&runtime->media) < 0) {
         AOSL_LOG_ERR("media pipeline destroy skipped because stop was incomplete");
+        return false;
     }
 
     caption_lock(&runtime->caption_model_gate);
@@ -1253,8 +1250,9 @@ static void control_stop_runtime(mybot_runtime_t *runtime) {
     runtime->captions = NULL;
     aosl_atomic_set(&runtime->caption_model_gate, 0);
 
-    mybot_state_model_reset(&runtime->state_model);
-    AOSL_LOG_NTC("application control stopped");
+    mybot_wifi_deinit(&runtime->wifi);
+    mybot_presenter_deinit(&runtime->presenter);
+    return true;
 }
 
 static void handle_control_start(const aosl_ts_t *queued_ts, aosl_refobj_t robj, uintptr_t argc,
@@ -1302,28 +1300,50 @@ fail:
     runtime_publish_exit(runtime);
 }
 
-static void control_worker_fini(void *arg) {
-    control_stop_runtime(arg);
+static void handle_control_stop(const aosl_ts_t *ts, aosl_refobj_t ref, uintptr_t argc,
+                                uintptr_t argv[]) {
+    (void)ts;
+    (void)ref;
+    (void)argc;
+    mybot_runtime_t *runtime = (mybot_runtime_t *)argv[0];
+    aosl_atomic_set(&runtime->control_stop_result,
+                    control_stop_runtime(runtime) ? CONTROL_STOP_DONE : CONTROL_STOP_RETRY);
 }
 
-static bool destroy_control_queue(mybot_runtime_t *runtime) {
+static void stop_runtime(mybot_runtime_t *runtime) {
     if (!aosl_mpq_invalid(runtime->control_mpq)) {
+        /* The current worker retains child resources and late HTTP results until
+         * teardown succeeds. Callback admission closes before the queue drains. */
+        if (aosl_atomic_read(&runtime->control_stop_result) != CONTROL_STOP_DONE) {
+            aosl_atomic_set(&runtime->control_stop_result, CONTROL_STOP_PENDING);
+            while (aosl_mpq_queue(runtime->control_mpq, AOSL_MPQ_INVALID, AOSL_REF_INVALID,
+                                  "handle_control_stop", handle_control_stop, 1,
+                                  (uintptr_t)runtime) < 0) {
+                if (aosl_errno != AOSL_EAGAIN) {
+                    aosl_atomic_set(&runtime->control_stop_result, CONTROL_STOP_RETRY);
+                    AOSL_LOG_ERR("failed to queue application shutdown");
+                    return;
+                }
+                aosl_msleep(5);
+            }
+            while (aosl_atomic_read(&runtime->control_stop_result) == CONTROL_STOP_PENDING) {
+                aosl_msleep(5);
+            }
+            if (aosl_atomic_read(&runtime->control_stop_result) == CONTROL_STOP_RETRY) {
+                return;
+            }
+        }
         if (aosl_mpq_destroy_wait(runtime->control_mpq) < 0) {
             AOSL_LOG_ERR("failed to destroy application control queue");
-            return false;
+            return;
         }
         runtime->control_mpq = AOSL_MPQ_INVALID;
     }
-    /* Retain AOSL ownership until a failed background teardown can be retried. */
-    if (!destroy_service_queue(runtime))
-        return false;
-    apply_completed_services(runtime);
-    if (runtime->lifecycle_initialized) {
-        mybot_device_lifecycle_finish_shutdown(&runtime->lifecycle);
-        runtime->lifecycle_initialized = false;
-        mybot_kv_store_deinit(&runtime->kv_store);
-    }
-    return true;
+    aosl_dtor();
+    aosl_atomic_set(&runtime->aosl_ref_held, false);
+    mybot_state_model_reset(&runtime->state_model);
+    aosl_atomic_set(&runtime->control_stop_result, CONTROL_STOP_IDLE);
+    AOSL_LOG_NTC("application control stopped");
 }
 
 int mybot_start(const mybot_config_t *cfg) {
@@ -1355,6 +1375,7 @@ int mybot_start(const mybot_config_t *cfg) {
     aosl_atomic_set(&runtime->service_result_gate, 0);
     aosl_atomic_set(&runtime->service_results_enabled, false);
     runtime->control_start_result = -1;
+    aosl_atomic_set(&runtime->control_stop_result, CONTROL_STOP_IDLE);
 
     runtime->ui_head = runtime->ui_count = 0;
     runtime->ui_generation = ++s_ui_generation;
@@ -1370,7 +1391,7 @@ int mybot_start(const mybot_config_t *cfg) {
     /* Callbacks must not wait for space while this worker synchronously waits for RTC. */
     runtime->control_mpq = aosl_mpq_create_flags(AOSL_MPQ_FLAG_SIGP_EVENT | AOSL_MPQ_FLAG_NONBLOCK,
                                                  AOSL_THRD_PRI_NORMAL, CONTROL_MPQ_STACK_SIZE, 1000,
-                                                 "control_mpq", NULL, control_worker_fini, runtime);
+                                                 "control_mpq", NULL, NULL, NULL);
     if (aosl_mpq_invalid(runtime->control_mpq)) {
         AOSL_LOG_ERR("failed to create application control queue");
         goto fail;
@@ -1388,11 +1409,7 @@ int mybot_start(const mybot_config_t *cfg) {
 
 fail:
     runtime_publish_exit(runtime);
-    /* Queue destruction runs cleanup on the control worker, even when its queue is full. */
-    if (destroy_control_queue(runtime)) {
-        aosl_dtor();
-        aosl_atomic_set(&runtime->aosl_ref_held, false);
-    }
+    stop_runtime(runtime);
     lifecycle_unlock();
     return -1;
 }
@@ -1402,7 +1419,9 @@ bool mybot_is_running(void) {
 }
 
 mybot_state_t mybot_get_state(void) {
-    return runtime_get_state(&s_default_runtime);
+    return aosl_atomic_read(&s_default_runtime.control_stop_result) == CONTROL_STOP_IDLE
+               ? runtime_get_state(&s_default_runtime)
+               : MYBOT_STATE_STOPPING;
 }
 
 void mybot_stop(void) {
@@ -1414,10 +1433,6 @@ void mybot_stop(void) {
     }
 
     runtime_publish_exit(runtime);
-    /* Cleanup belongs to the control finalizer; it needs no separate queue admission. */
-    if (destroy_control_queue(runtime)) {
-        aosl_dtor();
-        aosl_atomic_set(&runtime->aosl_ref_held, false);
-    }
+    stop_runtime(runtime);
     lifecycle_unlock();
 }

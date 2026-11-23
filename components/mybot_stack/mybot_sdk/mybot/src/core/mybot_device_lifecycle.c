@@ -169,7 +169,7 @@ static int load_auth(mybot_device_lifecycle_t *lifecycle) {
         aosl_hal_free(record);
         return 0;
     }
-    if (result < 0) {
+    if (result != 0) {
         aosl_hal_free(record);
         return -1;
     }
@@ -553,6 +553,7 @@ static void apply_pair_binding(mybot_device_lifecycle_t *lifecycle,
                                const mybot_device_service_request_t *request) {
     if (request->result == 401) {
         lifecycle->pairing_requested = true;
+        set_state(lifecycle, MYBOT_DEVICE_STATE_PAIRING);
         return;
     }
     if (request->result != 0)
@@ -578,6 +579,7 @@ static void apply_pair_binding(mybot_device_lifecycle_t *lifecycle,
                strcmp(response->status, "unbound") == 0 ||
                strcmp(response->status, "failed") == 0) {
         lifecycle->pairing_requested = true;
+        set_state(lifecycle, MYBOT_DEVICE_STATE_PAIRING);
     }
 }
 

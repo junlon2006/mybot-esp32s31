@@ -632,6 +632,21 @@ static void test_stop_and_delayed_fence_ownership(void) {
     tests++;
 }
 
+static void test_playback_stop_failure_retains_workers(void) {
+    reset();
+    fail_pb_stop = true;
+    assert(mybot_media_pipeline_stop(&pipeline) < 0);
+    assert(!cap_active && pb_active && !pipeline.cap_started && pipeline.pb_started);
+    assert(pipeline.cap_mpq == CAPTURE_QUEUE && pipeline.pb_mpq == PLAYBACK_QUEUE);
+    assert(pipeline.send_mpq == SEND_QUEUE && pipeline.cap_ctx && pipeline.pb_ctx);
+    assert(!pipeline.stop_complete && mybot_media_pipeline_destroy(&pipeline) < 0);
+    unsigned stopped_capture = cap_stops;
+    fail_pb_stop = false;
+    finish();
+    assert(cap_stops == stopped_capture && pb_stops == 2);
+    tests++;
+}
+
 static void test_session_end_and_new_session(void) {
     reset();
     fail_pb_stop = true;
@@ -682,6 +697,7 @@ int main(void) {
     test_remote_producer_fence();
     test_remote_callback_racing_pause();
     test_stop_and_delayed_fence_ownership();
+    test_playback_stop_failure_retains_workers();
     test_session_end_and_new_session();
     test_invalid_arguments();
     printf("media pause: %u tests passed (UBSan)\n", tests);

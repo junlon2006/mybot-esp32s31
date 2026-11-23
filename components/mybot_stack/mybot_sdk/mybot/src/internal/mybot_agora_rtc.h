@@ -75,11 +75,17 @@ bool mybot_agora_rtc_rtm_uid_is_valid(const char *rtm_uid);
 int mybot_agora_rtc_join(const char *channel, const char *token, const char *user_account,
                          const char *agent_uid, const char *publisher_account);
 
+/** A required notification could not be delivered for the current session.
+ * The control owner polls this even when the RTC forwarding queue is blocked. */
+bool mybot_agora_rtc_notification_failed(void);
+
+#define MYBOT_RTC_FINI_RETRY (-2)
+
 /** End the conversation, finalize RTSA and join the forwarding queue.
  * Cancel media sends before calling. A successful global RTSA fini supersedes
- * intermediate leave/destroy errors. Queue teardown can be retried; a failed
- * vendor global fini is terminal until device restart and is never repeated.
- * Returns zero only when both vendor and forwarding resources were released. */
+ * intermediate leave/destroy errors. MYBOT_RTC_FINI_RETRY retains the forwarding
+ * queue. A failed vendor global fini returns -1 after that queue retires and
+ * requires a device restart. Zero confirms both phases completed. */
 int mybot_agora_rtc_fini(void);
 
 /** Send one PCM payload on the active connection. */

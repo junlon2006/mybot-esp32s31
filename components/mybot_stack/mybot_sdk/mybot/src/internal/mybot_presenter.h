@@ -16,6 +16,7 @@ extern "C" {
 typedef struct {
     mybot_lcd_t lcd;
     bool active;
+    char pair_code[MYBOT_LCD_PAIR_CODE_CAPACITY];
     char source_language[33];
     char target_language[33];
     char error_code[64];
@@ -28,7 +29,7 @@ typedef struct {
 int mybot_presenter_init(mybot_presenter_t *presenter);
 void mybot_presenter_deinit(mybot_presenter_t *presenter);
 void mybot_presenter_show_screen(mybot_presenter_t *presenter, mybot_lcd_screen_t screen);
-void mybot_presenter_show_pair_code(mybot_presenter_t *presenter, const char *code);
+void mybot_presenter_set_pair_code(mybot_presenter_t *presenter, const char *code);
 void mybot_presenter_set_translation(mybot_presenter_t *presenter, const char *source,
                                      const char *target, const char *error_code, int volume);
 void mybot_presenter_render_state(mybot_presenter_t *presenter,

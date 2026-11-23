@@ -29,6 +29,8 @@ static connection_id_t next_connection = 40;
 static aosl_mpq_t next_queue = 2, live_queue;
 static rtc_channel_options_t joined_options;
 static int unmute_result, join_result, destroy_result, fini_result, queue_destroy_result;
+static int drop_event, allocations_until_failure;
+static bool fail_fini_barrier;
 static bool lookup_ready;
 static bool callbacks_during_fini;
 static connection_id_t fini_connection;
@@ -51,6 +53,8 @@ int aosl_set_log_level(int level) {
     return 0;
 }
 void *aosl_hal_malloc(size_t size) {
+    if (allocations_until_failure >= 0 && allocations_until_failure-- == 0)
+        return NULL;
     void *memory = malloc(size);
     if (memory)
         allocations++;
@@ -77,15 +81,19 @@ int aosl_mpq_queue(aosl_mpq_t target, aosl_mpq_t source, aosl_ref_t ref, const c
     assert(argc == 1 && queued < 64);
     va_list arguments;
     va_start(arguments, argc);
-    queue[queued++] = (queued_callback_t){callback, va_arg(arguments, uintptr_t)};
+    uintptr_t argument = va_arg(arguments, uintptr_t);
     va_end(arguments);
+    if ((int)((rtc_event_t *)argument)->type == drop_event)
+        return -1;
+    queue[queued++] = (queued_callback_t){callback, argument};
     return 0;
 }
 int aosl_mpq_call_argv(aosl_mpq_t q, aosl_ref_t ref, const char *name, aosl_mpq_func_t callback,
                        uintptr_t argc, uintptr_t argv[]) {
     assert(q == live_queue);
     (void)ref;
-    (void)name;
+    if (fail_fini_barrier && strcmp(name, "rtc_fini_barrier") == 0)
+        return -1;
     /* Synchronous calls run after earlier callback work on the same worker. */
     drain();
     callback(NULL, NULL, argc, argv);
@@ -266,6 +274,9 @@ static void reset(void) {
     live_queue = 1;
     s_rtc_callbacks_enabled = 1;
     s_rtc_callback_gate = 0;
+    s_rtc_notification_failed = 0;
+    drop_event = allocations_until_failure = -1;
+    fail_fini_barrier = false;
     s_rtm_login_done = s_rtm_login_ok = s_rtm_sub_done = s_rtm_sub_ok = 0;
     errors = audio_callbacks = unmute_calls = leave_calls = 0;
     direct_messages = channel_messages = 0;
@@ -415,6 +426,69 @@ static void test_disabled_callbacks(void) {
     assert(queued == 0 && allocations == 0 && errors == 0 && audio_callbacks == 0);
     tests++;
 }
+static void test_invalid_audio_before_queueing(void) {
+    reset();
+    lookup_ready = true;
+    join();
+    int16_t samples[MYBOT_RTC_PCM_FRAME_BYTES / sizeof(int16_t)] = {0};
+    audio_frame_info_t info = {.data_type = AUDIO_DATA_TYPE_PCM};
+    on_audio_data(s_rtc.conn_id, 900, 0, samples, sizeof(samples) - 1, &info);
+    on_audio_data(s_rtc.conn_id, 900, 0, samples, sizeof(samples), NULL);
+    on_audio_data(s_rtc.conn_id, 900, 0, NULL, sizeof(samples), &info);
+    info.data_type = AUDIO_DATA_TYPE_G722;
+    on_audio_data(s_rtc.conn_id, 900, 0, samples, sizeof(samples), &info);
+    assert(queued == 0 && allocations == 0 && !mybot_agora_rtc_notification_failed());
+    tests++;
+}
+static void test_required_notification_loss(void) {
+    for (unsigned allocation_failure = 0; allocation_failure < 2; allocation_failure++) {
+        reset_public();
+        init_public("project-A");
+        lookup_ready = true;
+        join_public();
+        connection_id_t current = s_rtc.conn_id;
+        user_info_t stranger = user(800, "untrusted-user");
+        if (allocation_failure)
+            allocations_until_failure = 0;
+        else
+            drop_event = RTC_EVENT_USER_OFFLINE;
+        on_user_offline(current, &stranger, 0);
+        assert(!mybot_agora_rtc_notification_failed());
+
+        send_audio(current, 900);
+        user_info_t target = user(900, publisher);
+        if (allocation_failure)
+            allocations_until_failure = 0;
+        on_user_offline(current + 1, &target, 0);
+        assert(!mybot_agora_rtc_notification_failed());
+        if (allocation_failure)
+            allocations_until_failure = 0;
+        on_user_offline(current, &target, 0);
+        assert(mybot_agora_rtc_notification_failed());
+        on_rejoin_channel_success(current, 5, 0);
+        drain();
+        assert(errors == 1 && audio_callbacks == 0 && allocations == 0);
+        assert(s_rtc.state == MYBOT_RTC_STATE_ERROR && mybot_agora_rtc_notification_failed());
+        assert(mybot_agora_rtc_fini() == 0 && !mybot_agora_rtc_notification_failed());
+        tests++;
+    }
+}
+static void test_rtm_notification_loss_before_rtc_join(void) {
+    const rtc_event_type_t critical[] = {RTC_EVENT_RTM_EVENT, RTC_EVENT_RTM_SUB_RESULT};
+    for (unsigned i = 0; i < sizeof(critical) / sizeof(critical[0]); i++) {
+        reset_public();
+        init_public("project-A");
+        connection_id_t before = next_connection;
+        drop_event = critical[i];
+        assert(mybot_agora_rtc_join("translation-channel", "route-token", "device-input", agent,
+                                    publisher) < 0);
+        drain();
+        assert(s_rtc.state == MYBOT_RTC_STATE_ERROR && mybot_agora_rtc_notification_failed());
+        assert(next_connection == before && !s_rtc.rtm_login_requested);
+        assert(mybot_agora_rtc_fini() == 0 && !mybot_agora_rtc_notification_failed());
+        tests++;
+    }
+}
 static void test_unmute_failure(void) {
     reset();
     join();
@@ -495,7 +569,7 @@ static void test_failed_fini_is_terminal(void) {
         join_public();
         fini_result = -1;
         queue_destroy_result = queue_failure ? -1 : 0;
-        assert(mybot_agora_rtc_fini() < 0);
+        assert(mybot_agora_rtc_fini() == (queue_failure ? MYBOT_RTC_FINI_RETRY : -1));
         assert(s_rtc.state == MYBOT_RTC_STATE_ERROR);
         assert(!s_rtc_callbacks_enabled);
         assert(fini_calls == 1);
@@ -547,8 +621,13 @@ static void test_forwarding_queue_destroy_retry(void) {
     reset_public();
     init_public("project-A");
     join_public();
+    fail_fini_barrier = true;
+    assert(mybot_agora_rtc_fini() == MYBOT_RTC_FINI_RETRY);
+    assert(s_rtc.state == MYBOT_RTC_STATE_IDLE);
+    assert(fini_calls == 1 && queue_destroys == 0);
+    fail_fini_barrier = false;
     queue_destroy_result = -1;
-    assert(mybot_agora_rtc_fini() < 0);
+    assert(mybot_agora_rtc_fini() == MYBOT_RTC_FINI_RETRY);
     assert(s_rtc.state == MYBOT_RTC_STATE_IDLE);
     assert(s_rtc_mpq_id != AOSL_MPQ_INVALID && !s_rtc_callbacks_enabled);
     assert(fini_calls == 1 && queue_destroys == 1);
@@ -695,6 +774,9 @@ int main(void) {
     test_offline();
     test_late_callbacks();
     test_disabled_callbacks();
+    test_invalid_audio_before_queueing();
+    test_required_notification_loss();
+    test_rtm_notification_loss_before_rtc_join();
     test_unmute_failure();
     test_join_failure();
     test_project_change_after_fini();

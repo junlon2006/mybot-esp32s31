@@ -9,10 +9,10 @@
 extern "C" {
 #endif
 
-/** HTTP response returned after a syntactically valid response, including a
- * non-2xx status. Release owned body storage with mybot_http_client_response_free(). */
+/** HTTP result, initialized for each call. Release any owned body storage with
+ * mybot_http_client_response_free() before reuse. */
 typedef struct {
-    int status_code; /* HTTP status code (200, 404, etc.), 0 if parse failed */
+    int status_code; /* HTTP status code when available, including framing failures */
     char *body;      /* response body (NUL-terminated), NULL if empty */
     size_t body_len; /* body length in bytes */
 } mybot_http_client_response_t;

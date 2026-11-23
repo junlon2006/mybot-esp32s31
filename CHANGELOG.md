@@ -2,6 +2,9 @@
 
 ## Unreleased — standalone S31 listen translation
 
+- Synchronize the SDK through upstream `8bae576`. Complete framed HTTP responses as soon as
+  they arrive, restore pairing codes after reconnect, retain workers for shutdown retries and
+  stop translation if a required RTC notification cannot be delivered.
 - Disable AI QoS by default in firmware and the SDK fallback; retain explicit opt-in support.
 - Receive trusted RTM original/translated captions, merge streaming revisions and share a bounded session history across the live/full-text/history pages.
 - Add a common Chinese/Latin-1 caption font with real 2 bpp glyphs and bounded PSRAM text storage.
